@@ -1,7 +1,8 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Net.Sockets;
-using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Application.Logic;
+using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure;
 
@@ -30,23 +31,7 @@ public class UnitTest1
     }
 
     [Fact]
-    public void CliParser_Parses_AuthLogin_And_AuthPassword()
-    {
-        var cfg = CliParser.Parse([
-            "--auth-login", "user",
-            "--auth-password", "pass"
-        ]);
-
-        Assert.Single(cfg.Credentials);
-        Assert.Equal("user", cfg.Credentials[0].Login);
-        Assert.Equal("pass", cfg.Credentials[0].Password);
-    }
-
-    [Fact]
-    public void CliParser_Throws_On_UnknownArg()
-    {
-        Assert.Throws<ArgumentException>(() => CliParser.Parse(["--unknown", "x"]));
-    }
+    public void CliParser_Throws_On_UnknownArg() => Assert.Throws<ArgumentException>(() => CliParser.Parse(["--unknown", "x"]));
 
     [Fact]
     public void ConfigValidator_Rejects_BadPort()
@@ -60,7 +45,7 @@ public class UnitTest1
     {
         var inspector = new MtProtoInspector();
         var data = new byte[64];
-        var (Dc, IsMedia) = inspector.DcFromInit(data);
+        var (Dc, _) = inspector.DcFromInit(data);
         Assert.Null(Dc);
     }
 
@@ -74,9 +59,9 @@ public class UnitTest1
         var acceptedTask = listener.AcceptTcpClientAsync();
         await client.ConnectAsync(System.Net.IPAddress.Loopback, ((System.Net.IPEndPoint)listener.LocalEndpoint).Port);
         using var accepted = await acceptedTask;
-
+        await using var stream = client.GetStream();
         var ex = await Record.ExceptionAsync(() =>
-            service.TcpFallbackAsync(client.GetStream(), "127.0.0.1", 1, new byte[64], "test-scope"));
+            service.TcpFallbackAsync(stream, "127.0.0.1", 1, new byte[64], "test-scope"));
 
         Assert.Null(ex);
         listener.Stop();

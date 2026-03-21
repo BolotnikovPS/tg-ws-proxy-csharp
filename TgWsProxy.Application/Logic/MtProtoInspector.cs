@@ -1,11 +1,12 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
+using TgWsProxy.Domain.Abstractions;
 
-namespace TgWsProxy.Application;
+namespace TgWsProxy.Application.Logic;
 
-internal static class MtProtoUtil
+internal sealed class MtProtoInspector : IMtProtoInspector
 {
-    public static (int? Dc, bool? IsMedia) DcFromInit(byte[] data)
+    public (int? Dc, bool? IsMedia) DcFromInit(byte[] data)
     {
         try
         {
@@ -13,7 +14,11 @@ internal static class MtProtoUtil
             var iv = data.AsSpan(40, 16).ToArray();
             var ks = AesCtr(key, iv, 64);
             Span<byte> plain = stackalloc byte[8];
-            for (var i = 0; i < 8; i++) plain[i] = (byte)(data[56 + i] ^ ks[56 + i]);
+            for (var i = 0; i < 8; i++)
+            {
+                plain[i] = (byte)(data[56 + i] ^ ks[56 + i]);
+            }
+
             var proto = BinaryPrimitives.ReadUInt32LittleEndian(plain[..4]);
             var dcRaw = BinaryPrimitives.ReadInt16LittleEndian(plain[4..6]);
             if (proto is 0xEFEFEFEF or 0xEEEEEEEE or 0xDDDDDDDD)
@@ -32,7 +37,7 @@ internal static class MtProtoUtil
         return (null, null);
     }
 
-    private static byte[] AesCtr(byte[] key, byte[] iv, int len)
+    public byte[] AesCtr(byte[] key, byte[] iv, int len)
     {
         using var aes = Aes.Create();
         aes.Mode = CipherMode.ECB;
@@ -48,22 +53,29 @@ internal static class MtProtoUtil
             var n = Math.Min(16, len - pos);
             Buffer.BlockCopy(block, 0, output, pos, n);
             pos += n;
-            for (var i = 15; i >= 0; i--) if (++ctr[i] != 0) break;
+            for (var i = 15; i >= 0; i--)
+            {
+                if (++ctr[i] != 0)
+                {
+                    break;
+                }
+            }
         }
         return output;
     }
 
-    public static bool IsHttpTransport(ReadOnlySpan<byte> data)
-    {
-        return data.StartsWith("POST "u8) ||
+    public bool IsHttpTransport(ReadOnlySpan<byte> data)
+        => data.StartsWith("POST "u8) ||
                data.StartsWith("GET "u8) ||
                data.StartsWith("HEAD "u8) ||
                data.StartsWith("OPTIONS "u8);
-    }
 
-    public static byte[] PatchInitDc(byte[] data, short dcRaw)
+    public byte[] PatchInitDc(byte[] data, short dcRaw)
     {
-        if (data.Length < 64) return data;
+        if (data.Length < 64)
+        {
+            return data;
+        }
 
         try
         {

@@ -1,15 +1,13 @@
 using System.Net;
 using TgWsProxy.Domain;
 
-namespace TgWsProxy.Application;
+namespace TgWsProxy.Application.StartConfig;
 
 public static class CliParser
 {
     public static Config Parse(string[] args)
     {
         var cfg = new Config();
-        string? authLogin = null;
-        string? authPassword = null;
 
         static string NextValue(string[] argv, ref int index, string argName)
         {
@@ -48,12 +46,6 @@ public static class CliParser
                         cfg.Credentials.Add(new AuthCredential(parts[0], parts[1]));
                         break;
                     }
-                case "--auth-login":
-                    authLogin = NextValue(args, ref i, "--auth-login");
-                    break;
-                case "--auth-password":
-                    authPassword = NextValue(args, ref i, "--auth-password");
-                    break;
                 case "-v":
                 case "--verbose":
                     cfg.Verbose = true;
@@ -62,15 +54,6 @@ public static class CliParser
                 default:
                     throw new ArgumentException($"Unknown argument: {args[i]}");
             }
-        }
-
-        if (!string.IsNullOrEmpty(authLogin) || !string.IsNullOrEmpty(authPassword))
-        {
-            if (string.IsNullOrWhiteSpace(authLogin) || authPassword is null)
-            {
-                throw new ArgumentException("Both --auth-login and --auth-password must be provided");
-            }
-            cfg.Credentials.Add(new AuthCredential(authLogin, authPassword));
         }
 
         return cfg;
@@ -82,9 +65,15 @@ public static class CliParser
         foreach (var entry in dcIpList)
         {
             var parts = entry.Split(':', 2);
-            if (parts.Length != 2) throw new Exception($"Invalid --dc-ip format {entry}, expected DC:IP");
-            _ = IPAddress.Parse(parts[1]);
-            map[int.Parse(parts[0])] = parts[1];
+            if (parts.Length != 2)
+            {
+                throw new Exception($"Invalid --dc-ip format {entry}, expected DC:IP");
+            }
+
+            if (IPAddress.TryParse(parts[1], out _))
+            {
+                map[int.Parse(parts[0])] = parts[1];
+            }
         }
         return map;
     }

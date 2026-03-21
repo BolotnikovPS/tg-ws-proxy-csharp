@@ -1,4 +1,4 @@
-namespace TgWsProxy.Application;
+namespace TgWsProxy.Domain.Exceptions;
 
 public sealed class WsHandshakeException(int statusCode, string statusLine) : Exception($"HTTP {statusCode}: {statusLine}")
 {

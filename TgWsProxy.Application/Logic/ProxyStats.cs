@@ -1,7 +1,6 @@
-using System.Threading;
 using TgWsProxy.Application.Abstractions;
 
-namespace TgWsProxy.Application;
+namespace TgWsProxy.Application.Logic;
 
 internal sealed class ProxyStats : IProxyStats
 {

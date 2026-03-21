@@ -1,6 +1,6 @@
 using TgWsProxy.Domain;
 
-namespace TgWsProxy.Application;
+namespace TgWsProxy.Application.StartConfig;
 
 public static class ConfigValidator
 {

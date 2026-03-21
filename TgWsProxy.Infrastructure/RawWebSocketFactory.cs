@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Domain.Exceptions;
 
 namespace TgWsProxy.Infrastructure;
 
@@ -77,7 +78,11 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger) :
         while (true)
         {
             var line = await ReadLine(ssl).WaitAsync(connectTimeout);
-            if (line.Length == 0) break;
+            if (line.Length == 0)
+            {
+                break;
+            }
+
             lines.Add(line);
         }
 
@@ -91,6 +96,9 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger) :
         return new RawWebSocket(client, ssl, scope, logger);
     }
 
+    /// <summary>
+    /// Логирует таймаут этапа подключения с разным уровнем важности для warmup и боевого трафика.
+    /// </summary>
     private void LogConnectTimeout(string scope, string domain, string stage, TimeoutException ex)
     {
         if (string.Equals(scope, "warmup", StringComparison.OrdinalIgnoreCase))
@@ -102,20 +110,33 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger) :
         logger.LogWarning(ex, "[{Scope}] {Stage} timed out for {Domain}", scope, stage, domain);
     }
 
+    /// <summary>
+    /// Извлекает числовой HTTP-статус из первой строки ответа.
+    /// </summary>
     private static int ParseStatusCode(string statusLine)
     {
         var parts = statusLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         return parts.Length >= 2 && int.TryParse(parts[1], out var code) ? code : 0;
     }
 
+    /// <summary>
+    /// Считывает одну CRLF-строку из потока без завершающих символов перевода строки.
+    /// </summary>
     private static async Task<string> ReadLine(Stream s)
     {
         var b = new List<byte>();
         while (true)
         {
             var one = await IoUtil.ReadExact(s, 1);
-            if (one[0] == '\n') break;
-            if (one[0] != '\r') b.Add(one[0]);
+            if (one[0] == '\n')
+            {
+                break;
+            }
+
+            if (one[0] != '\r')
+            {
+                b.Add(one[0]);
+            }
         }
         return Encoding.ASCII.GetString(b.ToArray());
     }

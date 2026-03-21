@@ -1,14 +1,14 @@
 using Microsoft.Extensions.Logging;
 using System.Buffers.Binary;
-using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
+using TgWsProxy.Domain.Exceptions;
 
-namespace TgWsProxy.Application;
+namespace TgWsProxy.Application.Logic;
 
 internal sealed class ClientSessionHandler(
     Config cfg,
@@ -17,7 +17,8 @@ internal sealed class ClientSessionHandler(
     ITcpBridgeService bridgeService,
     IMtProtoInspector mtProtoInspector,
     IProxyStats stats,
-    ILogger<ClientSessionHandler> logger) : IClientSessionHandler
+    ILogger<ClientSessionHandler> logger
+    ) : IClientSessionHandler
 {
     private const int WsDefaultTimeoutSeconds = 10;
     private const int WsFailTimeoutSeconds = 2;
@@ -33,24 +34,38 @@ internal sealed class ClientSessionHandler(
 
     private static readonly Dictionary<string, (int Dc, bool IsMedia)> IpToDc = new(StringComparer.Ordinal)
     {
-        ["149.154.175.50"] = (1, false), ["149.154.175.51"] = (1, false),
-        ["149.154.175.53"] = (1, false), ["149.154.175.54"] = (1, false),
+        ["149.154.175.50"] = (1, false),
+        ["149.154.175.51"] = (1, false),
+        ["149.154.175.53"] = (1, false),
+        ["149.154.175.54"] = (1, false),
         ["149.154.175.52"] = (1, true),
-        ["149.154.167.41"] = (2, false), ["149.154.167.50"] = (2, false),
-        ["149.154.167.51"] = (2, false), ["149.154.167.220"] = (2, false),
-        ["95.161.76.100"] = (2, false), ["149.154.167.151"] = (2, true),
-        ["149.154.167.222"] = (2, true), ["149.154.167.223"] = (2, true),
+        ["149.154.167.41"] = (2, false),
+        ["149.154.167.50"] = (2, false),
+        ["149.154.167.51"] = (2, false),
+        ["149.154.167.220"] = (2, false),
+        ["95.161.76.100"] = (2, false),
+        ["149.154.167.151"] = (2, true),
+        ["149.154.167.222"] = (2, true),
+        ["149.154.167.223"] = (2, true),
         ["149.154.162.123"] = (2, true),
-        ["149.154.175.100"] = (3, false), ["149.154.175.101"] = (3, false),
+        ["149.154.175.100"] = (3, false),
+        ["149.154.175.101"] = (3, false),
         ["149.154.175.102"] = (3, true),
-        ["149.154.167.91"] = (4, false), ["149.154.167.92"] = (4, false),
-        ["149.154.164.250"] = (4, true), ["149.154.166.120"] = (4, true),
-        ["149.154.166.121"] = (4, true), ["149.154.167.118"] = (4, true),
+        ["149.154.167.91"] = (4, false),
+        ["149.154.167.92"] = (4, false),
+        ["149.154.164.250"] = (4, true),
+        ["149.154.166.120"] = (4, true),
+        ["149.154.166.121"] = (4, true),
+        ["149.154.167.118"] = (4, true),
         ["149.154.165.111"] = (4, true),
-        ["91.108.56.100"] = (5, false), ["91.108.56.101"] = (5, false),
-        ["91.108.56.116"] = (5, false), ["91.108.56.126"] = (5, false),
-        ["149.154.171.5"] = (5, false), ["91.108.56.102"] = (5, true),
-        ["91.108.56.128"] = (5, true), ["91.108.56.151"] = (5, true),
+        ["91.108.56.100"] = (5, false),
+        ["91.108.56.101"] = (5, false),
+        ["91.108.56.116"] = (5, false),
+        ["91.108.56.126"] = (5, false),
+        ["149.154.171.5"] = (5, false),
+        ["91.108.56.102"] = (5, true),
+        ["91.108.56.128"] = (5, true),
+        ["91.108.56.151"] = (5, true),
         ["91.105.192.100"] = (203, false)
     };
 
@@ -59,7 +74,8 @@ internal sealed class ClientSessionHandler(
         stats.IncConnectionsTotal();
         using var _ = client;
         client.NoDelay = true;
-        var stream = client.GetStream();
+        await using var stream = client.GetStream();
+
         logger.LogInformation("[{Scope}] Client connected", context.Scope);
 
         try
@@ -111,7 +127,7 @@ internal sealed class ClientSessionHandler(
             }
 
             var init = await IoUtil.ReadExact(stream, 64, InitReadTimeout, cancellationToken);
-            if (MtProtoUtil.IsHttpTransport(init))
+            if (mtProtoInspector.IsHttpTransport(init))
             {
                 stats.IncConnectionsHttpRejected();
                 logger.LogWarning("[{Scope}] HTTP transport detected on Telegram route; closing", context.Scope);
@@ -127,7 +143,7 @@ internal sealed class ClientSessionHandler(
                 {
                     // Keep Python behavior: patch with dc for media, -dc otherwise.
                     var patchRaw = (short)(isMedia.Value ? dc.Value : -dc.Value);
-                    init = MtProtoUtil.PatchInitDc(init, patchRaw);
+                    init = mtProtoInspector.PatchInitDc(init, patchRaw);
                     logger.LogDebug("[{Scope}] MTProto init patched using destination IP map (DC{Dc}, media={IsMedia})", context.Scope, dc, isMedia);
                 }
             }
@@ -152,12 +168,12 @@ internal sealed class ClientSessionHandler(
 
             var wsTimeout = IsInFailCooldown(dcKey) ? TimeSpan.FromSeconds(WsFailTimeoutSeconds) : TimeSpan.FromSeconds(WsDefaultTimeoutSeconds);
             var domains = WsDomains(dc.Value, mediaFlag);
-            IRawWebSocket? ws = await TryTakePooledWs(dcKey);
+            var ws = await TryTakePooledWs(dcKey);
             var sawRedirect = false;
             var allRedirects = true;
             if (ws is null)
             {
-                SchedulePoolRefill(dcKey, targetIp, domains, wsTimeout, context.Scope);
+                SchedulePoolRefill(dcKey, targetIp, domains, wsTimeout, context.Scope, cancellationToken);
                 foreach (var domain in domains)
                 {
                     try
@@ -165,7 +181,7 @@ internal sealed class ClientSessionHandler(
                         logger.LogDebug("[{Scope}] Try WS {Domain} via {TargetIp}", context.Scope, domain, targetIp);
                         ws = await wsFactory.ConnectAsync(targetIp, domain, "/apiws", context.Scope, wsTimeout);
                         ClearFailCooldown(dcKey);
-                        SchedulePoolRefill(dcKey, targetIp, domains, wsTimeout, context.Scope);
+                        SchedulePoolRefill(dcKey, targetIp, domains, wsTimeout, context.Scope, cancellationToken);
                         break;
                     }
                     catch (WsHandshakeException ex) when (ex.IsRedirect)
@@ -256,67 +272,89 @@ internal sealed class ClientSessionHandler(
                 cancellationToken.ThrowIfCancellationRequested();
                 var dcKey = (dc, media);
                 var domains = WsDomains(dc, media);
-                SchedulePoolRefill(dcKey, targetIp, domains, TimeSpan.FromSeconds(WsDefaultTimeoutSeconds), "warmup");
+                SchedulePoolRefill(dcKey, targetIp, domains, TimeSpan.FromSeconds(WsDefaultTimeoutSeconds), "warmup", cancellationToken);
             }
         }
 
         await Task.CompletedTask;
     }
 
-    private static async Task<bool> HandleSocks5Auth(NetworkStream stream, List<AuthCredential> credentials, CancellationToken cancellationToken)
+    /// <summary>
+    /// Выполняет SOCKS5-согласование и, при необходимости, проверку логина/пароля.
+    /// </summary>
+    private async Task<bool> HandleSocks5Auth(NetworkStream stream, List<AuthCredential> credentials, CancellationToken cancellationToken)
     {
         var greeting = await IoUtil.ReadExact(stream, 2, SocksIoTimeout, cancellationToken);
-        if (greeting[0] != 0x05) return false;
+        if (greeting[0] != 0x05)
+        {
+            return false;
+        }
+
         var methods = await IoUtil.ReadExact(stream, greeting[1], SocksIoTimeout, cancellationToken);
 
         if (credentials.Count > 0)
         {
             if (!methods.Contains((byte)0x02))
             {
-                await stream.WriteAsync(new byte[] { 0x05, 0xff });
+                await stream.WriteAsync(new byte[] { 0x05, 0xff }, cancellationToken);
                 return false;
             }
-            await stream.WriteAsync(new byte[] { 0x05, 0x02 });
+            await stream.WriteAsync(new byte[] { 0x05, 0x02 }, cancellationToken);
             var verUlen = await IoUtil.ReadExact(stream, 2, SocksIoTimeout, cancellationToken);
-            if (verUlen[0] != 0x01) return false;
+            if (verUlen[0] != 0x01)
+            {
+                return false;
+            }
+
             var user = Encoding.UTF8.GetString(await IoUtil.ReadExact(stream, verUlen[1], SocksIoTimeout, cancellationToken));
             var plen = (await IoUtil.ReadExact(stream, 1, SocksIoTimeout, cancellationToken))[0];
             var pass = Encoding.UTF8.GetString(await IoUtil.ReadExact(stream, plen, SocksIoTimeout, cancellationToken));
             var ok = credentials.Any(c => c.Login == user && c.Password == pass);
-            await stream.WriteAsync(ok ? new byte[] { 0x01, 0x00 } : new byte[] { 0x01, 0x01 });
+
+            logger.LogInformation("[{Scope}] Client user", user);
+
+            await stream.WriteAsync(ok ? [0x01, 0x00] : new byte[] { 0x01, 0x01 }, cancellationToken);
             return ok;
         }
 
         if (!methods.Contains((byte)0x00))
         {
-            await stream.WriteAsync(new byte[] { 0x05, 0xff });
+            await stream.WriteAsync(new byte[] { 0x05, 0xff }, cancellationToken);
             return false;
         }
-        await stream.WriteAsync(new byte[] { 0x05, 0x00 });
+        await stream.WriteAsync(new byte[] { 0x05, 0x00 }, cancellationToken);
         return true;
     }
 
+    /// <summary>
+    /// Формирует стандартный SOCKS5-ответ с указанным статусом.
+    /// </summary>
     private static byte[] Socks5Reply(byte status) => [0x05, status, 0x00, 0x01, 0, 0, 0, 0, 0, 0];
 
+    /// <summary>
+    /// Возвращает упорядоченный список доменов WebSocket для заданного DC и типа трафика.
+    /// </summary>
     private static List<string> WsDomains(int dc, bool isMedia)
     {
-        if (dc == 203) dc = 2;
-        if (isMedia) return [$"kws{dc}-1.web.telegram.org", $"kws{dc}.web.telegram.org"];
-        return [$"kws{dc}.web.telegram.org", $"kws{dc}-1.web.telegram.org"];
-    }
-
-    private static bool IsExpectedDisconnect(IOException ex)
-    {
-        if (ex is EndOfStreamException) return true;
-        if (ex.InnerException is SocketException se &&
-            se.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted)
+        if (dc == 203)
         {
-            return true;
+            dc = 2;
         }
 
-        return string.Equals(ex.Message, "Connection closed", StringComparison.OrdinalIgnoreCase);
+        return isMedia
+            ? [$"kws{dc}-1.web.telegram.org", $"kws{dc}.web.telegram.org"]
+            : [$"kws{dc}.web.telegram.org", $"kws{dc}-1.web.telegram.org"];
     }
 
+    /// <summary>
+    /// Проверяет, относится ли исключение к ожидаемому разрыву клиентского соединения.
+    /// </summary>
+    private static bool IsExpectedDisconnect(IOException ex) => ex is EndOfStreamException || (ex.InnerException is SocketException se &&
+            se.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted) || string.Equals(ex.Message, "Connection closed", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Определяет, принадлежит ли IPv4-адрес подсетям Telegram.
+    /// </summary>
     private static bool IsTelegramIp(string dst)
     {
         if (!IPAddress.TryParse(dst, out var ip) || ip.AddressFamily != AddressFamily.InterNetwork)
@@ -332,6 +370,9 @@ internal sealed class ClientSessionHandler(
                InRange(value, "91.108.0.0", "91.108.255.255");
     }
 
+    /// <summary>
+    /// Проверяет, входит ли числовой IP в указанный диапазон.
+    /// </summary>
     private static bool InRange(uint value, string from, string to)
     {
         var start = ToUint(from);
@@ -339,12 +380,18 @@ internal sealed class ClientSessionHandler(
         return value >= start && value <= end;
     }
 
+    /// <summary>
+    /// Преобразует строковый IPv4-адрес в 32-битное целое в сетевом порядке.
+    /// </summary>
     private static uint ToUint(string ip)
     {
         var octets = IPAddress.Parse(ip).GetAddressBytes();
         return ((uint)octets[0] << 24) | ((uint)octets[1] << 16) | ((uint)octets[2] << 8) | octets[3];
     }
 
+    /// <summary>
+    /// Проверяет, действует ли временная блокировка попыток WebSocket-подключения для DC.
+    /// </summary>
     private static bool IsInFailCooldown((int Dc, bool IsMedia) dcKey)
     {
         lock (WsStateLock)
@@ -353,6 +400,9 @@ internal sealed class ClientSessionHandler(
         }
     }
 
+    /// <summary>
+    /// Устанавливает короткий cooldown после неудачной попытки WebSocket-подключения.
+    /// </summary>
     private static void SetFailCooldown((int Dc, bool IsMedia) dcKey)
     {
         lock (WsStateLock)
@@ -361,6 +411,9 @@ internal sealed class ClientSessionHandler(
         }
     }
 
+    /// <summary>
+    /// Снимает cooldown после успешного WebSocket-подключения.
+    /// </summary>
     private static void ClearFailCooldown((int Dc, bool IsMedia) dcKey)
     {
         lock (WsStateLock)
@@ -369,6 +422,9 @@ internal sealed class ClientSessionHandler(
         }
     }
 
+    /// <summary>
+    /// Проверяет, переведен ли DC в постоянный режим TCP fallback.
+    /// </summary>
     private static bool IsBlacklisted((int Dc, bool IsMedia) dcKey)
     {
         lock (WsStateLock)
@@ -377,6 +433,9 @@ internal sealed class ClientSessionHandler(
         }
     }
 
+    /// <summary>
+    /// Добавляет DC в постоянный черный список для WebSocket.
+    /// </summary>
     private static void AddBlacklist((int Dc, bool IsMedia) dcKey)
     {
         lock (WsStateLock)
@@ -385,7 +444,10 @@ internal sealed class ClientSessionHandler(
         }
     }
 
-    private async Task<IRawWebSocket?> TryTakePooledWs((int Dc, bool IsMedia) dcKey)
+    /// <summary>
+    /// Пытается взять живое WebSocket-соединение из пула для указанного DC.
+    /// </summary>
+    private async Task<IRawWebSocket> TryTakePooledWs((int Dc, bool IsMedia) dcKey)
     {
         (IRawWebSocket Ws, DateTimeOffset Created)? item = null;
         lock (WsStateLock)
@@ -405,25 +467,42 @@ internal sealed class ClientSessionHandler(
             }
         }
 
-        if (item is null) stats.IncPoolMiss();
-        else stats.IncPoolHit();
+        if (item is null)
+        {
+            stats.IncPoolMiss();
+        }
+        else
+        {
+            stats.IncPoolHit();
+        }
+
         await Task.CompletedTask;
         return item?.Ws;
     }
 
-    private void SchedulePoolRefill((int Dc, bool IsMedia) dcKey, string targetIp, List<string> domains, TimeSpan timeout, string scope)
+    /// <summary>
+    /// Запускает фоновое пополнение пула WebSocket-соединений для указанного DC.
+    /// </summary>
+    private void SchedulePoolRefill((int Dc, bool IsMedia) dcKey, string targetIp, List<string> domains, TimeSpan timeout, string scope, CancellationToken cancellationToken)
     {
         lock (WsStateLock)
         {
-            if (!WsPoolRefilling.Add(dcKey)) return;
+            if (!WsPoolRefilling.Add(dcKey))
+            {
+                return;
+            }
         }
 
-        _ = Task.Run(async () =>
+        Task.Run(async () =>
         {
             try
             {
                 var ws = await ConnectOneForPool(targetIp, domains, timeout, scope);
-                if (ws is null) return;
+                if (ws is null)
+                {
+                    return;
+                }
+
                 lock (WsStateLock)
                 {
                     if (!WsPool.TryGetValue(dcKey, out var bucket))
@@ -434,9 +513,9 @@ internal sealed class ClientSessionHandler(
                     bucket.Add((ws, DateTimeOffset.UtcNow));
                     while (bucket.Count > 4)
                     {
-                        var old = bucket[0];
+                        var (Ws, Created) = bucket[0];
                         bucket.RemoveAt(0);
-                        _ = Task.Run(async () => { try { await old.Ws.Close(); } catch { } });
+                        Task.Run(async () => { try { await Ws.Close(); } catch { } }, cancellationToken);
                     }
                 }
             }
@@ -451,10 +530,13 @@ internal sealed class ClientSessionHandler(
                     WsPoolRefilling.Remove(dcKey);
                 }
             }
-        });
+        }, cancellationToken);
     }
 
-    private async Task<IRawWebSocket?> ConnectOneForPool(string targetIp, List<string> domains, TimeSpan timeout, string scope)
+    /// <summary>
+    /// Создает одно WebSocket-соединение для пула, перебирая список доменов.
+    /// </summary>
+    private async Task<IRawWebSocket> ConnectOneForPool(string targetIp, List<string> domains, TimeSpan timeout, string scope)
     {
         foreach (var domain in domains)
         {

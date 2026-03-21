@@ -12,13 +12,17 @@ public static class IoUtil
         while (pos < len)
         {
             var n = await stream.ReadAsync(buf.AsMemory(pos, len - pos), ct);
-            if (n == 0) throw new IOException("Connection closed");
+            if (n == 0)
+            {
+                throw new EndOfStreamException();
+            }
+
             pos += n;
         }
         return buf;
     }
 
-    public static async Task<byte[]> ReadExact(Stream stream, int len, TimeSpan timeout, CancellationToken ct = default)
+    public static async Task<byte[]> ReadExact(Stream stream, int len, TimeSpan timeout, CancellationToken ct)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);

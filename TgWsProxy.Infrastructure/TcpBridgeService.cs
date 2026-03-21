@@ -1,5 +1,6 @@
+#nullable enable
+
 using Microsoft.Extensions.Logging;
-using System.IO;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using TgWsProxy.Application.Abstractions;
@@ -18,7 +19,11 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
             while (!cts.IsCancellationRequested)
             {
                 var n = await client.ReadAsync(buf, cts.Token);
-                if (n == 0) break;
+                if (n == 0)
+                {
+                    break;
+                }
+
                 var payload = buf.AsSpan(0, n).ToArray();
                 stats.AddBytesUp(payload.Length);
                 if (splitter is null)
@@ -39,7 +44,11 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
             while (!cts.IsCancellationRequested)
             {
                 var data = await ws.Recv();
-                if (data is null) break;
+                if (data is null)
+                {
+                    break;
+                }
+
                 stats.AddBytesDown(data.Length);
                 await client.WriteAsync(data, cts.Token);
             }
@@ -64,6 +73,9 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
     public async Task TcpPassthroughAsync(NetworkStream client, string dst, int port, string scope)
         => await BridgeTcpAsync(client, dst, port, scope, null, "passthrough");
 
+    /// <summary>
+    /// Создает двунаправленный TCP-мост между клиентом и удаленным хостом.
+    /// </summary>
     private async Task BridgeTcpAsync(NetworkStream client, string dst, int port, string scope, byte[]? init, string mode)
     {
         using var remote = new TcpClient();
@@ -98,8 +110,8 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         }
 
         using var cts = new CancellationTokenSource();
-        var t1 = PipeAsync(client, rs, cts.Token, true);
-        var t2 = PipeAsync(rs, client, cts.Token, false);
+        var t1 = PipeAsync(client, rs, true, cts.Token);
+        var t2 = PipeAsync(rs, client, false, cts.Token);
         await Task.WhenAny(t1, t2);
         cts.Cancel();
         await Task.WhenAll(
@@ -107,18 +119,36 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
             IgnorePipeTaskErrors(t2, scope, $"{mode}:remote->client"));
     }
 
-    private async Task PipeAsync(Stream src, Stream dst, CancellationToken ct, bool upstream)
+    /// <summary>
+    /// Копирует данные из одного потока в другой и учитывает переданный трафик.
+    /// </summary>
+    private async Task PipeAsync(Stream src, Stream dst, bool upstream, CancellationToken ct)
     {
         var buf = new byte[65536];
         while (!ct.IsCancellationRequested)
         {
             var n = await src.ReadAsync(buf, ct);
-            if (n == 0) break;
-            if (upstream) stats.AddBytesUp(n); else stats.AddBytesDown(n);
+            if (n == 0)
+            {
+                break;
+            }
+
+            if (upstream)
+            {
+                stats.AddBytesUp(n);
+            }
+            else
+            {
+                stats.AddBytesDown(n);
+            }
+
             await dst.WriteAsync(buf.AsMemory(0, n), ct);
         }
     }
 
+    /// <summary>
+    /// Ожидает завершение задачи моста и подавляет ожидаемые ошибки отключения.
+    /// </summary>
     private async Task IgnoreTaskErrors(Task task, string scope, string channel)
     {
         try
@@ -144,6 +174,9 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         }
     }
 
+    /// <summary>
+    /// Ожидает завершение TCP-задачи и мягко обрабатывает типовые ошибки разрыва.
+    /// </summary>
     private async Task IgnorePipeTaskErrors(Task task, string scope, string channel)
     {
         try
@@ -169,18 +202,15 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         }
     }
 
-    private sealed class MtProtoMsgSplitter
+    private sealed class MtProtoMsgSplitter(byte[] init)
     {
-        private readonly byte[] key;
-        private readonly byte[] iv;
+        private readonly byte[] key = init.AsSpan(8, 32).ToArray();
+        private readonly byte[] iv = init.AsSpan(40, 16).ToArray();
         private long streamOffset = 64; // skip init packet keystream like Python implementation
 
-        public MtProtoMsgSplitter(byte[] init)
-        {
-            key = init.AsSpan(8, 32).ToArray();
-            iv = init.AsSpan(40, 16).ToArray();
-        }
-
+        /// <summary>
+        /// Расшифровывает chunk и, при наличии нескольких MTProto-сообщений, разбивает его на части.
+        /// </summary>
         public IReadOnlyList<byte[]> Split(byte[] chunk)
         {
             var plain = DecryptChunk(chunk);
@@ -192,8 +222,12 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
                 var first = plain[pos];
                 if (first == 0x7f)
                 {
-                    if (pos + 4 > plain.Length) break;
-                    msgLen = ((plain[pos + 1]) | (plain[pos + 2] << 8) | (plain[pos + 3] << 16)) * 4;
+                    if (pos + 4 > plain.Length)
+                    {
+                        break;
+                    }
+
+                    msgLen = (plain[pos + 1] | (plain[pos + 2] << 8) | (plain[pos + 3] << 16)) * 4;
                     pos += 4;
                 }
                 else
@@ -202,12 +236,20 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
                     pos += 1;
                 }
 
-                if (msgLen == 0 || pos + msgLen > plain.Length) break;
+                if (msgLen == 0 || pos + msgLen > plain.Length)
+                {
+                    break;
+                }
+
                 pos += msgLen;
                 boundaries.Add(pos);
             }
 
-            if (boundaries.Count <= 1) return [chunk];
+            if (boundaries.Count <= 1)
+            {
+                return [chunk];
+            }
+
             var parts = new List<byte[]>(boundaries.Count + 1);
             var prev = 0;
             foreach (var b in boundaries)
@@ -215,10 +257,17 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
                 parts.Add(chunk[prev..b]);
                 prev = b;
             }
-            if (prev < chunk.Length) parts.Add(chunk[prev..]);
+            if (prev < chunk.Length)
+            {
+                parts.Add(chunk[prev..]);
+            }
+
             return parts;
         }
 
+        /// <summary>
+        /// Выполняет дешифрование фрагмента MTProto потоком AES-CTR с учетом смещения.
+        /// </summary>
         private byte[] DecryptChunk(byte[] chunk)
         {
             var ks = Keystream(streamOffset, chunk.Length);
@@ -231,6 +280,9 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
             return plain;
         }
 
+        /// <summary>
+        /// Генерирует последовательность ключевого потока AES-CTR для указанного диапазона.
+        /// </summary>
         private byte[] Keystream(long offset, int len)
         {
             using var aes = Aes.Create();
@@ -258,13 +310,16 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
             return output;
         }
 
+        /// <summary>
+        /// Вычисляет значение счетчика CTR для заданного индекса блока.
+        /// </summary>
         private byte[] CounterAt(long blockIndex)
         {
             var ctr = iv.ToArray();
             var carry = (ulong)blockIndex;
             for (var b = 15; b >= 0 && carry != 0; b--)
             {
-                var sum = (ulong)ctr[b] + (carry & 0xFF);
+                var sum = ctr[b] + (carry & 0xFF);
                 ctr[b] = (byte)sum;
                 carry = (carry >> 8) + (sum >> 8);
             }

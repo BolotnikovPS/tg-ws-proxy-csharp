@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure;
 
@@ -27,17 +28,19 @@ catch (Exception e)
 var services = new ServiceCollection();
 services.AddLogging(builder =>
 {
-    builder.ClearProviders();
-    builder.AddSimpleConsole(options =>
+    builder.ClearProviders()
+    .AddSimpleConsole(options =>
     {
         options.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff ";
         options.SingleLine = true;
-    });
-    builder.SetMinimumLevel(cfg.Verbose ? LogLevel.Debug : LogLevel.Information);
+    })
+    .SetMinimumLevel(cfg.Verbose ? LogLevel.Debug : LogLevel.Information);
 })
-    .AddProxyCore(cfg, dcOpt)
+    .AddSingleton(cfg)
+    .AddSingleton(dcOpt)
     .AddProxyApplication()
     .AddProxyInfrastructure();
+
 await using var provider = services.BuildServiceProvider();
 var runtimeLoggerFactory = provider.GetRequiredService<ILoggerFactory>();
 var runtimeLogger = runtimeLoggerFactory.CreateLogger("runtime");
@@ -60,7 +63,7 @@ TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
     eventArgs.SetObserved();
 };
 
-var startupLogger = provider.GetRequiredService<ILogger<Program>>();
+var startupLogger = runtimeLoggerFactory.CreateLogger<ILogger<Program>>();
 if (cfg.Credentials.Count > 0)
 {
     startupLogger.LogInformation("SOCKS5 auth enabled. Accounts: {Count}", cfg.Credentials.Count);
@@ -74,12 +77,14 @@ var server = provider.GetRequiredService<IProxyServer>();
 var sessionHandler = provider.GetRequiredService<IClientSessionHandler>();
 var stats = provider.GetRequiredService<IProxyStats>();
 using var cts = new CancellationTokenSource();
+
 Console.CancelKeyPress += (_, eventArgs) =>
 {
     eventArgs.Cancel = true;
     cts.Cancel();
 };
-var statsTask = Task.Run(async () =>
+
+var statsTask = Task.Factory.StartNew(async () =>
 {
     while (!cts.Token.IsCancellationRequested)
     {
@@ -93,7 +98,12 @@ var statsTask = Task.Run(async () =>
             break;
         }
     }
-}, cts.Token);
+},
+cts.Token,
+TaskCreationOptions.LongRunning,
+TaskScheduler.Current
+).Unwrap();
+
 try
 {
     await sessionHandler.WarmupAsync(cts.Token);

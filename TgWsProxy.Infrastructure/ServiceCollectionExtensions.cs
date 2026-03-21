@@ -6,10 +6,7 @@ namespace TgWsProxy.Infrastructure;
 public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddProxyInfrastructure(this IServiceCollection services)
-    {
-        services.AddSingleton<ITcpBridgeService, TcpBridgeService>();
-        services.AddSingleton<IRawWebSocketFactory, RawWebSocketFactory>();
-        services.AddSingleton<IProxyServer, ProxyServer>();
-        return services;
-    }
+        => services.AddSingleton<ITcpBridgeService, TcpBridgeService>()
+            .AddSingleton<IRawWebSocketFactory, RawWebSocketFactory>()
+            .AddSingleton<IProxyServer, ProxyServer>();
 }
