@@ -2,6 +2,8 @@
   <Folder Name="/Элементы решения/">
     <File Path="Directory.Build.props" />
     <File Path="Directory.Packages.props" />
+    <File Path="docker-compose.yml" />
+    <File Path="Dockerfile" />
     <File Path="README.md" />
   </Folder>
   <Project Path="TgWsProxy.Application/TgWsProxy.Application.csproj" Id="3ca59396-74c6-439e-bc65-d1ba628fb457" />

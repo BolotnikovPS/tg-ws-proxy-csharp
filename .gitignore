@@ -362,3 +362,9 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /Rents.View/Docs/ContractRent.html
+
+# Cursor/VS temporary artifacts (extra protection)
+**/.vs/
+*.vsidx
+DocumentLayout.json
+DocumentLayout.backup.json

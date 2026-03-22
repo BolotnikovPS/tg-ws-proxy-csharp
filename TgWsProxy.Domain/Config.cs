@@ -7,4 +7,5 @@ public sealed class Config
     public List<string> DcIp { get; } = [];
     public List<AuthCredential> Credentials { get; } = [];
     public bool Verbose { get; set; }
+    public string LogPath { get; set; }
 }

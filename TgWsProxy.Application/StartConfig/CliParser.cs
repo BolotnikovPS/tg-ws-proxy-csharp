@@ -51,6 +51,10 @@ public static class CliParser
                     cfg.Verbose = true;
                     break;
 
+                case "--log-path":
+                    cfg.LogPath = NextValue(args, ref i, "--log-path");
+                    break;
+
                 default:
                     throw new ArgumentException($"Unknown argument: {args[i]}");
             }

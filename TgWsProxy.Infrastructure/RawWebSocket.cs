@@ -93,6 +93,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
     /// <summary>
     /// Считывает следующий WebSocket-фрейм и возвращает его opcode и полезную нагрузку.
     /// </summary>
+    /// <returns>Кортеж из opcode и payload прочитанного фрейма.</returns>
     private async Task<(byte Opcode, byte[] Payload)> ReadFrame()
     {
         var hdr = await IoUtil.ReadExact(ssl, 2);
@@ -121,6 +122,10 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
     /// <summary>
     /// Формирует бинарный WebSocket-фрейм с опциональной маскировкой payload.
     /// </summary>
+    /// <param name="opcode">Код операции WebSocket-фрейма.</param>
+    /// <param name="payload">Полезная нагрузка фрейма.</param>
+    /// <param name="mask">Признак необходимости маскирования payload.</param>
+    /// <returns>Готовый буфер фрейма для отправки.</returns>
     private static byte[] BuildFrame(byte opcode, byte[] payload, bool mask)
     {
         var ms = new MemoryStream();
@@ -163,6 +168,8 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
     /// <summary>
     /// Применяет XOR-маску к буферу данных по циклическому ключу длиной 4 байта.
     /// </summary>
+    /// <param name="data">Буфер данных для модификации.</param>
+    /// <param name="mask">4-байтовая маска WebSocket.</param>
     private static void XorMask(byte[] data, byte[] mask)
     {
         for (var i = 0; i < data.Length; i++)
@@ -174,6 +181,8 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
     /// <summary>
     /// Считывает одну CRLF-строку из потока без символов окончания строки.
     /// </summary>
+    /// <param name="s">Поток чтения.</param>
+    /// <returns>Считанная строка без CRLF.</returns>
     private static async Task<string> ReadLine(Stream s)
     {
         var b = new List<byte>();

@@ -76,6 +76,12 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
     /// <summary>
     /// Создает двунаправленный TCP-мост между клиентом и удаленным хостом.
     /// </summary>
+    /// <param name="client">Поток клиентского подключения.</param>
+    /// <param name="dst">Целевой адрес удаленного сервера.</param>
+    /// <param name="port">Целевой порт удаленного сервера.</param>
+    /// <param name="scope">Идентификатор скоупа для логирования.</param>
+    /// <param name="init">Необязательный инициализационный пакет для предварительной отправки.</param>
+    /// <param name="mode">Режим моста (fallback/passthrough) для логов.</param>
     private async Task BridgeTcpAsync(NetworkStream client, string dst, int port, string scope, byte[]? init, string mode)
     {
         using var remote = new TcpClient();
@@ -122,6 +128,10 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
     /// <summary>
     /// Копирует данные из одного потока в другой и учитывает переданный трафик.
     /// </summary>
+    /// <param name="src">Исходный поток чтения.</param>
+    /// <param name="dst">Целевой поток записи.</param>
+    /// <param name="upstream">Признак направления client->remote.</param>
+    /// <param name="ct">Токен отмены операции копирования.</param>
     private async Task PipeAsync(Stream src, Stream dst, bool upstream, CancellationToken ct)
     {
         var buf = new byte[65536];
@@ -149,6 +159,9 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
     /// <summary>
     /// Ожидает завершение задачи моста и подавляет ожидаемые ошибки отключения.
     /// </summary>
+    /// <param name="task">Задача канала моста.</param>
+    /// <param name="scope">Идентификатор скоупа для логирования.</param>
+    /// <param name="channel">Логическое имя канала передачи.</param>
     private async Task IgnoreTaskErrors(Task task, string scope, string channel)
     {
         try
@@ -177,6 +190,9 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
     /// <summary>
     /// Ожидает завершение TCP-задачи и мягко обрабатывает типовые ошибки разрыва.
     /// </summary>
+    /// <param name="task">Задача канала TCP fallback/passthrough.</param>
+    /// <param name="scope">Идентификатор скоупа для логирования.</param>
+    /// <param name="channel">Логическое имя канала передачи.</param>
     private async Task IgnorePipeTaskErrors(Task task, string scope, string channel)
     {
         try
@@ -211,6 +227,8 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         /// <summary>
         /// Расшифровывает chunk и, при наличии нескольких MTProto-сообщений, разбивает его на части.
         /// </summary>
+        /// <param name="chunk">Шифрованный chunk из входящего потока.</param>
+        /// <returns>Список chunk-частей для последовательной отправки.</returns>
         public IReadOnlyList<byte[]> Split(byte[] chunk)
         {
             var plain = DecryptChunk(chunk);
@@ -268,6 +286,8 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         /// <summary>
         /// Выполняет дешифрование фрагмента MTProto потоком AES-CTR с учетом смещения.
         /// </summary>
+        /// <param name="chunk">Шифрованный фрагмент входящего потока.</param>
+        /// <returns>Дешифрованные байты фрагмента.</returns>
         private byte[] DecryptChunk(byte[] chunk)
         {
             var ks = Keystream(streamOffset, chunk.Length);
@@ -283,6 +303,9 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         /// <summary>
         /// Генерирует последовательность ключевого потока AES-CTR для указанного диапазона.
         /// </summary>
+        /// <param name="offset">Смещение в шифропотоке.</param>
+        /// <param name="len">Требуемая длина ключевого потока.</param>
+        /// <returns>Ключевой поток заданной длины.</returns>
         private byte[] Keystream(long offset, int len)
         {
             using var aes = Aes.Create();
@@ -313,6 +336,8 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         /// <summary>
         /// Вычисляет значение счетчика CTR для заданного индекса блока.
         /// </summary>
+        /// <param name="blockIndex">Индекс 16-байтового блока в потоке.</param>
+        /// <returns>Буфер счетчика для шифрования блока.</returns>
         private byte[] CounterAt(long blockIndex)
         {
             var ctr = iv.ToArray();

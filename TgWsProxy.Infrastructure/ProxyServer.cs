@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Sockets;
+using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
@@ -26,12 +27,11 @@ internal sealed class ProxyServer(Config cfg, IClientSessionHandler sessionHandl
                 var peer = client.Client.RemoteEndPoint?.ToString() ?? "?";
                 var scope = $"{peer}|{connectionId}";
                 var context = new ClientContext(scope, peer, connectionId);
-                _ = Task.Factory.StartNew(
-                    () => sessionHandler.HandleAsync(client, context, cancellationToken),
-                    cancellationToken,
-                    TaskCreationOptions.LongRunning,
-                    TaskScheduler.Current
-                    ).Unwrap();
+                BackgroundTaskRunner.RunDetachedSafe(
+                    async ct => await sessionHandler.HandleAsync(client, context, ct),
+                    logger,
+                    $"[{scope}] client session",
+                    cancellationToken);
             }
             catch (OperationCanceledException)
             {

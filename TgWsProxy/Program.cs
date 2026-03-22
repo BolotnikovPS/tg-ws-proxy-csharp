@@ -1,5 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Serilog;
+using Serilog.Events;
+using Serilog.Formatting.Compact;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.StartConfig;
@@ -9,8 +12,9 @@ using TgWsProxy.Infrastructure;
 var cfg = CliParser.Parse(args);
 if (cfg.DcIp.Count == 0)
 {
+    // IP должны соответствовать номеру DC: для WSS используется SNI kws{N}.web.telegram.org к этому адресу.
     cfg.DcIp.Add("2:149.154.167.220");
-    cfg.DcIp.Add("4:149.154.167.220");
+    cfg.DcIp.Add("4:149.154.167.91");
 }
 
 Dictionary<int, string> dcOpt;
@@ -28,13 +32,17 @@ catch (Exception e)
 var services = new ServiceCollection();
 services.AddLogging(builder =>
 {
-    builder.ClearProviders()
-    .AddSimpleConsole(options =>
+    var logLevel = cfg.Verbose ? LogEventLevel.Debug : LogEventLevel.Information;
+
+    var loggerConfiguration = new LoggerConfiguration()
+        .WriteTo.Console(logLevel);
+
+    if (!string.IsNullOrWhiteSpace(cfg.LogPath))
     {
-        options.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff ";
-        options.SingleLine = true;
-    })
-    .SetMinimumLevel(cfg.Verbose ? LogLevel.Debug : LogLevel.Information);
+        loggerConfiguration.WriteTo.File(new CompactJsonFormatter(), cfg.LogPath, logLevel, rollingInterval: RollingInterval.Hour);
+    }
+
+    builder.AddSerilog(loggerConfiguration.CreateLogger());
 })
     .AddSingleton(cfg)
     .AddSingleton(dcOpt)

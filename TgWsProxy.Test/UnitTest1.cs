@@ -49,6 +49,75 @@ public class UnitTest1
         Assert.Null(Dc);
     }
 
+    [Theory]
+    [InlineData("GET / HTTP/1.1\r\n", true)]
+    [InlineData("POST /api HTTP/1.1\r\n", true)]
+    [InlineData("OPTIONS / HTTP/1.1\r\n", true)]
+    [InlineData("HEAD / HTTP/1.1\r\n", true)]
+    [InlineData("CONNECT host:443 HTTP/1.1\r\n", false)]
+    [InlineData("XXXX / HTTP/1.1\r\n", false)]
+    public void MtProtoInspector_IsHttpTransport_DetectsKnownMethods(string line, bool expected)
+    {
+        var inspector = new MtProtoInspector();
+        var data = System.Text.Encoding.ASCII.GetBytes(line);
+
+        var actual = inspector.IsHttpTransport(data);
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public void MtProtoInspector_AesCtr_ReturnsRequestedLength()
+    {
+        var inspector = new MtProtoInspector();
+        var key = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
+        var iv = Enumerable.Range(0, 16).Select(i => (byte)(255 - i)).ToArray();
+
+        var stream = inspector.AesCtr(key, iv, 64);
+
+        Assert.Equal(64, stream.Length);
+        Assert.NotEqual(new byte[64], stream);
+    }
+
+    [Fact]
+    public void MtProtoInspector_PatchInitDc_LeavesShortPacketUnchanged()
+    {
+        var inspector = new MtProtoInspector();
+        var data = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
+
+        var patched = inspector.PatchInitDc(data, -2);
+
+        Assert.Equal(data, patched);
+    }
+
+    [Fact]
+    public void ProxyStats_Summary_ReflectsCounters()
+    {
+        var stats = new ProxyStats();
+        stats.IncConnectionsTotal();
+        stats.IncConnectionsWs();
+        stats.IncConnectionsTcpFallback();
+        stats.IncConnectionsHttpRejected();
+        stats.IncConnectionsPassthrough();
+        stats.IncWsErrors();
+        stats.IncPoolHit();
+        stats.IncPoolMiss();
+        stats.AddBytesUp(42);
+        stats.AddBytesDown(84);
+
+        var summary = stats.Summary();
+
+        Assert.Contains("total=1", summary);
+        Assert.Contains("ws=1", summary);
+        Assert.Contains("tcp_fb=1", summary);
+        Assert.Contains("http_skip=1", summary);
+        Assert.Contains("pass=1", summary);
+        Assert.Contains("err=1", summary);
+        Assert.Contains("pool=1/2", summary);
+        Assert.Contains("up=42B", summary);
+        Assert.Contains("down=84B", summary);
+    }
+
     [Fact]
     public async Task TcpBridgeService_Fallback_Unreachable_DoesNotThrow()
     {
