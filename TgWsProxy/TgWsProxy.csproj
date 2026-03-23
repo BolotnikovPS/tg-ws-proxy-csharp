@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+	<Version>2.0</Version>
+    <RootNamespace>TgWsProxy</RootNamespace>
+	<DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+	<RuntimeIdentifiers>linux-x64;linux-arm64</RuntimeIdentifiers>
+	<EnableSdkContainerDebugging>True</EnableSdkContainerDebugging>
+  </PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Serilog.AspNetCore" />
+		<PackageReference Include="Serilog.Extensions.Hosting" />
+		<PackageReference Include="Serilog.Extensions.Logging.File" />
+		<PackageReference Include="Serilog.Sinks.File" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="TgWsProxy.Test" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\TgWsProxy.Infrastructure\TgWsProxy.Infrastructure.csproj" />
+	</ItemGroup>
+
+</Project>

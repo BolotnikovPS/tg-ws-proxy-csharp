@@ -1,0 +1,9 @@
+.git
+.vs
+**/bin
+**/obj
+**/*.user
+**/*.suo
+**/*.rsuser
+README.md
+LICENSE

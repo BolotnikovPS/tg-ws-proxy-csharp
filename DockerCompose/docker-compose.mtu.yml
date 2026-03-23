@@ -1,0 +1,12 @@
+# Снижение MTU сети контейнера (частая причина «TLS timeout / EOF только в Docker» при VPN или PPPoE на хосте).
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.mtu.yml up -d
+networks:
+  tg_proxy:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1400"
+
+services:
+  tg-ws-proxy:
+    networks:
+      - tg_proxy
