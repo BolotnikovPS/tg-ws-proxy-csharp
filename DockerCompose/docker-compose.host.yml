@@ -1,0 +1,6 @@
+# Только Linux. Исходящий трафик контейнера = как у хоста (часто помогает при VPN/MTU с bridge).
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
+# Порт SOCKS5 — на интерфейсе хоста (см. TG_PORT); секция ports в базовом compose игнорируется.
+services:
+  tg-ws-proxy:
+    network_mode: host

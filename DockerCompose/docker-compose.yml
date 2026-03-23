@@ -1,10 +1,12 @@
 # Образ с Docker Hub: https://hub.docker.com/r/pboldev/tg-ws-proxy
-# Сборка из Dockerfile: см. docker-compose.build.yml
+
+# TG_WS_TIMEOUT — таймаут TCP+TLS+WS; при проблемах только в Docker см. README и оверлеи:
+#   docker-compose.mtu.yml | docker-compose.dns.yml | docker-compose.host.yml (Linux)
+
 services:
   tg-ws-proxy:
     container_name: tg-ws-proxy
-    image: pboldev/tg-ws-proxy:2.0.0
-    pull_policy: always
+    image: pboldev/tg-ws-proxy:2.0
     restart: unless-stopped
     ports:
       - "${TG_PORT:-1080}:${TG_PORT:-1080}"
@@ -13,10 +15,12 @@ services:
       - "${TG_HOST:-0.0.0.0}"
       - "--port"
       - "${TG_PORT:-1080}"
+      - "--ws-timeout"
+      - "${TG_WS_TIMEOUT:-10}"
       - "--dc-ip"
       - "${TG_DC_IP_1:-2:149.154.167.220}"
       - "--dc-ip"
-      - "${TG_DC_IP_2:-4:149.154.167.91}"
+      - "${TG_DC_IP_2:-4:149.154.167.220}"
       # Чтобы включить логирование:
       # - "--verbose"
       #

@@ -8,7 +8,7 @@ using TgWsProxy.Infrastructure;
 
 namespace TgWsProxy.Test;
 
-public class UnitTest1
+public class UnitTest
 {
     [Fact]
     public void CliParser_Parses_MultipleAuth_AndFlags()
@@ -39,6 +39,39 @@ public class UnitTest1
         var cfg = new Config { Port = 70000 };
         Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(cfg));
     }
+
+    [Fact]
+    public void CliParser_Parses_WsTimeout()
+    {
+        var cfg = CliParser.Parse(["--ws-timeout", "60"]);
+        Assert.Equal(60, cfg.WsConnectTimeoutSeconds);
+    }
+
+    [Fact]
+    public void ConfigValidator_Rejects_WsTimeout_OutOfRange()
+    {
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(new Config { WsConnectTimeoutSeconds = 0 }));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(new Config { WsConnectTimeoutSeconds = 400 }));
+    }
+
+    [Fact]
+    public void CliParser_Parses_BufKb_PoolSize_LogRotation()
+    {
+        var cfg = CliParser.Parse([
+            "--buf-kb", "512",
+            "--pool-size", "2",
+            "--log-max-mb", "5",
+            "--log-backups", "3"
+        ]);
+        Assert.Equal(512, cfg.SocketBufferKb);
+        Assert.Equal(2, cfg.WsPoolSize);
+        Assert.Equal(5, cfg.LogMaxMegabytes);
+        Assert.Equal(3, cfg.LogRetainedFileCount);
+    }
+
+    [Fact]
+    public void Config_Default_WsTimeout_Is_Ten_Seconds()
+        => Assert.Equal(10, new Config().WsConnectTimeoutSeconds);
 
     [Fact]
     public void MtProtoInspector_ReturnsNull_OnGarbage()
@@ -130,7 +163,7 @@ public class UnitTest1
         using var accepted = await acceptedTask;
         await using var stream = client.GetStream();
         var ex = await Record.ExceptionAsync(() =>
-            service.TcpFallbackAsync(stream, "127.0.0.1", 1, new byte[64], "test-scope"));
+            service.TcpFallbackAsync(stream, "127.0.0.1", 1, new byte[64], "test-scope", CancellationToken.None));
 
         Assert.Null(ex);
         listener.Stop();

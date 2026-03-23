@@ -1,0 +1,7 @@
+# Явные DNS в контейнере (если в bridge-сети «битые» ответы или таймауты).
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.dns.yml up -d
+services:
+  tg-ws-proxy:
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8

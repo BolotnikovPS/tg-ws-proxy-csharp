@@ -3,7 +3,6 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
@@ -22,7 +21,6 @@ internal sealed class ClientSessionHandler(
     ILogger<ClientSessionHandler> logger
     ) : IClientSessionHandler
 {
-    private const int WsDefaultTimeoutSeconds = 10;
     private const int WsFailTimeoutSeconds = 2;
     private static readonly TimeSpan SocksIoTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan InitReadTimeout = TimeSpan.FromSeconds(15);
@@ -71,6 +69,9 @@ internal sealed class ClientSessionHandler(
         stats.IncConnectionsTotal();
         using var _ = client;
         client.NoDelay = true;
+        var sockBuf = Math.Max(4, cfg.SocketBufferKb) * 1024;
+        client.ReceiveBufferSize = sockBuf;
+        client.SendBufferSize = sockBuf;
         await using var stream = client.GetStream();
 
         logger.LogInformation("[{Scope}] Client connected", context.Scope);
@@ -119,7 +120,7 @@ internal sealed class ClientSessionHandler(
             {
                 stats.IncConnectionsPassthrough();
                 logger.LogDebug("[{Scope}] Non-Telegram destination {Dst}:{Port}, TCP passthrough", context.Scope, dst, port);
-                await bridgeService.TcpPassthroughAsync(stream, dst, port, context.Scope);
+                await bridgeService.TcpPassthroughAsync(stream, dst, port, context.Scope, cancellationToken);
                 return;
             }
 
@@ -149,7 +150,7 @@ internal sealed class ClientSessionHandler(
             {
                 logger.LogWarning("[{Scope}] Unknown DC for {Dst}:{Port}, fallback TCP", context.Scope, dst, port);
                 stats.IncConnectionsTcpFallback();
-                await bridgeService.TcpFallbackAsync(stream, dst, port, init, context.Scope);
+                await bridgeService.TcpFallbackAsync(stream, dst, port, init, context.Scope, cancellationToken);
                 return;
             }
 
@@ -159,11 +160,13 @@ internal sealed class ClientSessionHandler(
             {
                 logger.LogDebug("[{Scope}] DC{Dc} media={IsMedia} WS blacklisted; using TCP fallback", context.Scope, dc, mediaFlag);
                 stats.IncConnectionsTcpFallback();
-                await bridgeService.TcpFallbackAsync(stream, dst, port, init, context.Scope);
+                await bridgeService.TcpFallbackAsync(stream, dst, port, init, context.Scope, cancellationToken);
                 return;
             }
 
-            var wsTimeout = wsRoutingState.IsInFailCooldown(dcKey, DateTimeOffset.UtcNow) ? TimeSpan.FromSeconds(WsFailTimeoutSeconds) : TimeSpan.FromSeconds(WsDefaultTimeoutSeconds);
+            var wsTimeout = wsRoutingState.IsInFailCooldown(dcKey, DateTimeOffset.UtcNow)
+                ? TimeSpan.FromSeconds(WsFailTimeoutSeconds)
+                : TimeSpan.FromSeconds(cfg.WsConnectTimeoutSeconds);
             var domains = WsDomains(dc.Value, mediaFlag);
             var ws = await TryTakePooledWs(dcKey);
             var sawRedirect = false;
@@ -171,8 +174,10 @@ internal sealed class ClientSessionHandler(
             if (ws is null)
             {
                 SchedulePoolRefill(dcKey, targetIp, domains, wsTimeout, context.Scope, cancellationToken);
-                foreach (var domain in domains)
+                for (var di = 0; di < domains.Count; di++)
                 {
+                    var domain = domains[di];
+                    var moreDomains = di < domains.Count - 1;
                     try
                     {
                         logger.LogDebug("[{Scope}] Try WS {Domain} via {TargetIp}", context.Scope, domain, targetIp);
@@ -192,14 +197,28 @@ internal sealed class ClientSessionHandler(
                     {
                         stats.IncWsErrors();
                         allRedirects = false;
-                        logger.LogWarning(ex, "[{Scope}] WS connect timeout ({Domain} via {TargetIp})", context.Scope, domain, targetIp);
+                        if (moreDomains)
+                        {
+                            logger.LogDebug(ex, "[{Scope}] WS connect timeout ({Domain} via {TargetIp}), пробуем следующий хост", context.Scope, domain, targetIp);
+                        }
+                        else
+                        {
+                            logger.LogWarning(ex, "[{Scope}] WS connect timeout ({Domain} via {TargetIp})", context.Scope, domain, targetIp);
+                        }
                         ws = null;
                     }
                     catch (Exception ex)
                     {
                         stats.IncWsErrors();
                         allRedirects = false;
-                        logger.LogError(ex, "[{Scope}] WS connect failed ({Domain} via {TargetIp})", context.Scope, domain, targetIp);
+                        if (moreDomains && ex is IOException)
+                        {
+                            logger.LogDebug(ex, "[{Scope}] WS connect failed ({Domain} via {TargetIp}), пробуем следующий хост", context.Scope, domain, targetIp);
+                        }
+                        else
+                        {
+                            logger.LogError(ex, "[{Scope}] WS connect failed ({Domain} via {TargetIp})", context.Scope, domain, targetIp);
+                        }
                         ws = null;
                     }
                 }
@@ -218,14 +237,14 @@ internal sealed class ClientSessionHandler(
                 }
                 logger.LogWarning("[{Scope}] WS unavailable, fallback TCP {Dst}:{Port}", context.Scope, dst, port);
                 stats.IncConnectionsTcpFallback();
-                await bridgeService.TcpFallbackAsync(stream, dst, port, init, context.Scope);
+                await bridgeService.TcpFallbackAsync(stream, dst, port, init, context.Scope, cancellationToken);
                 return;
             }
 
             stats.IncConnectionsWs();
             logger.LogInformation("[{Scope}] WS bridge started DC{Dc} -> {Dst}:{Port}", context.Scope, dc, dst, port);
-            await ws.Send(init);
-            await bridgeService.BridgeWsAsync(stream, ws, context.Scope, init);
+            await ws.Send(init, cancellationToken);
+            await bridgeService.BridgeWsAsync(stream, ws, context.Scope, init, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -255,6 +274,11 @@ internal sealed class ClientSessionHandler(
 
     public async Task WarmupAsync(CancellationToken cancellationToken)
     {
+        if (cfg.WsPoolSize <= 0)
+        {
+            return;
+        }
+
         foreach (var kv in dcOpt)
         {
             var dc = kv.Key;
@@ -269,7 +293,7 @@ internal sealed class ClientSessionHandler(
                 cancellationToken.ThrowIfCancellationRequested();
                 var dcKey = (dc, media);
                 var domains = WsDomains(dc, media);
-                SchedulePoolRefill(dcKey, targetIp, domains, TimeSpan.FromSeconds(WsDefaultTimeoutSeconds), "warmup", cancellationToken);
+                SchedulePoolRefill(dcKey, targetIp, domains, TimeSpan.FromSeconds(cfg.WsConnectTimeoutSeconds), "warmup", cancellationToken);
             }
         }
 
@@ -438,6 +462,11 @@ internal sealed class ClientSessionHandler(
     /// <param name="cancellationToken">Токен отмены фонового refill-процесса.</param>
     private void SchedulePoolRefill((int Dc, bool IsMedia) dcKey, string targetIp, List<string> domains, TimeSpan timeout, string scope, CancellationToken cancellationToken)
     {
+        if (cfg.WsPoolSize <= 0)
+        {
+            return;
+        }
+
         if (!wsRoutingState.TryBeginRefill(dcKey))
         {
             return;
@@ -454,7 +483,7 @@ internal sealed class ClientSessionHandler(
                         return;
                     }
 
-                    var evicted = wsRoutingState.AddToPool(dcKey, ws, DateTimeOffset.UtcNow, 4);
+                    var evicted = wsRoutingState.AddToPool(dcKey, ws, DateTimeOffset.UtcNow, cfg.WsPoolSize);
                     foreach (var stale in evicted)
                     {
                         BackgroundTaskRunner.RunDetachedSafe(
@@ -488,7 +517,7 @@ internal sealed class ClientSessionHandler(
 
         try
         {
-            await ws.Close();
+            await ws.Close(cancellationToken);
         }
         catch
         {

@@ -72,4 +72,7 @@ public interface IWsRoutingState
     /// <param name="maxPoolSize">Максимальный размер пула для данного ключа.</param>
     /// <returns>Список вытесненных соединений, которые следует закрыть вызывающей стороне.</returns>
     IReadOnlyList<IRawWebSocket> AddToPool((int Dc, bool IsMedia) dcKey, IRawWebSocket ws, DateTimeOffset createdAt, int maxPoolSize);
+
+    /// <summary>Краткая строка для логов: отсортированные ключи blacklist.</summary>
+    string FormatBlacklistSummary();
 }

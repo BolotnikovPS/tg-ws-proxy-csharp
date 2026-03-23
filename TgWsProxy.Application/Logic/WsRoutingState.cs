@@ -63,11 +63,11 @@ internal sealed class WsRoutingState : IWsRoutingState
 
             while (bucket.Count > 0)
             {
-                var candidate = bucket[0];
+                var (Ws, Created) = bucket[0];
                 bucket.RemoveAt(0);
-                if (now - candidate.Created <= maxAge)
+                if (now - Created <= maxAge)
                 {
-                    return candidate.Ws;
+                    return Ws;
                 }
             }
 
@@ -110,5 +110,19 @@ internal sealed class WsRoutingState : IWsRoutingState
             }
         }
         return evicted;
+    }
+
+    public string FormatBlacklistSummary()
+    {
+        lock (sync)
+        {
+            if (blacklist.Count == 0)
+            {
+                return "none";
+            }
+
+            var keys = blacklist.OrderBy(k => k.Dc).ThenBy(k => k.IsMedia).ToList();
+            return string.Join(", ", keys.Select(k => $"DC{k.Dc}{(k.IsMedia ? "m" : "")}"));
+        }
     }
 }

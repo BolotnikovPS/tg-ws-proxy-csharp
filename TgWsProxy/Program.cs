@@ -14,7 +14,7 @@ if (cfg.DcIp.Count == 0)
 {
     // IP должны соответствовать номеру DC: для WSS используется SNI kws{N}.web.telegram.org к этому адресу.
     cfg.DcIp.Add("2:149.154.167.220");
-    cfg.DcIp.Add("4:149.154.167.91");
+    cfg.DcIp.Add("4:149.154.167.220");
 }
 
 Dictionary<int, string> dcOpt;
@@ -39,7 +39,22 @@ services.AddLogging(builder =>
 
     if (!string.IsNullOrWhiteSpace(cfg.LogPath))
     {
-        loggerConfiguration.WriteTo.File(new CompactJsonFormatter(), cfg.LogPath, logLevel, rollingInterval: RollingInterval.Hour);
+        if (cfg.LogMaxMegabytes > 0)
+        {
+            var limitBytes = (long)Math.Max(32 * 1024, cfg.LogMaxMegabytes * 1024 * 1024);
+            loggerConfiguration.WriteTo.File(
+                new CompactJsonFormatter(),
+                cfg.LogPath,
+                restrictedToMinimumLevel: logLevel,
+                rollingInterval: RollingInterval.Infinite,
+                fileSizeLimitBytes: limitBytes,
+                rollOnFileSizeLimit: true,
+                retainedFileCountLimit: Math.Max(1, cfg.LogRetainedFileCount + 1));
+        }
+        else
+        {
+            loggerConfiguration.WriteTo.File(new CompactJsonFormatter(), cfg.LogPath, logLevel, rollingInterval: RollingInterval.Hour);
+        }
     }
 
     builder.AddSerilog(loggerConfiguration.CreateLogger());
@@ -84,6 +99,7 @@ else
 var server = provider.GetRequiredService<IProxyServer>();
 var sessionHandler = provider.GetRequiredService<IClientSessionHandler>();
 var stats = provider.GetRequiredService<IProxyStats>();
+var wsRoutingState = provider.GetRequiredService<IWsRoutingState>();
 using var cts = new CancellationTokenSource();
 
 Console.CancelKeyPress += (_, eventArgs) =>
@@ -99,7 +115,7 @@ var statsTask = Task.Factory.StartNew(async () =>
         try
         {
             await Task.Delay(TimeSpan.FromSeconds(60), cts.Token);
-            startupLogger.LogInformation("stats: {Summary}", stats.Summary());
+            startupLogger.LogInformation("stats: {Summary} | ws_bl: {WsBl}", stats.Summary(), wsRoutingState.FormatBlacklistSummary());
         }
         catch (OperationCanceledException)
         {

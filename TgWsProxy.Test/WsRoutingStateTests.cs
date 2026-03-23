@@ -69,6 +69,16 @@ public class WsRoutingStateTests
     }
 
     [Fact]
+    public void BlacklistSummary_IsNone_OrSortedKeys()
+    {
+        var state = new WsRoutingState();
+        Assert.Equal("none", state.FormatBlacklistSummary());
+        state.AddBlacklist((2, true));
+        state.AddBlacklist((1, false));
+        Assert.Equal("DC1, DC2m", state.FormatBlacklistSummary());
+    }
+
+    [Fact]
     public void Refill_Flag_IsMutuallyExclusive()
     {
         var state = new WsRoutingState();
@@ -82,8 +92,9 @@ public class WsRoutingStateTests
 
     private sealed class DummyWs : IRawWebSocket
     {
-        public Task Send(byte[] data) => Task.CompletedTask;
-        public Task<byte[]?> Recv() => Task.FromResult<byte[]?>(null);
-        public Task Close() => Task.CompletedTask;
+        public Task Send(byte[] data, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task SendBatch(IReadOnlyList<byte[]> parts, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task<byte[]?> Recv(CancellationToken cancellationToken) => Task.FromResult<byte[]?>(null);
+        public Task Close(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

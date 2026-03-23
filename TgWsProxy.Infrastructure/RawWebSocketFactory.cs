@@ -1,6 +1,7 @@
 #nullable enable
 
 using Microsoft.Extensions.Logging;
+using System.IO;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
@@ -8,22 +9,27 @@ using System.Security.Cryptography;
 using System.Text;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Domain;
 using TgWsProxy.Domain.Exceptions;
 
 namespace TgWsProxy.Infrastructure;
 
-internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger) : IRawWebSocketFactory
+internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, Config cfg) : IRawWebSocketFactory
 {
+    private const double TcpTlsHandshakeCapSeconds = 10;
+
     public async Task<IRawWebSocket> ConnectAsync(string ip, string domain, string path, string scope, TimeSpan? timeout = null)
     {
-        var connectTimeout = timeout ?? TimeSpan.FromSeconds(10);
+        var handshakeTimeout = timeout ?? TimeSpan.FromSeconds(cfg.WsConnectTimeoutSeconds);
+        var establishTimeout = TimeSpan.FromSeconds(Math.Min(handshakeTimeout.TotalSeconds, TcpTlsHandshakeCapSeconds));
+        var socketBuf = Math.Max(4, cfg.SocketBufferKb) * 1024;
         var client = new TcpClient();
         SslStream? ssl = null;
         try
         {
             try
             {
-                using var connectCts = new CancellationTokenSource(connectTimeout);
+                using var connectCts = new CancellationTokenSource(establishTimeout);
                 await client.ConnectAsync(ip, 443, connectCts.Token);
             }
             catch (OperationCanceledException)
@@ -46,13 +52,13 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger) :
             }
 
             client.NoDelay = true;
-            client.ReceiveBufferSize = 256 * 1024;
-            client.SendBufferSize = 256 * 1024;
+            client.ReceiveBufferSize = socketBuf;
+            client.SendBufferSize = socketBuf;
 
             ssl = new SslStream(client.GetStream(), false, (_, _, _, _) => true);
             try
             {
-                using var tlsCts = new CancellationTokenSource(connectTimeout);
+                using var tlsCts = new CancellationTokenSource(establishTimeout);
                 await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
                 {
                     TargetHost = domain,
@@ -69,9 +75,25 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger) :
             {
                 if (IsWarmup(scope))
                 {
-                    logger.LogWarning(ex,
-                        "[{Scope}] TLS handshake failed for {Domain} (часто: блокировка Telegram, неверный --dc-ip для этого DC, прокси/VPN на хосте; при недоступности WSS будет TCP fallback)",
-                        scope, domain);
+                    // RST / EOF на TLS при warmup — типично DPI, блокировка или неверный IP для SNI; не считаем это «аварией» приложения
+                    if (IsConnectionReset(ex))
+                    {
+                        logger.LogDebug(ex,
+                            "[{Scope}] TLS handshake: соединение сброшено (RST) для {Domain} — типично фильтрация/DPI или неверный IP для SNI; WSS может быть недоступен, остаётся TCP fallback",
+                            scope, domain);
+                    }
+                    else if (IsPrematureTlsClose(ex))
+                    {
+                        logger.LogDebug(ex,
+                            "[{Scope}] TLS handshake: неожиданный EOF для {Domain} — часто обрыв без ServerHello (DPI/фильтр, неверный --dc-ip); WSS недоступен → TCP fallback",
+                            scope, domain);
+                    }
+                    else
+                    {
+                        logger.LogWarning(ex,
+                            "[{Scope}] TLS handshake failed for {Domain} (часто: блокировка Telegram, неверный --dc-ip для этого DC, прокси/VPN на хосте; при недоступности WSS будет TCP fallback)",
+                            scope, domain);
+                    }
                 }
                 else
                 {
@@ -83,10 +105,12 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger) :
             var wsKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
             var req = $"GET {path} HTTP/1.1\r\nHost: {domain}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
                       $"Sec-WebSocket-Key: {wsKey}\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: binary\r\n" +
-                      "Origin: https://web.telegram.org\r\nUser-Agent: tg-ws-proxy2-csharp\r\n\r\n";
+                      "Origin: https://web.telegram.org\r\n" +
+                      "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+                      "Chrome/131.0.0.0 Safari/537.36\r\n\r\n";
             try
             {
-                using var writeCts = new CancellationTokenSource(connectTimeout);
+                using var writeCts = new CancellationTokenSource(handshakeTimeout);
                 await ssl.WriteAsync(Encoding.ASCII.GetBytes(req), writeCts.Token);
             }
             catch (OperationCanceledException)
@@ -107,7 +131,7 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger) :
                 string line;
                 try
                 {
-                    using var readCts = new CancellationTokenSource(connectTimeout);
+                    using var readCts = new CancellationTokenSource(handshakeTimeout);
                     line = await ReadLine(ssl, readCts.Token);
                 }
                 catch (OperationCanceledException)
@@ -149,8 +173,43 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger) :
     /// <param name="domain">Домен, к которому выполнялось подключение.</param>
     /// <param name="stage">Этап подключения (TCP, TLS, handshake).</param>
     /// <param name="ex">Исключение таймаута.</param>
-    private static bool IsWarmup(string scope) =>
-        string.Equals(scope, "warmup", StringComparison.OrdinalIgnoreCase);
+    private static bool IsWarmup(string scope)
+        => string.Equals(scope, "warmup", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsConnectionReset(Exception ex)
+    {
+        if (ex is SocketException se)
+        {
+            return se.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted;
+        }
+
+        return ex.InnerException is SocketException inner &&
+               inner.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted;
+    }
+
+    /// <summary>Проверяет обрыв TLS до завершения рукопожатия (EOF / 0 bytes) — как у RST, часто сеть, а не баг кода.</summary>
+    private static bool IsPrematureTlsClose(Exception ex)
+    {
+        for (var e = (Exception?)ex; e != null; e = e.InnerException)
+        {
+            if (e is EndOfStreamException)
+            {
+                return true;
+            }
+
+            if (e is IOException io)
+            {
+                var msg = io.Message;
+                if (msg.Contains("unexpected EOF", StringComparison.OrdinalIgnoreCase) ||
+                    msg.Contains("0 bytes from the transport", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     private void LogConnectTimeout(string scope, string domain, string stage, TimeoutException ex)
     {
@@ -196,6 +255,6 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger) :
                 b.Add(one[0]);
             }
         }
-        return Encoding.ASCII.GetString(b.ToArray());
+        return Encoding.ASCII.GetString([.. b]);
     }
 }

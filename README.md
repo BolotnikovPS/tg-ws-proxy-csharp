@@ -10,6 +10,7 @@
 - При сбоях WS автоматически уходит в TCP fallback и продолжает работу.
 - Поддерживает пул WebSocket-соединений, cooldown после ошибок и blacklist при постоянных redirect.
 - Поддерживает SOCKS5-аутентификацию (`--auth LOGIN:PASSWORD`, аргумент можно указывать несколько раз).
+- Раз в минуту пишет в лог сводку `stats` и `ws_bl` (чёрный список DC для WS после серии редиректов).
 
 ## Как это работает
 
@@ -23,15 +24,42 @@ Telegram Desktop -> SOCKS5 локально -> TG WS Proxy -> WSS/TCP -> Telegra
 |---|---|---|
 | `--port <PORT>` | `1080` | Порт локального SOCKS5-сервера. |
 | `--host <HOST>` | `127.0.0.1` | Адрес локального SOCKS5-сервера. |
-| `--dc-ip <DC:IP>` | нет (если не задан, в `Program` добавляются `2:149.154.167.220` и `4:149.154.167.91`) | Явное сопоставление дата-центра Telegram с IP. **Номер DC и IP должны соответствовать друг другу**, иначе TLS к `kws{N}.web.telegram.org` может обрываться. Можно указывать несколько раз. |
+| `--dc-ip <DC:IP>` | нет (если не задан, в `Program` добавляются `2:149.154.167.220` и `4:149.154.167.220`) | Явное сопоставление дата-центра Telegram с IP. **Номер DC и IP должны соответствовать друг другу**, иначе TLS к `kws{N}.web.telegram.org` может обрываться. Можно указывать несколько раз. |
 | `--auth <LOGIN:PASSWORD>` | нет | Добавляет учетные данные SOCKS5. Можно указывать несколько раз. |
 | `-v`, `--verbose` | выключен | Включает подробное логирование (`Debug`). |
-| `--log-path <PATH>` | не задан | Путь к лог-файлу (параметр парсится конфигом). |
+| `--log-path <PATH>` | не задан | Путь к лог-файлу. Без `--log-max-mb` используется **почасовая** ротация (JSON). |
+| `--log-max-mb <MB>` | `0` | Если `> 0`, ротация **по размеру** файла, минимальный размер одного файла 32 КБ. |
+| `--log-backups <N>` | `0` | Сколько архивных файлов хранить при ротации по размеру (текущий + N). |
+| `--ws-timeout <SEC>` | `10` | Таймаут (сек.) на **чтение** HTTP-ответа WS-рукопожатия. Этапы **TCP и TLS** ограничены `default(значение, 10)` секунд. Диапазон `1`…`300`. После ошибки WS используется быстрый повтор **2 с**. При проблемах в Docker см. раздел ниже. |
+| `--buf-kb <KB>` | `256` | Размер `SO_RCVBUF`/`SO_SNDBUF` для клиентского SOCKS-сокета и исходящего WSS. |
+| `--pool-size <N>` | `4` | Размер пула заранее открытых WS на пару (DC, media). `0` отключает пул. |
 
 ## Сборка
 
 ```bash
 dotnet build TgWsProxy.slnx
+```
+
+### Docker: образ под Linux AArch64 (arm64)
+
+`Dockerfile` рассчитан на **мультиархитектурную** сборку через BuildKit: этап `build` идёт на архитектуре билд-машины (`BUILDPLATFORM`), а `dotnet publish` получает RID из `TARGETARCH` (`linux-arm64` для arm64). Финальный слой берётся под целевую платформу (`TARGETPLATFORM`).
+
+**Один образ только под AArch64** (на x86-ПК нужен [buildx](https://docs.docker.com/build/buildx/) и эмуляция или кросс-сборка .NET — образ SDK сам соберёт `linux-arm64`):
+
+```bash
+docker buildx build --platform linux/arm64 -t tg-ws-proxy:arm64 --load .
+```
+
+**Один тег для amd64 + arm64** (в registry):
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/tg-ws-proxy:2.0 --push .
+```
+
+Сборка **на самом ARM-сервере** (без эмуляции):
+
+```bash
+docker build -t tg-ws-proxy:local .
 ```
 
 ## Примеры запуска
@@ -58,7 +86,7 @@ dotnet TgWsProxy.dll --auth user1:pass1 --auth user2:pass2
 
 ```bash
 # Пример для Windows PowerShell
-.\TgWsProxy.exe --port 1080 --dc-ip 2:149.154.167.220 --dc-ip 4:149.154.167.91
+.\TgWsProxy.exe --port 1080 --dc-ip 2:149.154.167.220 --dc-ip 4:149.154.167.220
 ```
 
 ### Docker Compose (`docker-compose.yml`)
@@ -78,8 +106,9 @@ docker compose up -d
 ```env
 TG_HOST=0.0.0.0
 TG_PORT=1080
+TG_WS_TIMEOUT=10
 TG_DC_IP_1=2:149.154.167.220
-TG_DC_IP_2=4:149.154.167.91
+TG_DC_IP_2=4:149.154.167.220
 ```
 
 ```bash
@@ -95,23 +124,29 @@ docker compose logs -f tg-ws-proxy
 docker compose down
 ```
 
-**Дополнительные аргументы** (`--verbose`, `--log-path`, несколько `--auth`) в `docker-compose.yml` сейчас закомментированы в секции `command` — раскомментируйте нужные строки или расширьте `command` по аналогии с таблицей аргументов выше.
+**Дополнительные аргументы** (`--verbose`, `--log-path`, несколько `--auth`) добавьте в список `command` в `docker-compose.yml` (по одному элементу на строку), по аналогии с таблицей аргументов выше.
 
-**Сборка из Dockerfile вместо Hub:** используйте второй файл оверлея:
+#### Почему TLS / warmup / `EOF` / `RST` бывают именно в Docker
+
+На **хосте** `dotnet`/бинарник ходит в интернет напрямую. В **контейнере** трафик идёт через **bridge/NAT** Docker (на Windows/macOS ещё и через **виртуализацию**). Из‑за этого чаще всплывают:
+
+| Причина | Что попробовать |
+|--------|------------------|
+| **MTU** (VPN, PPPoE, некоторые провайдеры) | Пакеты к `443` «зависают» или обрываются. Варианты: уменьшить MTU у Docker (`daemon.json` → `"mtu": 1400`) или подключить оверлей **`docker-compose.mtu.yml`** (сеть с MTU 1400). |
+| **Маршрут VPN только для хоста** | Исходящие из bridge не попадают в туннель. **Linux:** оверлей **`docker-compose.host.yml`** (`network_mode: host`) — исходящий трафик как у хоста. |
+| **DNS в контейнере** | Оверлей **`docker-compose.dns.yml`** (например Cloudflare/Google DNS). |
+| **Проверка той же сети, что у прокси** | С тем же сетевым namespace, что у запущенного контейнера: `docker run --rm --network container:tg-ws-proxy nicolaka/netshoot openssl s_client -connect 149.154.167.220:443 -servername kws2.web.telegram.org -brief` — если здесь обрыв/таймаут, проблема в **сети Docker/хоста**, не в коде прокси. |
+
+Примеры запуска с оверлеями:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.build.yml up --build -d
+docker compose -f docker-compose.yml -f docker-compose.mtu.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.dns.yml up -d
+# только Linux:
+docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
 ```
 
-В Telegram Desktop укажите SOCKS5: хост `127.0.0.1` и порт из `TG_PORT` (по умолчанию `1080`), если клиент на той же машине, что и Docker. Если контейнер на удалённом сервере — используйте IP/домен хоста и проброшенный порт.
-
-**Сообщения `[warmup] TLS handshake failed` / `unexpected EOF` в логах:** при старте прокси проверяет доступность WSS к `kws*.web.telegram.org` через IP из `--dc-ip`. Обрыв на этапе TLS обычно значит:
-
-- **блокировка или фильтрация** трафика к Telegram из сети хоста/ДЦ (нужен другой регион/VPN на стороне клиента к серверу — с осторожностью к политике провайдера);
-- **неверная пара `DC:IP`** (например, для `kws4` указан IP другого DC) — сверяйте с актуальными адресами Telegram DC;
-- реже — **особенности Docker/VPN на хосте** (на Linux можно проверить с хоста/в контейнере: `openssl s_client -connect <IP_из_dc-ip>:443 -servername kws2.web.telegram.org -brief`).
-
-Прокси при этом может продолжать работу через **TCP fallback**, если прямой MTProto до DC доступен.
+`network_mode: host` на **Docker Desktop** для Windows/macOS обычно **не** даёт того же эффекта, что на Linux; там смотрите MTU, WSL2/VPN и настройки Docker.
 
 ## Настройка Telegram Desktop
 

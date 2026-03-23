@@ -9,7 +9,7 @@ namespace TgWsProxy.Infrastructure;
 
 internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyStats stats) : ITcpBridgeService
 {
-    public async Task BridgeWsAsync(NetworkStream client, IRawWebSocket ws, string scope, byte[]? init = null)
+    public async Task BridgeWsAsync(NetworkStream client, IRawWebSocket ws, string scope, byte[]? init, CancellationToken cancellationToken)
     {
         var splitter = init is { Length: >= 64 } ? new MtProtoMsgSplitter(init) : null;
         using var cts = new CancellationTokenSource();
@@ -28,13 +28,18 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
                 stats.AddBytesUp(payload.Length);
                 if (splitter is null)
                 {
-                    await ws.Send(payload);
+                    await ws.Send(payload, cancellationToken);
                     continue;
                 }
 
-                foreach (var part in splitter.Split(payload))
+                var parts = splitter.Split(payload);
+                if (parts.Count <= 1)
                 {
-                    await ws.Send(part);
+                    await ws.Send(parts[0], cancellationToken);
+                }
+                else
+                {
+                    await ws.SendBatch(parts, cancellationToken);
                 }
             }
         }, cts.Token);
@@ -43,7 +48,7 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         {
             while (!cts.IsCancellationRequested)
             {
-                var data = await ws.Recv();
+                var data = await ws.Recv(cancellationToken);
                 if (data is null)
                 {
                     break;
@@ -59,7 +64,7 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         await Task.WhenAll(IgnoreTaskErrors(up, scope, "client->ws"), IgnoreTaskErrors(down, scope, "ws->client"));
         try
         {
-            await ws.Close();
+            await ws.Close(cancellationToken);
         }
         catch (Exception ex)
         {
@@ -67,11 +72,11 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         }
     }
 
-    public async Task TcpFallbackAsync(NetworkStream client, string dst, int port, byte[] init, string scope)
-        => await BridgeTcpAsync(client, dst, port, scope, init, "fallback");
+    public Task TcpFallbackAsync(NetworkStream client, string dst, int port, byte[] init, string scope, CancellationToken cancellationToken)
+        => BridgeTcpAsync(client, dst, port, scope, init, "fallback", cancellationToken);
 
-    public async Task TcpPassthroughAsync(NetworkStream client, string dst, int port, string scope)
-        => await BridgeTcpAsync(client, dst, port, scope, null, "passthrough");
+    public Task TcpPassthroughAsync(NetworkStream client, string dst, int port, string scope, CancellationToken cancellationToken)
+        => BridgeTcpAsync(client, dst, port, scope, null, "passthrough", cancellationToken);
 
     /// <summary>
     /// Создает двунаправленный TCP-мост между клиентом и удаленным хостом.
@@ -82,12 +87,12 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
     /// <param name="scope">Идентификатор скоупа для логирования.</param>
     /// <param name="init">Необязательный инициализационный пакет для предварительной отправки.</param>
     /// <param name="mode">Режим моста (fallback/passthrough) для логов.</param>
-    private async Task BridgeTcpAsync(NetworkStream client, string dst, int port, string scope, byte[]? init, string mode)
+    private async Task BridgeTcpAsync(NetworkStream client, string dst, int port, string scope, byte[]? init, string mode, CancellationToken cancellationToken)
     {
         using var remote = new TcpClient();
         try
         {
-            await remote.ConnectAsync(dst, port);
+            await remote.ConnectAsync(dst, port, cancellationToken);
         }
         catch (SocketException ex) when (ex.SocketErrorCode is SocketError.TimedOut or SocketError.HostUnreachable or SocketError.NetworkUnreachable)
         {
@@ -101,12 +106,12 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         }
 
         remote.NoDelay = true;
-        var rs = remote.GetStream();
+        await using var rs = remote.GetStream();
         if (init is not null)
         {
             try
             {
-                await rs.WriteAsync(init);
+                await rs.WriteAsync(init, cancellationToken);
             }
             catch (Exception ex)
             {

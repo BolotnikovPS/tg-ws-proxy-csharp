@@ -2,6 +2,7 @@
 
 using Microsoft.Extensions.Logging;
 using System.Buffers.Binary;
+using System.IO;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -15,7 +16,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
 {
     private bool _closed;
 
-    public async Task Send(byte[] data)
+    public async Task Send(byte[] data, CancellationToken cancellationToken)
     {
         if (_closed)
         {
@@ -24,7 +25,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
 
         try
         {
-            await ssl.WriteAsync(BuildFrame(0x2, data, true));
+            await ssl.WriteAsync(BuildFrame(0x2, data, true), cancellationToken);
         }
         catch (Exception ex)
         {
@@ -33,7 +34,43 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
         }
     }
 
-    public async Task<byte[]?> Recv()
+    public async Task SendBatch(IReadOnlyList<byte[]> parts, CancellationToken cancellationToken)
+    {
+        if (_closed)
+        {
+            throw new IOException("WebSocket closed");
+        }
+
+        if (parts.Count == 0)
+        {
+            return;
+        }
+
+        if (parts.Count == 1)
+        {
+            await Send(parts[0], cancellationToken);
+            return;
+        }
+
+        try
+        {
+            await using var ms = new MemoryStream();
+            foreach (var p in parts)
+            {
+                var frame = BuildFrame(0x2, p, true);
+                await ms.WriteAsync(frame, cancellationToken);
+            }
+
+            await ssl.WriteAsync(ms.ToArray(), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "[{Scope}] WS send batch failed", scope);
+            throw;
+        }
+    }
+
+    public async Task<byte[]?> Recv(CancellationToken cancellationToken)
     {
         while (!_closed)
         {
@@ -61,7 +98,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
             }
             if (opcode == 0x9)
             {
-                await ssl.WriteAsync(BuildFrame(0xA, payload, true));
+                await ssl.WriteAsync(BuildFrame(0xA, payload, true), cancellationToken);
                 continue;
             }
             if (opcode == 0xA)
@@ -77,7 +114,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
         return null;
     }
 
-    public async Task Close()
+    public async Task Close(CancellationToken cancellationToken)
     {
         if (_closed)
         {
@@ -85,8 +122,8 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
         }
 
         _closed = true;
-        try { await ssl.WriteAsync(BuildFrame(0x8, [], true)); } catch { }
-        try { ssl.Dispose(); } catch { }
+        try { await ssl.WriteAsync(BuildFrame(0x8, [], true), cancellationToken); } catch { }
+        try { await ssl.DisposeAsync(); } catch { }
         try { client.Close(); } catch { }
     }
 
@@ -128,7 +165,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
     /// <returns>Готовый буфер фрейма для отправки.</returns>
     private static byte[] BuildFrame(byte opcode, byte[] payload, bool mask)
     {
-        var ms = new MemoryStream();
+        using var ms = new MemoryStream();
         ms.WriteByte((byte)(0x80 | opcode));
         var len = payload.Length;
         var maskBit = mask ? 0x80 : 0;

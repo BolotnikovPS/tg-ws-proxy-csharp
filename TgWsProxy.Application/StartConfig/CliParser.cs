@@ -55,6 +55,26 @@ public static class CliParser
                     cfg.LogPath = NextValue(args, ref i, "--log-path");
                     break;
 
+                case "--ws-timeout":
+                    cfg.WsConnectTimeoutSeconds = int.Parse(NextValue(args, ref i, "--ws-timeout"));
+                    break;
+
+                case "--buf-kb":
+                    cfg.SocketBufferKb = int.Parse(NextValue(args, ref i, "--buf-kb"));
+                    break;
+
+                case "--pool-size":
+                    cfg.WsPoolSize = int.Parse(NextValue(args, ref i, "--pool-size"));
+                    break;
+
+                case "--log-max-mb":
+                    cfg.LogMaxMegabytes = double.Parse(NextValue(args, ref i, "--log-max-mb"), System.Globalization.CultureInfo.InvariantCulture);
+                    break;
+
+                case "--log-backups":
+                    cfg.LogRetainedFileCount = int.Parse(NextValue(args, ref i, "--log-backups"));
+                    break;
+
                 default:
                     throw new ArgumentException($"Unknown argument: {args[i]}");
             }
