@@ -1,7 +1,6 @@
 #nullable enable
 
 using Microsoft.Extensions.Logging;
-using System.IO;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
@@ -55,7 +54,15 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
             client.ReceiveBufferSize = socketBuf;
             client.SendBufferSize = socketBuf;
 
-            ssl = new SslStream(client.GetStream(), false, (_, _, _, _) => true);
+            ssl = new SslStream(client.GetStream(), false, (_, _, _, sslPolicyErrors) =>
+            {
+                if (cfg.AllowInvalidCertificates)
+                {
+                    return true;
+                }
+
+                return sslPolicyErrors == SslPolicyErrors.None;
+            });
             try
             {
                 using var tlsCts = new CancellationTokenSource(establishTimeout);
@@ -75,7 +82,8 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
             {
                 if (IsWarmup(scope))
                 {
-                    // RST / EOF на TLS при warmup — типично DPI, блокировка или неверный IP для SNI; не считаем это «аварией» приложения
+                    // RST / EOF на TLS при warmup — типично DPI, блокировка или неверный IP для
+                    // SNI; не считаем это «аварией» приложения
                     if (IsConnectionReset(ex))
                     {
                         logger.LogDebug(ex,
@@ -156,7 +164,7 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
                 throw new WsHandshakeException(ParseStatusCode(statusLine), statusLine);
             }
 
-            return new RawWebSocket(client, ssl, scope, logger);
+            return new RawWebSocket(client, ssl, scope, logger, cfg.WsMaxFrameBytes);
         }
         catch
         {
@@ -187,7 +195,10 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
                inner.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted;
     }
 
-    /// <summary>Проверяет обрыв TLS до завершения рукопожатия (EOF / 0 bytes) — как у RST, часто сеть, а не баг кода.</summary>
+    /// <summary>
+    /// Проверяет обрыв TLS до завершения рукопожатия (EOF / 0 bytes) — как у RST, часто сеть, а не
+    /// баг кода.
+    /// </summary>
     private static bool IsPrematureTlsClose(Exception ex)
     {
         for (var e = (Exception?)ex; e != null; e = e.InnerException)

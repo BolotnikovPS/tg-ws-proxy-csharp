@@ -76,6 +76,11 @@ internal sealed class ClientSessionHandler(
 
         logger.LogInformation("[{Scope}] Client connected", context.Scope);
 
+        // These values are needed for graceful fallback in some WS error cases.
+        var dst = "";
+        var port = 0;
+        var init = Array.Empty<byte>();
+
         try
         {
             if (!await HandleSocks5Auth(stream, cfg.Credentials, context, cancellationToken))
@@ -92,7 +97,6 @@ internal sealed class ClientSessionHandler(
             }
 
             var atyp = req[3];
-            string dst;
             if (atyp == 1)
             {
                 dst = new IPAddress(await IoUtil.ReadExact(stream, 4, SocksIoTimeout, cancellationToken)).ToString();
@@ -108,7 +112,7 @@ internal sealed class ClientSessionHandler(
                 return;
             }
 
-            var port = BinaryPrimitives.ReadUInt16BigEndian(await IoUtil.ReadExact(stream, 2, SocksIoTimeout, cancellationToken));
+            port = BinaryPrimitives.ReadUInt16BigEndian(await IoUtil.ReadExact(stream, 2, SocksIoTimeout, cancellationToken));
             if (dst.Contains(':'))
             {
                 await stream.WriteAsync(Socks5Reply(0x05), cancellationToken);
@@ -124,7 +128,7 @@ internal sealed class ClientSessionHandler(
                 return;
             }
 
-            var init = await IoUtil.ReadExact(stream, 64, InitReadTimeout, cancellationToken);
+            init = await IoUtil.ReadExact(stream, 64, InitReadTimeout, cancellationToken);
             if (mtProtoInspector.IsHttpTransport(init))
             {
                 stats.IncConnectionsHttpRejected();
@@ -243,8 +247,22 @@ internal sealed class ClientSessionHandler(
 
             stats.IncConnectionsWs();
             logger.LogInformation("[{Scope}] WS bridge started DC{Dc} -> {Dst}:{Port}", context.Scope, dc, dst, port);
-            await ws.Send(init, cancellationToken);
-            await bridgeService.BridgeWsAsync(stream, ws, context.Scope, init, cancellationToken);
+            try
+            {
+                await ws.Send(init, cancellationToken);
+                await bridgeService.BridgeWsAsync(stream, ws, context.Scope, init, cancellationToken);
+            }
+            finally
+            {
+                try
+                {
+                    await ws.Close(cancellationToken);
+                }
+                catch
+                {
+                    // best-effort cleanup on error/cancellation
+                }
+            }
         }
         catch (OperationCanceledException)
         {
@@ -261,6 +279,24 @@ internal sealed class ClientSessionHandler(
         catch (SocketException ex) when (ex.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted)
         {
             logger.LogDebug("[{Scope}] Client socket disconnected", context.Scope);
+        }
+        catch (WsFrameTooLargeException ex)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            logger.LogWarning(
+                "[{Scope}] WS frame too large ({Len} > {Max}); fallback TCP {Dst}:{Port}",
+                context.Scope,
+                ex.FramePayloadLen,
+                ex.MaxFramePayloadLen,
+                dst,
+                port);
+
+            stats.IncConnectionsTcpFallback();
+            await bridgeService.TcpFallbackAsync(stream, dst, port, init, context.Scope, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -335,8 +371,8 @@ internal sealed class ClientSessionHandler(
             var plen = (await IoUtil.ReadExact(stream, 1, SocksIoTimeout, cancellationToken))[0];
             var pass = Encoding.UTF8.GetString(await IoUtil.ReadExact(stream, plen, SocksIoTimeout, cancellationToken));
             var ok = credentials.Any(c => c.Login == user && c.Password == pass);
-
-            logger.LogInformation("[{Scope}] Client user: {user}", context.Scope, user);
+            // Avoid logging user/pass to keep credentials and PII out of logs.
+            logger.LogDebug("[{Scope}] SOCKS5 auth attempt result: {Result}", context.Scope, ok ? "ok" : "fail");
 
             await stream.WriteAsync(ok ? [0x01, 0x00] : new byte[] { 0x01, 0x01 }, cancellationToken);
             return ok;

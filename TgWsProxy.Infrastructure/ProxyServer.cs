@@ -54,10 +54,14 @@ internal sealed class ProxyServer(Config cfg, IClientSessionHandler sessionHandl
 
         if (cfg.Credentials.Count > 0)
         {
+            logger.LogInformation(
+                "Telegram WS Bridge SOCKS5 auth enabled (accounts: {Count}). Links with credentials are not logged for safety.",
+                cfg.Credentials.Count);
+
+            // Best-effort: log only login identifiers (no passwords) to aid debugging.
             foreach (var config in cfg.Credentials)
             {
-                var link = $"https://t.me/socks?server={cfg.Host}&port={cfg.Port}&user={config.Login}&pass={config.Password}";
-                logger.LogInformation("Telegram WS Bridge {link}", link);
+                logger.LogDebug("Telegram WS Bridge account login: {Login}", config.Login);
             }
             return;
         }

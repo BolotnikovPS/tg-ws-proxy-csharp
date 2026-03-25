@@ -76,7 +76,7 @@ public class UnitTest
     [Fact]
     public void MtProtoInspector_ReturnsNull_OnGarbage()
     {
-        var inspector = new MtProtoInspector();
+        var inspector = new MtProtoInspector(new NullLogger<MtProtoInspector>());
         var data = new byte[64];
         var (Dc, _) = inspector.DcFromInit(data);
         Assert.Null(Dc);
@@ -91,7 +91,7 @@ public class UnitTest
     [InlineData("XXXX / HTTP/1.1\r\n", false)]
     public void MtProtoInspector_IsHttpTransport_DetectsKnownMethods(string line, bool expected)
     {
-        var inspector = new MtProtoInspector();
+        var inspector = new MtProtoInspector(new NullLogger<MtProtoInspector>());
         var data = System.Text.Encoding.ASCII.GetBytes(line);
 
         var actual = inspector.IsHttpTransport(data);
@@ -102,7 +102,7 @@ public class UnitTest
     [Fact]
     public void MtProtoInspector_AesCtr_ReturnsRequestedLength()
     {
-        var inspector = new MtProtoInspector();
+        var inspector = new MtProtoInspector(new NullLogger<MtProtoInspector>());
         var key = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
         var iv = Enumerable.Range(0, 16).Select(i => (byte)(255 - i)).ToArray();
 
@@ -115,7 +115,7 @@ public class UnitTest
     [Fact]
     public void MtProtoInspector_PatchInitDc_LeavesShortPacketUnchanged()
     {
-        var inspector = new MtProtoInspector();
+        var inspector = new MtProtoInspector(new NullLogger<MtProtoInspector>());
         var data = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
 
         var patched = inspector.PatchInitDc(data, -2);

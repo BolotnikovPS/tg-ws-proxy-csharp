@@ -12,7 +12,10 @@ public interface ITcpBridgeService
     /// <param name="client">Поток клиента.</param>
     /// <param name="ws">Активное WebSocket-соединение.</param>
     /// <param name="scope">Идентификатор скоупа для логирования.</param>
-    /// <param name="init">Необязательный init MTProto (≥64 байт): включает разбиение апстрима на отдельные WS-кадры при нескольких сообщениях в одном TCP read.</param>
+    /// <param name="init">
+    /// Необязательный init MTProto (≥64 байт): включает разбиение апстрима на отдельные WS-кадры
+    /// при нескольких сообщениях в одном TCP read.
+    /// </param>
     Task BridgeWsAsync(NetworkStream client, IRawWebSocket ws, string scope, byte[]? init, CancellationToken cancellationToken);
 
     /// <summary>

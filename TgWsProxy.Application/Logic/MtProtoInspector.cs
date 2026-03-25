@@ -1,13 +1,20 @@
+using Microsoft.Extensions.Logging;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using TgWsProxy.Domain.Abstractions;
 
 namespace TgWsProxy.Application.Logic;
 
-internal sealed class MtProtoInspector : IMtProtoInspector
+internal sealed class MtProtoInspector(ILogger<MtProtoInspector> logger) : IMtProtoInspector
 {
     public (int? Dc, bool? IsMedia) DcFromInit(byte[] data)
     {
+        if (data.Length < 64)
+        {
+            logger.LogDebug("MTProto init too short: {Len} bytes", data.Length);
+            return (null, null);
+        }
+
         try
         {
             var key = data.AsSpan(8, 32).ToArray();
@@ -30,10 +37,11 @@ internal sealed class MtProtoInspector : IMtProtoInspector
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            return (null, null);
+            logger.LogDebug(ex, "Failed to inspect MTProto init (len={Len})", data.Length);
         }
+
         return (null, null);
     }
 

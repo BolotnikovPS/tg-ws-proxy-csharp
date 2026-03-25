@@ -16,14 +16,23 @@ internal sealed class ProxyStats : IProxyStats
     private long poolMisses;
 
     public void IncConnectionsTotal() => Interlocked.Increment(ref connectionsTotal);
+
     public void IncConnectionsWs() => Interlocked.Increment(ref connectionsWs);
+
     public void IncConnectionsTcpFallback() => Interlocked.Increment(ref connectionsTcpFallback);
+
     public void IncConnectionsPassthrough() => Interlocked.Increment(ref connectionsPassthrough);
+
     public void IncConnectionsHttpRejected() => Interlocked.Increment(ref connectionsHttpRejected);
+
     public void IncWsErrors() => Interlocked.Increment(ref wsErrors);
+
     public void IncPoolHit() => Interlocked.Increment(ref poolHits);
+
     public void IncPoolMiss() => Interlocked.Increment(ref poolMisses);
+
     public void AddBytesUp(long bytes) => Interlocked.Add(ref bytesUp, bytes);
+
     public void AddBytesDown(long bytes) => Interlocked.Add(ref bytesDown, bytes);
 
     public string Summary()

@@ -51,12 +51,20 @@ public static class CliParser
                     cfg.Verbose = true;
                     break;
 
+                case "--allow-invalid-certs":
+                    cfg.AllowInvalidCertificates = true;
+                    break;
+
                 case "--log-path":
                     cfg.LogPath = NextValue(args, ref i, "--log-path");
                     break;
 
                 case "--ws-timeout":
                     cfg.WsConnectTimeoutSeconds = int.Parse(NextValue(args, ref i, "--ws-timeout"));
+                    break;
+
+                case "--ws-max-frame-bytes":
+                    cfg.WsMaxFrameBytes = int.Parse(NextValue(args, ref i, "--ws-max-frame-bytes"));
                     break;
 
                 case "--buf-kb":

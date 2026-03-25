@@ -40,5 +40,10 @@ public static class ConfigValidator
         {
             throw new ArgumentException("LogRetainedFileCount (--log-backups) must be in range 0..1000");
         }
+
+        if (config.WsMaxFrameBytes is < 1024 or > 64 * 1024 * 1024)
+        {
+            throw new ArgumentException("WsMaxFrameBytes (--ws-max-frame-bytes) must be in range 1024..67108864");
+        }
     }
 }

@@ -1,18 +1,19 @@
 #nullable enable
 
 using Microsoft.Extensions.Logging;
+using System.Buffers;
 using System.Buffers.Binary;
-using System.IO;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Domain.Exceptions;
 
 namespace TgWsProxy.Infrastructure;
 
-internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope, ILogger logger) : IRawWebSocket
+internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope, ILogger logger, int wsMaxFrameBytes) : IRawWebSocket
 {
     private bool _closed;
 
@@ -25,7 +26,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
 
         try
         {
-            await ssl.WriteAsync(BuildFrame(0x2, data, true), cancellationToken);
+            await WriteMaskedFrameAsync(0x2, data, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -54,14 +55,10 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
 
         try
         {
-            await using var ms = new MemoryStream();
             foreach (var p in parts)
             {
-                var frame = BuildFrame(0x2, p, true);
-                await ms.WriteAsync(frame, cancellationToken);
+                await WriteMaskedFrameAsync(0x2, p, cancellationToken);
             }
-
-            await ssl.WriteAsync(ms.ToArray(), cancellationToken);
         }
         catch (Exception ex)
         {
@@ -72,12 +69,14 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
 
     public async Task<byte[]?> Recv(CancellationToken cancellationToken)
     {
+        var assembler = new WsBinaryMessageAssembler();
+
         while (!_closed)
         {
-            (byte opcode, byte[] payload) frame;
+            (bool fin, byte opcode, byte[] payload) frame;
             try
             {
-                frame = await ReadFrame();
+                frame = await ReadFrame(cancellationToken);
             }
             catch (EndOfStreamException)
             {
@@ -85,12 +84,17 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
                 logger.LogDebug("[{Scope}] WS read ended (peer closed TCP without WS close frame)", scope);
                 return null;
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 logger.LogError(ex, "[{Scope}] WS read frame failed", scope);
                 throw;
             }
-            var (opcode, payload) = frame;
+
+            var (fin, opcode, payload) = frame;
             if (opcode == 0x8)
             {
                 _closed = true;
@@ -98,7 +102,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
             }
             if (opcode == 0x9)
             {
-                await ssl.WriteAsync(BuildFrame(0xA, payload, true), cancellationToken);
+                await WriteMaskedFrameAsync(0xA, payload, cancellationToken);
                 continue;
             }
             if (opcode == 0xA)
@@ -106,11 +110,13 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
                 continue;
             }
 
-            if (opcode is 0x1 or 0x2)
+            var complete = assembler.OnFrame(fin, opcode, payload);
+            if (complete is not null)
             {
-                return payload;
+                return complete;
             }
         }
+
         return null;
     }
 
@@ -122,7 +128,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
         }
 
         _closed = true;
-        try { await ssl.WriteAsync(BuildFrame(0x8, [], true), cancellationToken); } catch { }
+        try { await WriteMaskedFrameAsync(0x8, [], cancellationToken); } catch { }
         try { await ssl.DisposeAsync(); } catch { }
         try { client.Close(); } catch { }
     }
@@ -131,75 +137,109 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
     /// Считывает следующий WebSocket-фрейм и возвращает его opcode и полезную нагрузку.
     /// </summary>
     /// <returns>Кортеж из opcode и payload прочитанного фрейма.</returns>
-    private async Task<(byte Opcode, byte[] Payload)> ReadFrame()
+    private async Task<(bool Fin, byte Opcode, byte[] Payload)> ReadFrame(CancellationToken cancellationToken)
     {
-        var hdr = await IoUtil.ReadExact(ssl, 2);
+        var hdr = await IoUtil.ReadExact(ssl, 2, cancellationToken);
+        var fin = (hdr[0] & 0x80) != 0;
+        var rsv = hdr[0] & 0x70;
         var opcode = (byte)(hdr[0] & 0x0F);
         var masked = (hdr[1] & 0x80) != 0;
         var len = (ulong)(hdr[1] & 0x7F);
+        if (rsv != 0)
+        {
+            throw new IOException($"Unsupported WS RSV bits: 0x{rsv:X}");
+        }
+
         if (len == 126)
         {
-            len = BinaryPrimitives.ReadUInt16BigEndian(await IoUtil.ReadExact(ssl, 2));
+            len = BinaryPrimitives.ReadUInt16BigEndian(await IoUtil.ReadExact(ssl, 2, cancellationToken));
         }
         else if (len == 127)
         {
-            len = BinaryPrimitives.ReadUInt64BigEndian(await IoUtil.ReadExact(ssl, 8));
+            len = BinaryPrimitives.ReadUInt64BigEndian(await IoUtil.ReadExact(ssl, 8, cancellationToken));
         }
 
-        var mask = masked ? await IoUtil.ReadExact(ssl, 4) : null;
-        var payload = await IoUtil.ReadExact(ssl, checked((int)len));
+        if (len > (ulong)wsMaxFrameBytes)
+        {
+            _closed = true;
+            throw new WsFrameTooLargeException(len, wsMaxFrameBytes);
+        }
+
+        var mask = masked ? await IoUtil.ReadExact(ssl, 4, cancellationToken) : null;
+        var payload = await IoUtil.ReadExact(ssl, checked((int)len), cancellationToken);
         if (mask is not null)
         {
             XorMask(payload, mask);
         }
 
-        return (opcode, payload);
+        return (fin, opcode, payload);
     }
 
-    /// <summary>
-    /// Формирует бинарный WebSocket-фрейм с опциональной маскировкой payload.
-    /// </summary>
-    /// <param name="opcode">Код операции WebSocket-фрейма.</param>
-    /// <param name="payload">Полезная нагрузка фрейма.</param>
-    /// <param name="mask">Признак необходимости маскирования payload.</param>
-    /// <returns>Готовый буфер фрейма для отправки.</returns>
-    private static byte[] BuildFrame(byte opcode, byte[] payload, bool mask)
+    private async Task WriteMaskedFrameAsync(byte opcode, byte[] payload, CancellationToken cancellationToken)
     {
-        using var ms = new MemoryStream();
-        ms.WriteByte((byte)(0x80 | opcode));
+        // Proxy acts as WS client towards Telegram -> must mask.
         var len = payload.Length;
-        var maskBit = mask ? 0x80 : 0;
+
+        byte lenCode;
+        int extLenBytes;
         if (len < 126)
         {
-            ms.WriteByte((byte)(maskBit | len));
+            lenCode = (byte)len;
+            extLenBytes = 0;
         }
         else if (len < 65536)
         {
-            ms.WriteByte((byte)(maskBit | 126));
-            Span<byte> b = stackalloc byte[2];
-            BinaryPrimitives.WriteUInt16BigEndian(b, (ushort)len);
-            ms.Write(b);
+            lenCode = 126;
+            extLenBytes = 2;
         }
         else
         {
-            ms.WriteByte((byte)(maskBit | 127));
-            Span<byte> b = stackalloc byte[8];
-            BinaryPrimitives.WriteUInt64BigEndian(b, (ulong)len);
-            ms.Write(b);
+            lenCode = 127;
+            extLenBytes = 8;
         }
 
-        if (!mask)
+        // 2 base bytes + optional extended length + 4-byte mask key + payload
+        var frameLen = 2 + extLenBytes + 4 + len;
+        var rented = ArrayPool<byte>.Shared.Rent(frameLen);
+        try
         {
-            ms.Write(payload);
-            return ms.ToArray();
-        }
+            rented[0] = (byte)(0x80 | (opcode & 0x0F)); // FIN=1, RSV=0
+            rented[1] = (byte)(0x80 | lenCode); // MASK=1
 
-        var maskKey = RandomNumberGenerator.GetBytes(4);
-        ms.Write(maskKey);
-        var masked = payload.ToArray();
-        XorMask(masked, maskKey);
-        ms.Write(masked);
-        return ms.ToArray();
+            var idx = 2;
+            if (extLenBytes == 2)
+            {
+                rented[idx++] = (byte)(len >> 8);
+                rented[idx++] = (byte)len;
+            }
+            else if (extLenBytes == 8)
+            {
+                var ulen = (ulong)len;
+                for (var i = 7; i >= 0; i--)
+                {
+                    rented[idx++] = (byte)(ulen >> (8 * i));
+                }
+            }
+
+            var maskKey = new byte[4];
+            RandomNumberGenerator.Fill(maskKey);
+            rented[idx++] = maskKey[0];
+            rented[idx++] = maskKey[1];
+            rented[idx++] = maskKey[2];
+            rented[idx++] = maskKey[3];
+
+            // Write masked payload directly (no extra masked buffer allocations).
+            for (var i = 0; i < len; i++)
+            {
+                rented[idx + i] = (byte)(payload[i] ^ maskKey[i & 3]);
+            }
+
+            await ssl.WriteAsync(rented.AsMemory(0, frameLen), cancellationToken);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 
     /// <summary>

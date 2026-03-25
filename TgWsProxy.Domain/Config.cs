@@ -9,6 +9,19 @@ public sealed class Config
     public bool Verbose { get; set; }
     public string LogPath { get; set; }
 
+    /// <summary>
+    /// Разрешает TLS-подключение к серверам с невалидным сертификатом.
+    /// По умолчанию выключено (безопасно).
+    /// Использовать только для диагностики.
+    /// </summary>
+    public bool AllowInvalidCertificates { get; set; }
+
+    /// <summary>
+    /// Максимальный размер полезной нагрузки одного WebSocket-фрейма (в байтах).
+    /// Используется для защиты от DoS при чтении фреймов.
+    /// </summary>
+    public int WsMaxFrameBytes { get; set; } = 1024 * 1024; // 1 MiB
+
     /// <summary>Таймаут чтения HTTP-ответа рукопожатия WebSocket (секунды). TCP+TLS ограничены default(значение, 10).</summary>
     public int WsConnectTimeoutSeconds { get; set; } = 10;
 

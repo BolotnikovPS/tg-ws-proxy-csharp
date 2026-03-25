@@ -20,7 +20,7 @@ public static class BackgroundTaskRunner
         ILogger logger,
         string description,
         CancellationToken cancellationToken,
-        bool logCancellation = false) 
+        bool logCancellation = false)
         => _ = Task.Run(async () =>
         {
             try
