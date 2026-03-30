@@ -11,7 +11,7 @@ using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain.Exceptions;
 
-namespace TgWsProxy.Infrastructure;
+namespace TgWsProxy.Infrastructure.Instances;
 
 internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope, ILogger logger, int wsMaxFrameBytes) : IRawWebSocket
 {
@@ -26,7 +26,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
 
         try
         {
-            await WriteMaskedFrameAsync(0x2, data, cancellationToken);
+            await WriteMaskedFrame(0x2, data, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -57,7 +57,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
         {
             foreach (var p in parts)
             {
-                await WriteMaskedFrameAsync(0x2, p, cancellationToken);
+                await WriteMaskedFrame(0x2, p, cancellationToken);
             }
         }
         catch (Exception ex)
@@ -102,7 +102,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
             }
             if (opcode == 0x9)
             {
-                await WriteMaskedFrameAsync(0xA, payload, cancellationToken);
+                await WriteMaskedFrame(0xA, payload, cancellationToken);
                 continue;
             }
             if (opcode == 0xA)
@@ -110,7 +110,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
                 continue;
             }
 
-            var complete = assembler.OnFrame(fin, opcode, payload);
+            var complete = await assembler.OnFrame(fin, opcode, payload, cancellationToken);
             if (complete is not null)
             {
                 return complete;
@@ -128,7 +128,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
         }
 
         _closed = true;
-        try { await WriteMaskedFrameAsync(0x8, [], cancellationToken); } catch { }
+        try { await WriteMaskedFrame(0x8, [], cancellationToken); } catch { }
         try { await ssl.DisposeAsync(); } catch { }
         try { client.Close(); } catch { }
     }
@@ -175,7 +175,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
         return (fin, opcode, payload);
     }
 
-    private async Task WriteMaskedFrameAsync(byte opcode, byte[] payload, CancellationToken cancellationToken)
+    private async Task WriteMaskedFrame(byte opcode, byte[] payload, CancellationToken cancellationToken)
     {
         // Proxy acts as WS client towards Telegram -> must mask.
         var len = payload.Length;
@@ -253,29 +253,5 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
         {
             data[i] ^= mask[i % 4];
         }
-    }
-
-    /// <summary>
-    /// Считывает одну CRLF-строку из потока без символов окончания строки.
-    /// </summary>
-    /// <param name="s">Поток чтения.</param>
-    /// <returns>Считанная строка без CRLF.</returns>
-    private static async Task<string> ReadLine(Stream s)
-    {
-        var b = new List<byte>();
-        while (true)
-        {
-            var one = await IoUtil.ReadExact(s, 1);
-            if (one[0] == '\n')
-            {
-                break;
-            }
-
-            if (one[0] != '\r')
-            {
-                b.Add(one[0]);
-            }
-        }
-        return Encoding.ASCII.GetString([.. b]);
     }
 }

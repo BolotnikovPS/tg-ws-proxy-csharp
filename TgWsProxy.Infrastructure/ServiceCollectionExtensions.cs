@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Infrastructure.Instances;
 
 namespace TgWsProxy.Infrastructure;
 

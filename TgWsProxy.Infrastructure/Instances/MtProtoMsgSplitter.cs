@@ -2,7 +2,7 @@
 
 using System.Security.Cryptography;
 
-namespace TgWsProxy.Infrastructure;
+namespace TgWsProxy.Infrastructure.Instances;
 
 /// <summary>
 /// Дешифрует фрагменты MTProto (AES-CTR) и при наличии нескольких сообщений разбивает chunk на части.

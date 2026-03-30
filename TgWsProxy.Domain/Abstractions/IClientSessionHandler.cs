@@ -10,11 +10,11 @@ public interface IClientSessionHandler
     /// <param name="client">Подключенный клиент TCP.</param>
     /// <param name="context">Контекст подключения для трассировки и логирования.</param>
     /// <param name="cancellationToken">Токен отмены обработки сессии.</param>
-    Task HandleAsync(TcpClient client, ClientContext context, CancellationToken cancellationToken);
+    Task Handle(TcpClient client, ClientContext context, CancellationToken cancellationToken);
 
     /// <summary>
     /// Выполняет фоновый прогрев соединений и внутренних пулов.
     /// </summary>
     /// <param name="cancellationToken">Токен отмены операции прогрева.</param>
-    Task WarmupAsync(CancellationToken cancellationToken);
+    void Warmup(CancellationToken cancellationToken);
 }

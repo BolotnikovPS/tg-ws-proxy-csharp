@@ -11,13 +11,13 @@ using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Exceptions;
 
-namespace TgWsProxy.Infrastructure;
+namespace TgWsProxy.Infrastructure.Instances;
 
 internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, Config cfg) : IRawWebSocketFactory
 {
     private const double TcpTlsHandshakeCapSeconds = 10;
 
-    public async Task<IRawWebSocket> ConnectAsync(string ip, string domain, string path, string scope, TimeSpan? timeout = null)
+    public async Task<IRawWebSocket> Connect(string ip, string domain, string path, string scope, TimeSpan? timeout = null)
     {
         var handshakeTimeout = timeout ?? TimeSpan.FromSeconds(cfg.WsConnectTimeoutSeconds);
         var establishTimeout = TimeSpan.FromSeconds(Math.Min(handshakeTimeout.TotalSeconds, TcpTlsHandshakeCapSeconds));

@@ -1,6 +1,8 @@
 #nullable enable
 
-namespace TgWsProxy.Infrastructure;
+using TgWsProxy;
+
+namespace TgWsProxy.Infrastructure.Instances;
 
 /// <summary>
 /// Собирает одно бинарное WS-сообщение из фрагментов: start frame (opcode 0x1/0x2) + 0..N
@@ -14,7 +16,7 @@ internal sealed class WsBinaryMessageAssembler
     /// <summary>
     /// Обрабатывает один WS-фрейм и возвращает готовое payload, когда накопление завершено.
     /// </summary>
-    public byte[]? OnFrame(bool fin, byte opcode, byte[] payload)
+    public async Task<byte[]?> OnFrame(bool fin, byte opcode, byte[] payload, CancellationToken cancellationToken)
     {
         if (opcode is 0x1 or 0x2)
         {
@@ -25,7 +27,7 @@ internal sealed class WsBinaryMessageAssembler
 
             _inFragment = !fin;
             _buffer.SetLength(0);
-            _buffer.Write(payload, 0, payload.Length);
+            await _buffer.WriteAsync(payload, cancellationToken);
 
             if (fin)
             {
@@ -42,7 +44,7 @@ internal sealed class WsBinaryMessageAssembler
                 throw new IOException("Unexpected WS continuation frame without a started fragment");
             }
 
-            _buffer.Write(payload, 0, payload.Length);
+            await _buffer.WriteAsync(payload, cancellationToken);
             if (fin)
             {
                 _inFragment = false;

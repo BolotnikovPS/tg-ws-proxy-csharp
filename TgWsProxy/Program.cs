@@ -130,8 +130,8 @@ TaskScheduler.Current
 
 try
 {
-    await sessionHandler.WarmupAsync(cts.Token);
-    await server.RunAsync(cts.Token);
+    sessionHandler.Warmup(cts.Token);
+    await server.Run(cts.Token);
 }
 catch (Exception ex)
 {

@@ -64,7 +64,7 @@ internal sealed class ClientSessionHandler(
         ["91.105.192.100"] = (203, false)
     };
 
-    public async Task HandleAsync(TcpClient client, ClientContext context, CancellationToken cancellationToken)
+    public async Task Handle(TcpClient client, ClientContext context, CancellationToken cancellationToken)
     {
         stats.IncConnectionsTotal();
         using var _ = client;
@@ -124,7 +124,7 @@ internal sealed class ClientSessionHandler(
             {
                 stats.IncConnectionsPassthrough();
                 logger.LogDebug("[{Scope}] Non-Telegram destination {Dst}:{Port}, TCP passthrough", context.Scope, dst, port);
-                await bridgeService.TcpPassthroughAsync(stream, dst, port, context.Scope, cancellationToken);
+                await bridgeService.TcpPassthrough(stream, dst, port, context.Scope, cancellationToken);
                 return;
             }
 
@@ -154,7 +154,7 @@ internal sealed class ClientSessionHandler(
             {
                 logger.LogWarning("[{Scope}] Unknown DC for {Dst}:{Port}, fallback TCP", context.Scope, dst, port);
                 stats.IncConnectionsTcpFallback();
-                await bridgeService.TcpFallbackAsync(stream, dst, port, init, context.Scope, cancellationToken);
+                await bridgeService.TcpFallback(stream, dst, port, init, context.Scope, cancellationToken);
                 return;
             }
 
@@ -164,7 +164,7 @@ internal sealed class ClientSessionHandler(
             {
                 logger.LogDebug("[{Scope}] DC{Dc} media={IsMedia} WS blacklisted; using TCP fallback", context.Scope, dc, mediaFlag);
                 stats.IncConnectionsTcpFallback();
-                await bridgeService.TcpFallbackAsync(stream, dst, port, init, context.Scope, cancellationToken);
+                await bridgeService.TcpFallback(stream, dst, port, init, context.Scope, cancellationToken);
                 return;
             }
 
@@ -172,7 +172,7 @@ internal sealed class ClientSessionHandler(
                 ? TimeSpan.FromSeconds(WsFailTimeoutSeconds)
                 : TimeSpan.FromSeconds(cfg.WsConnectTimeoutSeconds);
             var domains = WsDomains(dc.Value, mediaFlag);
-            var ws = await TryTakePooledWs(dcKey);
+            var ws = TryTakePooledWs(dcKey);
             var sawRedirect = false;
             var allRedirects = true;
             if (ws is null)
@@ -185,7 +185,7 @@ internal sealed class ClientSessionHandler(
                     try
                     {
                         logger.LogDebug("[{Scope}] Try WS {Domain} via {TargetIp}", context.Scope, domain, targetIp);
-                        ws = await wsFactory.ConnectAsync(targetIp, domain, "/apiws", context.Scope, wsTimeout);
+                        ws = await wsFactory.Connect(targetIp, domain, "/apiws", context.Scope, wsTimeout);
                         wsRoutingState.ClearFailCooldown(dcKey);
                         SchedulePoolRefill(dcKey, targetIp, domains, wsTimeout, context.Scope, cancellationToken);
                         break;
@@ -241,7 +241,7 @@ internal sealed class ClientSessionHandler(
                 }
                 logger.LogWarning("[{Scope}] WS unavailable, fallback TCP {Dst}:{Port}", context.Scope, dst, port);
                 stats.IncConnectionsTcpFallback();
-                await bridgeService.TcpFallbackAsync(stream, dst, port, init, context.Scope, cancellationToken);
+                await bridgeService.TcpFallback(stream, dst, port, init, context.Scope, cancellationToken);
                 return;
             }
 
@@ -250,7 +250,7 @@ internal sealed class ClientSessionHandler(
             try
             {
                 await ws.Send(init, cancellationToken);
-                await bridgeService.BridgeWsAsync(stream, ws, context.Scope, init, cancellationToken);
+                await bridgeService.BridgeWs(stream, ws, context.Scope, init, cancellationToken);
             }
             finally
             {
@@ -296,7 +296,7 @@ internal sealed class ClientSessionHandler(
                 port);
 
             stats.IncConnectionsTcpFallback();
-            await bridgeService.TcpFallbackAsync(stream, dst, port, init, context.Scope, cancellationToken);
+            await bridgeService.TcpFallback(stream, dst, port, init, context.Scope, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -308,7 +308,7 @@ internal sealed class ClientSessionHandler(
         }
     }
 
-    public async Task WarmupAsync(CancellationToken cancellationToken)
+    public void Warmup(CancellationToken cancellationToken)
     {
         if (cfg.WsPoolSize <= 0)
         {
@@ -332,8 +332,6 @@ internal sealed class ClientSessionHandler(
                 SchedulePoolRefill(dcKey, targetIp, domains, TimeSpan.FromSeconds(cfg.WsConnectTimeoutSeconds), "warmup", cancellationToken);
             }
         }
-
-        await Task.CompletedTask;
     }
 
     /// <summary>
@@ -470,7 +468,7 @@ internal sealed class ClientSessionHandler(
     /// </summary>
     /// <param name="dcKey">Ключ дата-центра и типа маршрута.</param>
     /// <returns>Соединение из пула или <see langword="null"/>, если подходящее не найдено.</returns>
-    private async Task<IRawWebSocket> TryTakePooledWs((int Dc, bool IsMedia) dcKey)
+    private IRawWebSocket TryTakePooledWs((int Dc, bool IsMedia) dcKey)
     {
         var ws = wsRoutingState.TryTakePooledWs(dcKey, DateTimeOffset.UtcNow, WsPoolMaxAge);
 
@@ -483,7 +481,6 @@ internal sealed class ClientSessionHandler(
             stats.IncPoolHit();
         }
 
-        await Task.CompletedTask;
         return ws;
     }
 
@@ -575,7 +572,7 @@ internal sealed class ClientSessionHandler(
         {
             try
             {
-                return await wsFactory.ConnectAsync(targetIp, domain, "/apiws", scope, timeout);
+                return await wsFactory.Connect(targetIp, domain, "/apiws", scope, timeout);
             }
             catch (WsHandshakeException ex) when (ex.IsRedirect)
             {

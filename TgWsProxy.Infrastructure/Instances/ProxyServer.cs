@@ -6,13 +6,13 @@ using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 
-namespace TgWsProxy.Infrastructure;
+namespace TgWsProxy.Infrastructure.Instances;
 
 internal sealed class ProxyServer(Config cfg, IClientSessionHandler sessionHandler, ILogger<ProxyServer> logger) : IProxyServer
 {
     private long _connectionSeq;
 
-    public async Task RunAsync(CancellationToken cancellationToken)
+    public async Task Run(CancellationToken cancellationToken)
     {
         LogLinks();
 
@@ -28,7 +28,7 @@ internal sealed class ProxyServer(Config cfg, IClientSessionHandler sessionHandl
                 var scope = $"{peer}|{connectionId}";
                 var context = new ClientContext(scope, peer, connectionId);
                 BackgroundTaskRunner.RunDetachedSafe(
-                    async ct => await sessionHandler.HandleAsync(client, context, ct),
+                    async ct => await sessionHandler.Handle(client, context, ct),
                     logger,
                     $"[{scope}] client session",
                     cancellationToken);

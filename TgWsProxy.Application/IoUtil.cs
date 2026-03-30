@@ -2,9 +2,6 @@ namespace TgWsProxy.Application;
 
 public static class IoUtil
 {
-    public static async Task<byte[]> ReadExact(Stream stream, int len)
-        => await ReadExact(stream, len, CancellationToken.None);
-
     public static async Task<byte[]> ReadExact(Stream stream, int len, CancellationToken ct)
     {
         var buf = new byte[len];

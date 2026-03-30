@@ -4,7 +4,7 @@ using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
-using TgWsProxy.Infrastructure;
+using TgWsProxy.Infrastructure.Instances;
 
 namespace TgWsProxy.Test;
 
@@ -163,7 +163,7 @@ public class UnitTest
         using var accepted = await acceptedTask;
         await using var stream = client.GetStream();
         var ex = await Record.ExceptionAsync(() =>
-            service.TcpFallbackAsync(stream, "127.0.0.1", 1, new byte[64], "test-scope", CancellationToken.None));
+            service.TcpFallback(stream, "127.0.0.1", 1, new byte[64], "test-scope", CancellationToken.None));
 
         Assert.Null(ex);
         listener.Stop();

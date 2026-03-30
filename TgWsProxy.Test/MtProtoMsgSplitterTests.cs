@@ -2,7 +2,7 @@
 
 using System.Security.Cryptography;
 using System.Linq;
-using TgWsProxy.Infrastructure;
+using TgWsProxy.Infrastructure.Instances;
 
 namespace TgWsProxy.Test;
 

@@ -4,11 +4,11 @@ using Microsoft.Extensions.Logging;
 using System.Net.Sockets;
 using TgWsProxy.Application.Abstractions;
 
-namespace TgWsProxy.Infrastructure;
+namespace TgWsProxy.Infrastructure.Instances;
 
 internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyStats stats) : ITcpBridgeService
 {
-    public async Task BridgeWsAsync(NetworkStream client, IRawWebSocket ws, string scope, byte[]? init, CancellationToken cancellationToken)
+    public async Task BridgeWs(NetworkStream client, IRawWebSocket ws, string scope, byte[]? init, CancellationToken cancellationToken)
     {
         var splitter = init is { Length: >= 64 } ? new MtProtoMsgSplitter(init) : null;
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -72,11 +72,11 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         }
     }
 
-    public Task TcpFallbackAsync(NetworkStream client, string dst, int port, byte[] init, string scope, CancellationToken cancellationToken)
-        => BridgeTcpAsync(client, dst, port, scope, init, "fallback", cancellationToken);
+    public Task TcpFallback(NetworkStream client, string dst, int port, byte[] init, string scope, CancellationToken cancellationToken)
+        => BridgeTcp(client, dst, port, scope, init, "fallback", cancellationToken);
 
-    public Task TcpPassthroughAsync(NetworkStream client, string dst, int port, string scope, CancellationToken cancellationToken)
-        => BridgeTcpAsync(client, dst, port, scope, null, "passthrough", cancellationToken);
+    public Task TcpPassthrough(NetworkStream client, string dst, int port, string scope, CancellationToken cancellationToken)
+        => BridgeTcp(client, dst, port, scope, null, "passthrough", cancellationToken);
 
     /// <summary>
     /// Создает двунаправленный TCP-мост между клиентом и удаленным хостом.
@@ -87,7 +87,7 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
     /// <param name="scope">Идентификатор скоупа для логирования.</param>
     /// <param name="init">Необязательный инициализационный пакет для предварительной отправки.</param>
     /// <param name="mode">Режим моста (fallback/passthrough) для логов.</param>
-    private async Task BridgeTcpAsync(NetworkStream client, string dst, int port, string scope, byte[]? init, string mode, CancellationToken cancellationToken)
+    private async Task BridgeTcp(NetworkStream client, string dst, int port, string scope, byte[]? init, string mode, CancellationToken cancellationToken)
     {
         using var remote = new TcpClient();
         try
@@ -122,8 +122,8 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var ct = linkedCts.Token;
-        var t1 = PipeAsync(client, rs, true, ct);
-        var t2 = PipeAsync(rs, client, false, ct);
+        var t1 = Pipe(client, rs, true, ct);
+        var t2 = Pipe(rs, client, false, ct);
         await Task.WhenAny(t1, t2);
         linkedCts.Cancel();
         await Task.WhenAll(
@@ -138,7 +138,7 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
     /// <param name="dst">Целевой поток записи.</param>
     /// <param name="upstream">Признак направления client-&gt;remote.</param>
     /// <param name="ct">Токен отмены операции копирования.</param>
-    private async Task PipeAsync(Stream src, Stream dst, bool upstream, CancellationToken ct)
+    private async Task Pipe(Stream src, Stream dst, bool upstream, CancellationToken ct)
     {
         var buf = new byte[65536];
         while (!ct.IsCancellationRequested)
