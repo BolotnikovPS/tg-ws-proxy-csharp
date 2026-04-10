@@ -9,7 +9,9 @@ public interface IRawWebSocketFactory
     /// <param name="domain">Домен для TLS SNI и HTTP Host.</param>
     /// <param name="path">Путь WebSocket-эндпоинта.</param>
     /// <param name="scope">Идентификатор скоупа для логирования.</param>
-    /// <param name="timeout">Таймаут подключения; при <see langword="null"/> используется значение по умолчанию.</param>
+    /// <param name="timeout">
+    /// Таймаут подключения; при <see langword="null"/> используется значение по умолчанию.
+    /// </param>
     /// <returns>Инициализированное WebSocket-соединение.</returns>
     Task<IRawWebSocket> Connect(string ip, string domain, string path, string scope, TimeSpan? timeout = null);
 }

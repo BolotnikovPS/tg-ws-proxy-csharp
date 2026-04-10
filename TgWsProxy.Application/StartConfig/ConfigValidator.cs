@@ -45,5 +45,26 @@ public static class ConfigValidator
         {
             throw new ArgumentException("WsMaxFrameBytes (--ws-max-frame-bytes) must be in range 1024..67108864");
         }
+
+        // Validate all provided secrets
+        if (config.Secrets.Count > 0)
+        {
+            for (var i = 0; i < config.Secrets.Count; i++)
+            {
+                var secret = config.Secrets[i];
+                if (secret.Length != 32)
+                {
+                    throw new ArgumentException($"Secret #{i + 1} must be exactly 32 hex characters (got {secret.Length})");
+                }
+                try
+                {
+                    Convert.FromHexString(secret);
+                }
+                catch (FormatException)
+                {
+                    throw new ArgumentException($"Secret #{i + 1} is not valid hex");
+                }
+            }
+        }
     }
 }

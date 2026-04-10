@@ -16,7 +16,7 @@ public static class CliParser
                 throw new ArgumentException($"Missing value for {argName}");
             }
             index++;
-            return argv[index];
+            return argv[index].Trim();
         }
 
         for (var i = 0; i < args.Length; i++)
@@ -82,6 +82,32 @@ public static class CliParser
                 case "--log-backups":
                     cfg.LogRetainedFileCount = int.Parse(NextValue(args, ref i, "--log-backups"));
                     break;
+
+                case "--no-cfproxy":
+                    cfg.CfProxyEnabled = false;
+                    break;
+
+                case "--cfproxy-domain":
+                    cfg.CfProxyDomain = NextValue(args, ref i, "--cfproxy-domain");
+                    break;
+
+                case "--cfproxy-priority":
+                    {
+                        var val = NextValue(args, ref i, "--cfproxy-priority");
+                        cfg.CfProxyPriority = bool.Parse(val);
+                        break;
+                    }
+
+                case "--secret":
+                    {
+                        var raw = NextValue(args, ref i, "--secret");
+                        // Strip optional "dd"/"ee" protocol prefix
+                        var trimmed = raw.StartsWith("dd", StringComparison.OrdinalIgnoreCase) || raw.StartsWith("ee", StringComparison.OrdinalIgnoreCase)
+                            ? raw[2..]
+                            : raw;
+                        cfg.Secrets.Add(trimmed);
+                        break;
+                    }
 
                 default:
                     throw new ArgumentException($"Unknown argument: {args[i]}");

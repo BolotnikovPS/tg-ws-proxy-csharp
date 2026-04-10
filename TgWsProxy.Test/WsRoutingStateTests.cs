@@ -1,7 +1,7 @@
 #nullable enable
 
 using TgWsProxy.Application.Abstractions;
-using TgWsProxy.Application.Logic;
+using TgWsProxy.Infrastructure.Instances;
 
 namespace TgWsProxy.Test;
 
@@ -93,8 +93,11 @@ public class WsRoutingStateTests
     private sealed class DummyWs : IRawWebSocket
     {
         public Task Send(byte[] data, CancellationToken cancellationToken) => Task.CompletedTask;
+
         public Task SendBatch(IReadOnlyList<byte[]> parts, CancellationToken cancellationToken) => Task.CompletedTask;
+
         public Task<byte[]?> Recv(CancellationToken cancellationToken) => Task.FromResult<byte[]?>(null);
+
         public Task Close(CancellationToken cancellationToken) => Task.CompletedTask;
     }
 }

@@ -2,7 +2,7 @@
 
 using TgWsProxy.Application.Abstractions;
 
-namespace TgWsProxy.Application.Logic;
+namespace TgWsProxy.Infrastructure.Instances;
 
 internal sealed class WsRoutingState : IWsRoutingState
 {

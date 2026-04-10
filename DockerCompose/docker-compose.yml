@@ -6,7 +6,7 @@
 services:
   tg-ws-proxy:
     container_name: tg-ws-proxy
-    image: pboldev/tg-ws-proxy:2.1
+    image: pboldev/tg-ws-proxy:2.2
     restart: unless-stopped
     ports:
       - "${TG_PORT:-1080}:${TG_PORT:-1080}"
@@ -24,10 +24,6 @@ services:
       # Чтобы включить логирование:
       # - "--verbose"
       #
-      # Чтобы указать лог-файл:
-      # - "--log-path"
-      # - "/app/logs/proxy.log"
-      #
-      # Чтобы добавить SOCKS5 auth (можно несколько):
-      # - "--auth"
-      # - "user1:pass1"
+      # Чтобы добавить secret (можно несколько):
+      # - "--secret"
+      # - "f43b08aef31a50b7b92c17f07bb66b11"

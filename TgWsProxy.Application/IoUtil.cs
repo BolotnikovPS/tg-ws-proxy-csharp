@@ -2,7 +2,7 @@ namespace TgWsProxy.Application;
 
 public static class IoUtil
 {
-    public static async Task<byte[]> ReadExact(Stream stream, int len, CancellationToken ct)
+    public static async Task<byte[]> ReadExact(this Stream stream, int len, CancellationToken ct)
     {
         var buf = new byte[len];
         var pos = 0;
@@ -19,13 +19,13 @@ public static class IoUtil
         return buf;
     }
 
-    public static async Task<byte[]> ReadExact(Stream stream, int len, TimeSpan timeout, CancellationToken ct)
+    public static async Task<byte[]> ReadExact(this Stream stream, int len, TimeSpan timeout, CancellationToken ct)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
         try
         {
-            return await ReadExact(stream, len, cts.Token);
+            return await stream.ReadExact(len, cts.Token);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {

@@ -78,7 +78,7 @@ public class UnitTest
     {
         var inspector = new MtProtoInspector(new NullLogger<MtProtoInspector>());
         var data = new byte[64];
-        var (Dc, _) = inspector.DcFromInit(data);
+        var (Dc, _) = inspector.DcFromInit(data, new byte[16]);
         Assert.Null(Dc);
     }
 
@@ -118,7 +118,7 @@ public class UnitTest
         var inspector = new MtProtoInspector(new NullLogger<MtProtoInspector>());
         var data = Enumerable.Range(0, 32).Select(i => (byte)i).ToArray();
 
-        var patched = inspector.PatchInitDc(data, -2);
+        var patched = inspector.PatchInitDc(data, -2, new byte[16]);
 
         Assert.Equal(data, patched);
     }
@@ -154,7 +154,8 @@ public class UnitTest
     [Fact]
     public async Task TcpBridgeService_Fallback_Unreachable_DoesNotThrow()
     {
-        var service = new TcpBridgeService(new NullLogger<TcpBridgeService>(), new ProxyStatsStub());
+        var wsFactory = new WsFactoryStub();
+        var service = new TcpBridgeService(new NullLogger<TcpBridgeService>(), new ProxyStatsStub(), wsFactory);
         using var client = new TcpClient();
         var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
         listener.Start();
@@ -171,16 +172,44 @@ public class UnitTest
 
     private sealed class ProxyStatsStub : IProxyStats
     {
-        public void AddBytesDown(long bytes) { }
-        public void AddBytesUp(long bytes) { }
-        public void IncConnectionsHttpRejected() { }
-        public void IncConnectionsPassthrough() { }
-        public void IncConnectionsTcpFallback() { }
-        public void IncConnectionsTotal() { }
-        public void IncConnectionsWs() { }
-        public void IncPoolHit() { }
-        public void IncPoolMiss() { }
-        public void IncWsErrors() { }
+        public void AddBytesDown(long bytes)
+        { }
+
+        public void AddBytesUp(long bytes)
+        { }
+
+        public void IncConnectionsHttpRejected()
+        { }
+
+        public void IncConnectionsPassthrough()
+        { }
+
+        public void IncConnectionsTcpFallback()
+        { }
+
+        public void IncConnectionsCfProxy()
+        { }
+
+        public void IncConnectionsTotal()
+        { }
+
+        public void IncConnectionsWs()
+        { }
+
+        public void IncPoolHit()
+        { }
+
+        public void IncPoolMiss()
+        { }
+
+        public void IncWsErrors()
+        { }
+
         public string Summary() => string.Empty;
+    }
+
+    private sealed class WsFactoryStub : IRawWebSocketFactory
+    {
+        public Task<IRawWebSocket> Connect(string ip, string domain, string path, string scope, TimeSpan? timeout = null) => throw new InvalidOperationException("Not implemented");
     }
 }

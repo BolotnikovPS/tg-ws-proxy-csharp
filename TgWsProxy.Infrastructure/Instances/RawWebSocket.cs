@@ -6,14 +6,13 @@ using System.Buffers.Binary;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
-using System.Text;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain.Exceptions;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
-internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope, ILogger logger, int wsMaxFrameBytes) : IRawWebSocket
+internal sealed class RawWebSocket(Socket client, SslStream ssl, string scope, ILogger logger, int wsMaxFrameBytes) : IRawWebSocket
 {
     private bool _closed;
 
@@ -122,15 +121,22 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
 
     public async Task Close(CancellationToken cancellationToken)
     {
-        if (_closed)
+        try
         {
-            return;
-        }
+            if (_closed)
+            {
+                return;
+            }
 
-        _closed = true;
-        try { await WriteMaskedFrame(0x8, [], cancellationToken); } catch { }
-        try { await ssl.DisposeAsync(); } catch { }
-        try { client.Close(); } catch { }
+            _closed = true;
+            try { await WriteMaskedFrame(0x8, [], cancellationToken); } catch { }
+            try { await ssl.DisposeAsync(); } catch { }
+            try { client.Close(); } catch { }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "[{Scope}] Failed to close WS connection", scope);
+        }
     }
 
     /// <summary>
@@ -139,7 +145,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
     /// <returns>Кортеж из opcode и payload прочитанного фрейма.</returns>
     private async Task<(bool Fin, byte Opcode, byte[] Payload)> ReadFrame(CancellationToken cancellationToken)
     {
-        var hdr = await IoUtil.ReadExact(ssl, 2, cancellationToken);
+        var hdr = await ssl.ReadExact(2, cancellationToken);
         var fin = (hdr[0] & 0x80) != 0;
         var rsv = hdr[0] & 0x70;
         var opcode = (byte)(hdr[0] & 0x0F);
@@ -152,11 +158,11 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
 
         if (len == 126)
         {
-            len = BinaryPrimitives.ReadUInt16BigEndian(await IoUtil.ReadExact(ssl, 2, cancellationToken));
+            len = BinaryPrimitives.ReadUInt16BigEndian(await ssl.ReadExact(2, cancellationToken));
         }
         else if (len == 127)
         {
-            len = BinaryPrimitives.ReadUInt64BigEndian(await IoUtil.ReadExact(ssl, 8, cancellationToken));
+            len = BinaryPrimitives.ReadUInt64BigEndian(await ssl.ReadExact(8, cancellationToken));
         }
 
         if (len > (ulong)wsMaxFrameBytes)
@@ -165,8 +171,8 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
             throw new WsFrameTooLargeException(len, wsMaxFrameBytes);
         }
 
-        var mask = masked ? await IoUtil.ReadExact(ssl, 4, cancellationToken) : null;
-        var payload = await IoUtil.ReadExact(ssl, checked((int)len), cancellationToken);
+        var mask = masked ? await ssl.ReadExact(4, cancellationToken) : null;
+        var payload = await ssl.ReadExact(checked((int)len), cancellationToken);
         if (mask is not null)
         {
             XorMask(payload, mask);
@@ -212,7 +218,7 @@ internal sealed class RawWebSocket(TcpClient client, SslStream ssl, string scope
                 rented[idx++] = (byte)(len >> 8);
                 rented[idx++] = (byte)len;
             }
-            else if (extLenBytes == 8)
+            if (extLenBytes == 8)
             {
                 var ulen = (ulong)len;
                 for (var i = 7; i >= 0; i--)

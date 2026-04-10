@@ -1,38 +1,42 @@
 # TG WS Proxy (C#)
 
-Локальный SOCKS5-прокси для Telegram, который маршрутизирует MTProto-трафик через WebSocket/TLS к дата-центрам Telegram и автоматически переключается на TCP fallback при проблемах с WS.
+Локальный MTProto-прокси для Telegram, который маршрутизирует трафик через WebSocket/TLS к дата-центрам Telegram и автоматически переключается на TCP fallback при проблемах с WS.
 
 ## Особенности проекта
 
-- Поднимает локальный SOCKS5-сервер (по умолчанию `127.0.0.1:1080`).
+- Поднимает локальный MTProto-сервер (по умолчанию `127.0.0.1:1080`).
 - Определяет Telegram-трафик и извлекает DC из init-пакета MTProto.
 - Пытается подключить трафик через WSS-домены Telegram (`/apiws`).
 - При сбоях WS автоматически уходит в TCP fallback и продолжает работу.
 - Поддерживает пул WebSocket-соединений, cooldown после ошибок и blacklist при постоянных redirect.
-- Поддерживает SOCKS5-аутентификацию (`--auth LOGIN:PASSWORD`, аргумент можно указывать несколько раз).
+- **Поддерживает несколько MTProto-секретов** (`--secret SECRET`, можно указывать несколько раз).
+- Поддерживает Cloudflare proxy fallback (`--no-cfproxy`, `--cfproxy-domain`, `--cfproxy-priority`).
 - Раз в минуту пишет в лог сводку `stats` и `ws_bl` (чёрный список DC для WS после серии редиректов).
 
 ## Как это работает
 
 ```text
-Telegram Desktop -> SOCKS5 локально -> TG WS Proxy -> WSS/TCP -> Telegram DC
+Telegram Desktop -> MTProto proxy -> TG WS Proxy -> WSS/TCP -> Telegram DC
 ```
 
 ## Аргументы запуска
 
 | Аргумент | По умолчанию | Описание |
 |---|---|---|
-| `--port <PORT>` | `1080` | Порт локального SOCKS5-сервера. |
-| `--host <HOST>` | `127.0.0.1` | Адрес локального SOCKS5-сервера. |
-| `--dc-ip <DC:IP>` | нет (если не задан, в `Program` добавляются `2:149.154.167.220` и `4:149.154.167.220`) | Явное сопоставление дата-центра Telegram с IP. **Номер DC и IP должны соответствовать друг другу**, иначе TLS к `kws{N}.web.telegram.org` может обрываться. Можно указывать несколько раз. |
-| `--auth <LOGIN:PASSWORD>` | нет | Добавляет учетные данные SOCKS5. Можно указывать несколько раз. |
+| `--port <PORT>` | `1080` | Порт локального MTProto-сервера. |
+| `--host <HOST>` | `127.0.0.1` | Адрес локального MTProto-сервера. |
+| `--dc-ip <DC:IP>` | нет (если не задан, в `Program` добавляются `2:149.154.167.220`, `4:149.154.167.220` и `203:149.154.167.220`) | Явное сопоставление дата-центра Telegram с IP. **Номер DC и IP должны соответствовать друг другу**, иначе TLS к `kws{N}.web.telegram.org` может обрываться. Можно указывать несколько раз. |
+| `--secret <SECRET>` | нет (автогенерация) | MTProto-секрет (32 hex-символа). Можно указывать **несколько раз** для поддержки разных клиентов. Допустим формат с префиксом `dd`/`ee` (например `ddf43b...`), префикс автоматически strip-ится. |
+| `--no-cfproxy` | выключен | Отключает fallback через Cloudflare-proxied WebSocket домены. |
+| `--cfproxy-domain <DOMAIN>` | `pclead.co.uk` | Базовый домен для CF Proxy fallback. |
+| `--cfproxy-priority <true\|false>` | `true` | Приоритет CF Proxy над TCP fallback (`true` = CF first, `false` = TCP first). |
 | `-v`, `--verbose` | выключен | Включает подробное логирование (`Debug`). |
 | `--allow-invalid-certs` | выключен | Разрешает TLS-подключение при невалидном сертификате (только для диагностики; по умолчанию выключено). |
 | `--log-path <PATH>` | не задан | Путь к лог-файлу. Без `--log-max-mb` используется **почасовая** ротация (JSON). |
 | `--log-max-mb <MB>` | `0` | Если `> 0`, ротация **по размеру** файла, минимальный размер одного файла 32 КБ. |
 | `--log-backups <N>` | `0` | Сколько архивных файлов хранить при ротации по размеру (текущий + N). |
 | `--ws-timeout <SEC>` | `10` | Таймаут (сек.) на **чтение** HTTP-ответа WS-рукопожатия. Этапы **TCP и TLS** ограничены `default(значение, 10)` секунд. Диапазон `1`…`300`. После ошибки WS используется быстрый повтор **2 с**. При проблемах в Docker см. раздел ниже. |
-| `--buf-kb <KB>` | `256` | Размер `SO_RCVBUF`/`SO_SNDBUF` для клиентского SOCKS-сокета и исходящего WSS. |
+| `--buf-kb <KB>` | `256` | Размер `SO_RCVBUF`/`SO_SNDBUF` для клиентского сокета и исходящего WSS. |
 | `--pool-size <N>` | `4` | Размер пула заранее открытых WS на пару (DC, media). `0` отключает пул. |
 | `--ws-max-frame-bytes <BYTES>` | `1048576` | Максимальный размер payload одного WS-фрейма (в байтах). При превышении соединение закрывается и происходит TCP fallback. |
 
@@ -55,7 +59,7 @@ docker buildx build --platform linux/arm64 -t tg-ws-proxy:arm64 --load .
 **Один тег для amd64 + arm64** (в registry):
 
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/tg-ws-proxy:2.1 --push .
+docker buildx build --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/tg-ws-proxy:2.2 --push .
 ```
 
 Сборка **на самом ARM-сервере** (без эмуляции):
@@ -71,7 +75,7 @@ docker build -t tg-ws-proxy:local .
 ### Из исходников
 
 ```bash
-# Запуск с настройками по умолчанию
+# Запуск с настройками по умолчанию (секрет автогенерируется)
 dotnet TgWsProxy.dll
 
 # Другой порт и подробный лог
@@ -80,15 +84,18 @@ dotnet TgWsProxy.dll --port 9050 --verbose
 # Привязка к другому хосту и явные DC
 dotnet TgWsProxy.dll --host 0.0.0.0 --dc-ip 1:149.154.175.50 --dc-ip 2:149.154.167.220
 
-# Запуск с SOCKS5 аутентификацией
-dotnet TgWsProxy.dll --auth user1:pass1 --auth user2:pass2
+# Запуск с несколькими MTProto-секретами (для разных клиентов)
+dotnet TgWsProxy.dll --secret ddf43b08aef31a50b7b92c17f07bb66b11 --secret ddaaa111bbb222ccc333ddd444eee555
+
+# С Cloudflare fallback через другой домен
+dotnet TgWsProxy.dll --cfproxy-domain example.com --cfproxy-priority true
 ```
 
 ### Запуск опубликованного бинарника
 
 ```bash
 # Пример для Windows PowerShell
-.\TgWsProxy.exe --port 1080 --dc-ip 2:149.154.167.220 --dc-ip 4:149.154.167.220
+.\TgWsProxy.exe --port 1080 --dc-ip 2:149.154.167.220 --dc-ip 4:149.154.167.220 --secret ddf43b08aef31a50b7b92c17f07bb66b11
 ```
 
 ### Docker Compose (`docker-compose.yml`)
@@ -126,7 +133,7 @@ docker compose logs -f tg-ws-proxy
 docker compose down
 ```
 
-**Дополнительные аргументы** (`--verbose`, `--log-path`, несколько `--auth`) добавьте в список `command` в `docker-compose.yml` (по одному элементу на строку), по аналогии с таблицей аргументов выше.
+**Дополнительные аргументы** (`--verbose`, `--log-path`, несколько `--secret`, CF Proxy) добавьте в список `command` в `docker-compose.yml` (по одному элементу на строку), по аналогии с таблицей аргументов выше.
 
 #### Почему TLS / warmup / `EOF` / `RST` бывают именно в Docker
 
@@ -150,11 +157,19 @@ docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
 
 `network_mode: host` на **Docker Desktop** для Windows/macOS обычно **не** даёт того же эффекта, что на Linux; там смотрите MTU, WSL2/VPN и настройки Docker.
 
-## Настройка Telegram Desktop
+## Настройка Telegram
 
-1. Откройте: **Настройки -> Продвинутые настройки -> Тип подключения -> Прокси**.
-2. Добавьте SOCKS5-прокси:
-   - Сервер: `127.0.0.1`
+При запуске прокси выводит в лог готовую ссылку формата `tg://proxy?server=...&port=...&secret=dd...`. Нажмите на неё в логе — Telegram автоматически добавит прокси.
+
+### Telegram Desktop
+
+1. Откройте: **Настройки → Продвинутые настройки → Тип подключения → Прокси**.
+2. Добавьте прокси типа **MTProto**:
+   - Сервер: `127.0.0.1` (или адрес сервера)
    - Порт: `1080` (или ваш `--port`)
-   - Логин/пароль: пусто, если не использован `--auth`.
+   - Секрет: `ddf43b08aef31a50b7b92c17f07bb66b11` (из лога при запуске)
+
+### Telegram Mobile
+
+Нажмите на ссылку `tg://proxy?...` из лога — Telegram автоматически предложит добавить прокси.
 

@@ -1,7 +1,5 @@
 #nullable enable
 
-using TgWsProxy;
-
 namespace TgWsProxy.Infrastructure.Instances;
 
 /// <summary>

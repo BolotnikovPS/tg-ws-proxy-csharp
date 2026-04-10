@@ -38,5 +38,5 @@ public static class BackgroundTaskRunner
             {
                 logger.LogError(ex, "Background task failed: {Description}", description);
             }
-        }, CancellationToken.None);
+        }, cancellationToken);
 }

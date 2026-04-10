@@ -28,6 +28,11 @@ public interface IProxyStats
     void IncConnectionsHttpRejected();
 
     /// <summary>
+    /// Увеличивает счетчик подключений через Cloudflare proxy fallback.
+    /// </summary>
+    void IncConnectionsCfProxy();
+
+    /// <summary>
     /// Увеличивает счетчик ошибок WebSocket.
     /// </summary>
     void IncWsErrors();

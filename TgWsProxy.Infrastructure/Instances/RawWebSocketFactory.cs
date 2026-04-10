@@ -1,6 +1,7 @@
 #nullable enable
 
 using Microsoft.Extensions.Logging;
+using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
@@ -22,14 +23,17 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
         var handshakeTimeout = timeout ?? TimeSpan.FromSeconds(cfg.WsConnectTimeoutSeconds);
         var establishTimeout = TimeSpan.FromSeconds(Math.Min(handshakeTimeout.TotalSeconds, TcpTlsHandshakeCapSeconds));
         var socketBuf = Math.Max(4, cfg.SocketBufferKb) * 1024;
-        var client = new TcpClient();
+
+        var ipEndPoint = new IPEndPoint(IPAddress.Parse(ip), 443);
+        var client = new Socket(ipEndPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+
         SslStream? ssl = null;
         try
         {
             try
             {
                 using var connectCts = new CancellationTokenSource(establishTimeout);
-                await client.ConnectAsync(ip, 443, connectCts.Token);
+                await client.ConnectAsync(ipEndPoint, connectCts.Token);
             }
             catch (OperationCanceledException)
             {
@@ -42,11 +46,10 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
                 if (IsWarmup(scope))
                 {
                     logger.LogWarning(ex, "[{Scope}] TCP connect failed {Ip}:443 (проверьте сеть, файрвол и соответствие DC:IP в --dc-ip)", scope, ip);
+                    throw;
                 }
-                else
-                {
-                    logger.LogError(ex, "[{Scope}] TCP connect failed {Ip}:443", scope, ip);
-                }
+
+                logger.LogError(ex, "[{Scope}] TCP connect failed {Ip}:443", scope, ip);
                 throw;
             }
 
@@ -54,7 +57,7 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
             client.ReceiveBufferSize = socketBuf;
             client.SendBufferSize = socketBuf;
 
-            ssl = new SslStream(client.GetStream(), false, (_, _, _, sslPolicyErrors) =>
+            ssl = new SslStream(new NetworkStream(client), false, (_, _, _, sslPolicyErrors) =>
             {
                 if (cfg.AllowInvalidCertificates)
                 {
@@ -89,24 +92,25 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
                         logger.LogDebug(ex,
                             "[{Scope}] TLS handshake: соединение сброшено (RST) для {Domain} — типично фильтрация/DPI или неверный IP для SNI; WSS может быть недоступен, остаётся TCP fallback",
                             scope, domain);
+                        throw;
                     }
-                    else if (IsPrematureTlsClose(ex))
+
+                    if (IsPrematureTlsClose(ex))
                     {
                         logger.LogDebug(ex,
                             "[{Scope}] TLS handshake: неожиданный EOF для {Domain} — часто обрыв без ServerHello (DPI/фильтр, неверный --dc-ip); WSS недоступен → TCP fallback",
                             scope, domain);
+                        throw;
                     }
-                    else
-                    {
-                        logger.LogWarning(ex,
-                            "[{Scope}] TLS handshake failed for {Domain} (часто: блокировка Telegram, неверный --dc-ip для этого DC, прокси/VPN на хосте; при недоступности WSS будет TCP fallback)",
-                            scope, domain);
-                    }
+
+                    logger.LogWarning(ex,
+                        "[{Scope}] TLS handshake failed for {Domain} (часто: блокировка Telegram, неверный --dc-ip для этого DC, прокси/VPN на хосте; при недоступности WSS будет TCP fallback)",
+                        scope, domain);
+
+                    throw;
                 }
-                else
-                {
-                    logger.LogError(ex, "[{Scope}] TLS handshake failed for {Domain}", scope, domain);
-                }
+
+                logger.LogError(ex, "[{Scope}] TLS handshake failed for {Domain}", scope, domain);
                 throw;
             }
 
@@ -255,7 +259,7 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
         var b = new List<byte>();
         while (true)
         {
-            var one = await IoUtil.ReadExact(s, 1, cancellationToken);
+            var one = await s.ReadExact(1, cancellationToken);
             if (one[0] == '\n')
             {
                 break;

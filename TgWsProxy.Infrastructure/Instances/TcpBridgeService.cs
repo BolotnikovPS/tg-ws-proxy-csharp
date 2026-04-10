@@ -1,12 +1,18 @@
 #nullable enable
 
 using Microsoft.Extensions.Logging;
+using System.Net;
 using System.Net.Sockets;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Application.Logic.Helpers;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
-internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyStats stats) : ITcpBridgeService
+internal sealed class TcpBridgeService(
+    ILogger<TcpBridgeService> logger,
+    IProxyStats stats,
+    IRawWebSocketFactory wsFactory
+    ) : ITcpBridgeService
 {
     public async Task BridgeWs(NetworkStream client, IRawWebSocket ws, string scope, byte[]? init, CancellationToken cancellationToken)
     {
@@ -36,11 +42,10 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
                 if (parts.Count <= 1)
                 {
                     await ws.Send(parts[0], ct);
+                    continue;
                 }
-                else
-                {
-                    await ws.SendBatch(parts, ct);
-                }
+
+                await ws.SendBatch(parts, ct);
             }
         }, ct);
 
@@ -62,18 +67,198 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         await Task.WhenAny(up, down);
         linkedCts.Cancel();
         await Task.WhenAll(IgnoreTaskErrors(up, scope, "client->ws"), IgnoreTaskErrors(down, scope, "ws->client"));
-        try
+
+        await ws.Close(ct);
+    }
+
+    public async Task BridgeWsReencrypt(
+        NetworkStream client,
+        IRawWebSocket ws,
+        string scope,
+        byte[] init,
+        IncrementalCipher cltDecryptor,
+        IncrementalCipher cltEncryptor,
+        IncrementalCipher tgEncryptor,
+        IncrementalCipher tgDecryptor,
+        CancellationToken cancellationToken)
+    {
+        var splitter = new MtProtoMsgSplitter(init);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var ct = linkedCts.Token;
+
+        var up = Task.Run(async () =>
         {
-            await ws.Close(ct);
-        }
-        catch (Exception ex)
+            var buf = new byte[65536];
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    var n = await client.ReadAsync(buf, ct);
+                    if (n == 0)
+                    {
+                        var tail = splitter.Flush();
+                        if (tail.Count > 0)
+                        {
+                            await ws.Send(tail[0], ct);
+                        }
+                        break;
+                    }
+
+                    stats.AddBytesUp(n);
+                    // Decrypt client data
+                    var plain = cltDecryptor.Update(buf.AsSpan(0, n).ToArray());
+                    // Encrypt for Telegram
+                    var encrypted = tgEncryptor.Update(plain);
+
+                    var parts = splitter.Split(encrypted);
+                    if (parts.Count == 0)
+                    {
+                        logger.LogDebug("[{Scope}] client->ws: {Len} bytes → 0 parts after split", scope, n);
+                        continue;
+                    }
+
+                    if (parts.Count == 1)
+                    {
+                        await ws.Send(parts[0], ct);
+                        logger.LogDebug("[{Scope}] client->ws: {Len} bytes → 1 part of {PartLen} bytes", scope, n, parts[0].Length);
+                        continue;
+                    }
+
+                    await ws.SendBatch(parts, ct);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "[{Scope}] tcp->ws reencrypt ended", scope);
+            }
+        }, ct);
+
+        var down = Task.Run(async () =>
         {
-            logger.LogError(ex, "[{Scope}] Failed to close WS connection", scope);
-        }
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    var data = await ws.Recv(ct);
+                    if (data is null)
+                    {
+                        logger.LogDebug("[{Scope}] ws->tcp: WS Recv returned null (peer closed)", scope);
+                        break;
+                    }
+
+                    stats.AddBytesDown(data.Length);
+                    // Decrypt Telegram data
+                    var plain = tgDecryptor.Update(data);
+                    // Encrypt for client
+                    var encrypted = cltEncryptor.Update(plain);
+                    await client.WriteAsync(encrypted, ct);
+                    logger.LogDebug("[{Scope}] ws->tcp: {Len} bytes received", scope, data.Length);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "[{Scope}] ws->tcp reencrypt ended", scope);
+            }
+        }, ct);
+
+        await Task.WhenAny(up, down);
+        linkedCts.Cancel();
+        await Task.WhenAll(IgnoreTaskErrors(up, scope, "client->ws"), IgnoreTaskErrors(down, scope, "ws->client"));
     }
 
     public Task TcpFallback(NetworkStream client, string dst, int port, byte[] init, string scope, CancellationToken cancellationToken)
         => BridgeTcp(client, dst, port, scope, init, "fallback", cancellationToken);
+
+    public async Task TcpFallbackReencrypt(
+        NetworkStream client,
+        string dst,
+        int port,
+        byte[] relayInit,
+        string scope,
+        IncrementalCipher cltDecryptor,
+        IncrementalCipher cltEncryptor,
+        IncrementalCipher tgEncryptor,
+        IncrementalCipher tgDecryptor,
+        CancellationToken cancellationToken)
+    {
+        var ipEndPoint = new IPEndPoint(IPAddress.Parse(dst), port);
+        using var remote = new Socket(ipEndPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+        try
+        {
+            await remote.ConnectAsync(ipEndPoint, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[{Scope}] TCP fallback connect failed {Dst}:{Port}", scope, dst, port);
+            return;
+        }
+
+        stats.IncConnectionsTcpFallback();
+        remote.NoDelay = true;
+        await using var rs = new NetworkStream(remote);
+
+        try
+        {
+            await rs.WriteAsync(relayInit, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "[{Scope}] Failed to send relay_init to fallback", scope);
+            return;
+        }
+
+        await BridgeTcpReencrypt(client, rs, scope, cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor, cancellationToken);
+    }
+
+    public async Task CfProxyFallback(
+        NetworkStream client,
+        string scope,
+        byte[] relayInit,
+        int dc,
+        bool isMedia,
+        string cfProxyDomain,
+        IncrementalCipher cltDecryptor,
+        IncrementalCipher cltEncryptor,
+        IncrementalCipher tgEncryptor,
+        IncrementalCipher tgDecryptor,
+        CancellationToken cancellationToken)
+    {
+        var domain = $"kws{dc}.{cfProxyDomain}";
+        var mediaTag = isMedia ? " media" : "";
+        logger.LogInformation("[{Scope}] DC{Dc}{MediaTag} -> CF proxy wss://{Domain}/apiws", scope, dc, mediaTag, domain);
+
+        IRawWebSocket? ws = null;
+        try
+        {
+            ws = await wsFactory.Connect(domain, domain, "/apiws", scope, TimeSpan.FromSeconds(10));
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "[{Scope}] DC{Dc}{MediaTag} CF proxy {Domain} failed", scope, dc, mediaTag, domain);
+        }
+
+        if (ws is null)
+        {
+            return;
+        }
+
+        stats.IncConnectionsCfProxy();
+        try
+        {
+            await ws.Send(relayInit, cancellationToken);
+            await BridgeWsReencrypt(client, ws, scope, relayInit, cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor, cancellationToken);
+        }
+        finally
+        {
+            await ws.Close(cancellationToken);
+        }
+    }
 
     public Task TcpPassthrough(NetworkStream client, string dst, int port, string scope, CancellationToken cancellationToken)
         => BridgeTcp(client, dst, port, scope, null, "passthrough", cancellationToken);
@@ -89,10 +274,11 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
     /// <param name="mode">Режим моста (fallback/passthrough) для логов.</param>
     private async Task BridgeTcp(NetworkStream client, string dst, int port, string scope, byte[]? init, string mode, CancellationToken cancellationToken)
     {
-        using var remote = new TcpClient();
+        var ipEndPoint = new IPEndPoint(IPAddress.Parse(dst), port);
+        using var remote = new Socket(ipEndPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
         try
         {
-            await remote.ConnectAsync(dst, port, cancellationToken);
+            await remote.ConnectAsync(ipEndPoint, cancellationToken);
         }
         catch (SocketException ex) when (ex.SocketErrorCode is SocketError.TimedOut or SocketError.HostUnreachable or SocketError.NetworkUnreachable)
         {
@@ -106,7 +292,7 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         }
 
         remote.NoDelay = true;
-        await using var rs = remote.GetStream();
+        await using var rs = new NetworkStream(remote);
         if (init is not null)
         {
             try
@@ -222,5 +408,80 @@ internal sealed class TcpBridgeService(ILogger<TcpBridgeService> logger, IProxyS
         {
             logger.LogError(ex, "[{Scope}] TCP fallback channel failed: {Channel}", scope, channel);
         }
+    }
+
+    /// <summary>
+    /// Двунаправленный TCP-мост с ре-шифрованием.
+    /// </summary>
+    private async Task BridgeTcpReencrypt(
+        NetworkStream client,
+        NetworkStream remote,
+        string scope,
+        IncrementalCipher cltDecryptor,
+        IncrementalCipher cltEncryptor,
+        IncrementalCipher tgEncryptor,
+        IncrementalCipher tgDecryptor,
+        CancellationToken cancellationToken)
+    {
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var ct = linkedCts.Token;
+
+        var t1 = Task.Run(async () =>
+        {
+            var buf = new byte[65536];
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    var n = await client.ReadAsync(buf, ct);
+                    if (n == 0)
+                    {
+                        break;
+                    }
+
+                    stats.AddBytesUp(n);
+                    var plain = cltDecryptor.Update(buf.AsSpan(0, n).ToArray());
+                    var encrypted = tgEncryptor.Update(plain);
+                    await remote.WriteAsync(encrypted, ct);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "[{Scope}] client->remote reencrypt ended", scope);
+            }
+        }, ct);
+
+        var t2 = Task.Run(async () =>
+        {
+            var buf = new byte[65536];
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    var n = await remote.ReadAsync(buf, ct);
+                    if (n == 0)
+                    {
+                        break;
+                    }
+
+                    stats.AddBytesDown(n);
+                    var plain = tgDecryptor.Update(buf.AsSpan(0, n).ToArray());
+                    var encrypted = cltEncryptor.Update(plain);
+                    await client.WriteAsync(encrypted, ct);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "[{Scope}] remote->client reencrypt ended", scope);
+            }
+        }, ct);
+
+        await Task.WhenAny(t1, t2);
+        linkedCts.Cancel();
+        await Task.WhenAll(
+            IgnorePipeTaskErrors(t1, scope, "reencrypt:client->remote"),
+            IgnorePipeTaskErrors(t2, scope, "reencrypt:remote->client"));
     }
 }

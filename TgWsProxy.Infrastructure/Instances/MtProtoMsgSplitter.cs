@@ -9,9 +9,11 @@ namespace TgWsProxy.Infrastructure.Instances;
 /// </summary>
 internal sealed class MtProtoMsgSplitter(byte[] init)
 {
-    private readonly byte[] key = init.AsSpan(8, 32).ToArray();
-    private readonly byte[] iv = init.AsSpan(40, 16).ToArray();
-    private long streamOffset = 64; // skip init packet keystream like Python implementation
+    private readonly byte[] _key = init.AsSpan(8, 32).ToArray();
+    private readonly byte[] _iv = init.AsSpan(40, 16).ToArray();
+    private long _streamOffset = 64;
+    private readonly List<byte> _cipherBuf = [];
+    private readonly List<byte> _plainBuf = [];
 
     /// <summary>
     /// Расшифровывает chunk и, при наличии нескольких MTProto-сообщений, разбивает его на части.
@@ -19,58 +21,61 @@ internal sealed class MtProtoMsgSplitter(byte[] init)
     /// </summary>
     public IReadOnlyList<byte[]> Split(byte[] chunk)
     {
-        var plain = DecryptChunk(chunk);
-        var boundaries = new List<int>();
-        var pos = 0;
-
-        while (pos < plain.Length)
+        if (chunk.Length == 0)
         {
-            int msgLen;
-            var first = plain[pos];
-            if (first == 0x7f)
-            {
-                if (pos + 4 > plain.Length)
-                {
-                    break;
-                }
+            return [];
+        }
 
-                msgLen = (plain[pos + 1] | (plain[pos + 2] << 8) | (plain[pos + 3] << 16)) * 4;
-                pos += 4;
-            }
-            else
-            {
-                msgLen = first * 4;
-                pos += 1;
-            }
+        _cipherBuf.AddRange(chunk);
+        var plain = DecryptChunk(chunk);
+        _plainBuf.AddRange(plain);
 
-            if (msgLen == 0 || pos + msgLen > plain.Length)
+        var parts = new List<byte[]>();
+
+        while (_plainBuf.Count > 0)
+        {
+            var packetLen = NextPacketLenFromPlain();
+            if (packetLen is null)
             {
                 break;
             }
 
-            pos += msgLen;
-            boundaries.Add(pos);
+            if (packetLen <= 0)
+            {
+                // Invalid packet, return everything as single part
+                parts.Add([.. _cipherBuf]);
+                _cipherBuf.Clear();
+                _plainBuf.Clear();
+                return parts;
+            }
+
+            if (_cipherBuf.Count < packetLen.Value)
+            {
+                break;
+            }
+
+            parts.Add([.. _cipherBuf.GetRange(0, packetLen.Value)]);
+            _cipherBuf.RemoveRange(0, packetLen.Value);
+            _plainBuf.RemoveRange(0, packetLen.Value);
         }
 
-        if (boundaries.Count <= 1)
+        return parts.Count > 0 ? parts : [chunk];
+    }
+
+    /// <summary>
+    /// Возвращает оставшиеся в буфере данные (вызывается при закрытии соединения).
+    /// </summary>
+    public IReadOnlyList<byte[]> Flush()
+    {
+        if (_cipherBuf.Count == 0)
         {
-            return [chunk];
+            return [];
         }
 
-        var parts = new List<byte[]>(boundaries.Count + 1);
-        var prev = 0;
-        foreach (var b in boundaries)
-        {
-            parts.Add(chunk[prev..b]);
-            prev = b;
-        }
-
-        if (prev < chunk.Length)
-        {
-            parts.Add(chunk[prev..]);
-        }
-
-        return parts;
+        var tail = _cipherBuf.ToArray();
+        _cipherBuf.Clear();
+        _plainBuf.Clear();
+        return [tail];
     }
 
     private byte[] DecryptChunk(byte[] chunk)
@@ -80,14 +85,14 @@ internal sealed class MtProtoMsgSplitter(byte[] init)
         using var aes = Aes.Create();
         aes.Mode = CipherMode.ECB;
         aes.Padding = PaddingMode.None;
-        aes.Key = key;
+        aes.Key = _key;
         using var enc = aes.CreateEncryptor();
 
         var block = new byte[16];
         var counter = new byte[16];
 
-        var blockIndex = streamOffset / 16;
-        var blockOffset = (int)(streamOffset % 16);
+        var blockIndex = _streamOffset / 16;
+        var blockOffset = (int)(_streamOffset % 16);
 
         var pos = 0;
         while (pos < chunk.Length)
@@ -106,8 +111,55 @@ internal sealed class MtProtoMsgSplitter(byte[] init)
             blockOffset = 0;
         }
 
-        streamOffset += chunk.Length;
+        _streamOffset += chunk.Length;
         return plain;
+    }
+
+    /// <summary>
+    /// Определяет длину следующего MTProto пакета из расшифрованных данных.
+    /// </summary>
+    /// <returns>Длина пакета, 0 если ошибка, или null если недостаточно данных.</returns>
+    private int? NextPacketLenFromPlain()
+    {
+        if (_plainBuf.Count < 1)
+        {
+            return null;
+        }
+
+        var first = _plainBuf[0];
+        int headerLen;
+        int payloadLen;
+
+        if (first is 0x7f or 0xFF)
+        {
+            // Extended format: 4-byte header
+            if (_plainBuf.Count < 4)
+            {
+                return null;
+            }
+
+            payloadLen = (_plainBuf[1] | (_plainBuf[2] << 8) | (_plainBuf[3] << 16)) * 4;
+            headerLen = 4;
+        }
+        else
+        {
+            // Short format: 1-byte header
+            payloadLen = (first & 0x7F) * 4;
+            headerLen = 1;
+        }
+
+        if (payloadLen <= 0)
+        {
+            return 0;
+        }
+
+        var packetLen = headerLen + payloadLen;
+        if (_plainBuf.Count < packetLen)
+        {
+            return null;
+        }
+
+        return packetLen;
     }
 
     /// <summary>
@@ -116,7 +168,7 @@ internal sealed class MtProtoMsgSplitter(byte[] init)
     private void FillCounterAt(long blockIndex, byte[] counter16)
     {
         // Start from IV.
-        Buffer.BlockCopy(iv, 0, counter16, 0, 16);
+        Buffer.BlockCopy(_iv, 0, counter16, 0, 16);
         var carry = (ulong)blockIndex;
 
         // Add blockIndex as a big-endian offset.

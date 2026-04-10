@@ -14,17 +14,21 @@ internal sealed class ProxyServer(Config cfg, IClientSessionHandler sessionHandl
 
     public async Task Run(CancellationToken cancellationToken)
     {
-        LogLinks();
+        await LogLinks();
 
-        using var listener = new TcpListener(IPAddress.Parse(cfg.Host), cfg.Port);
-        listener.Start();
+        var ipEndPoint = new IPEndPoint(IPAddress.Parse(cfg.Host), cfg.Port);
+        using var listener = new Socket(ipEndPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+
+        listener.Bind(ipEndPoint);
+        listener.Listen(int.MaxValue);
+
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
-                var client = await listener.AcceptTcpClientAsync(cancellationToken);
+                var client = await listener.AcceptAsync(cancellationToken);
                 var connectionId = Interlocked.Increment(ref _connectionSeq).ToString("D6");
-                var peer = client.Client.RemoteEndPoint?.ToString() ?? "?";
+                var peer = client.RemoteEndPoint?.ToString() ?? "?";
                 var scope = $"{peer}|{connectionId}";
                 var context = new ClientContext(scope, peer, connectionId);
                 BackgroundTaskRunner.RunDetachedSafe(
@@ -48,25 +52,14 @@ internal sealed class ProxyServer(Config cfg, IClientSessionHandler sessionHandl
     /// <summary>
     /// Пишет в лог параметры запуска и готовые ссылки подключения для Telegram.
     /// </summary>
-    private void LogLinks()
+    private async Task LogLinks()
     {
         logger.LogInformation("Telegram WS Bridge Proxy listening on {Host}:{Port}", cfg.Host, cfg.Port);
 
-        if (cfg.Credentials.Count > 0)
+        for (var i = 0; i < cfg.Secrets.Count; i++)
         {
-            logger.LogInformation(
-                "Telegram WS Bridge SOCKS5 auth enabled (accounts: {Count}). Links with credentials are not logged for safety.",
-                cfg.Credentials.Count);
-
-            // Best-effort: log only login identifiers (no passwords) to aid debugging.
-            foreach (var config in cfg.Credentials)
-            {
-                logger.LogDebug("Telegram WS Bridge account login: {Login}", config.Login);
-            }
-            return;
+            var tgLink = $"tg://proxy?server={cfg.Host}&port={cfg.Port}&secret={cfg.Secrets[i]}";
+            logger.LogInformation("MTProto connect link #{Num}: {Link}", i + 1, tgLink);
         }
-
-        var linkNoUserNoPass = $"https://t.me/socks?server={cfg.Host}&port={cfg.Port}";
-        logger.LogInformation("Telegram WS Bridge {link}", linkNoUserNoPass);
     }
 }

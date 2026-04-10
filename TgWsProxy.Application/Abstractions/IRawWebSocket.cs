@@ -11,7 +11,7 @@ public interface IRawWebSocket
     Task Send(byte[] data, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Отправляет несколько бинарных кадров подряд (один сброс в сокет), как send_batch в Python.
+    /// Отправляет несколько бинарных кадров подряд (один сброс в сокет).
     /// </summary>
     Task SendBatch(IReadOnlyList<byte[]> parts, CancellationToken cancellationToken);
 

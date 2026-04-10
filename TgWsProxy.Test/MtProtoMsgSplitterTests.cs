@@ -1,7 +1,6 @@
 #nullable enable
 
 using System.Security.Cryptography;
-using System.Linq;
 using TgWsProxy.Infrastructure.Instances;
 
 namespace TgWsProxy.Test;
@@ -66,9 +65,7 @@ public class MtProtoMsgSplitterTests
 
     private static byte[] BuildInitForTest()
     {
-        // init layout used by splitter:
-        // key = init[8..39] (32 bytes)
-        // iv  = init[40..55] (16 bytes)
+        // init layout used by splitter: key = init[8..39] (32 bytes) iv = init[40..55] (16 bytes)
         var init = new byte[64];
 
         for (var i = 0; i < 32; i++)
@@ -86,8 +83,7 @@ public class MtProtoMsgSplitterTests
 
     private static byte[] BuildSimpleMessage(int firstLenUnit, byte payloadByte)
     {
-        // plain format:
-        // [lenUnit (1 byte)] + [payload (lenUnit*4 bytes)]
+        // plain format: [lenUnit (1 byte)] + [payload (lenUnit*4 bytes)]
         var msgLen = firstLenUnit * 4;
         var data = new byte[1 + msgLen];
         data[0] = (byte)firstLenUnit;
@@ -100,8 +96,7 @@ public class MtProtoMsgSplitterTests
 
     private static byte[] BuildExtendedMessage(int wordsLen, byte payloadByte)
     {
-        // format:
-        // [0x7f] + [lenLow  (1 byte)] + [lenMid (1 byte)] + [lenHigh (1 byte)] + payload
+        // format: [0x7f] + [lenLow (1 byte)] + [lenMid (1 byte)] + [lenHigh (1 byte)] + payload
         var msgLen = wordsLen * 4;
         var data = new byte[4 + msgLen];
         data[0] = 0x7f;
@@ -116,8 +111,8 @@ public class MtProtoMsgSplitterTests
     }
 
     /// <summary>
-    /// Encrypts plaintext using AES-CTR where counter blocks are AES-ECB(key) of (iv + blockIndex offset).
-    /// This matches the splitter's FillCounterAt + TransformBlock usage.
+    /// Encrypts plaintext using AES-CTR where counter blocks are AES-ECB(key) of (iv + blockIndex
+    /// offset). This matches the splitter's FillCounterAt + TransformBlock usage.
     /// </summary>
     private static byte[] EncryptCtr(byte[] init, byte[] plain, long offset)
     {
@@ -172,4 +167,3 @@ public class MtProtoMsgSplitterTests
         }
     }
 }
-

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
+using System.Security.Cryptography;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.StartConfig;
@@ -15,6 +16,12 @@ if (cfg.DcIp.Count == 0)
     // IP должны соответствовать номеру DC: для WSS используется SNI kws{N}.web.telegram.org к этому адресу.
     cfg.DcIp.Add("2:149.154.167.220");
     cfg.DcIp.Add("4:149.154.167.220");
+    cfg.DcIp.Add("203:149.154.167.220");
+}
+
+if (cfg.Secrets.Count == 0)
+{
+    cfg.Secrets.Add(Convert.ToHexString(RandomNumberGenerator.GetBytes(16)));
 }
 
 Dictionary<int, string> dcOpt;
@@ -29,42 +36,46 @@ catch (Exception e)
     return 1;
 }
 
-var services = new ServiceCollection();
-services.AddLogging(builder =>
-{
-    var logLevel = cfg.Verbose ? LogEventLevel.Debug : LogEventLevel.Information;
+await using var provider = new ServiceCollection()
+    .AddLogging(builder =>
+    {
+        var logLevel = cfg.Verbose ? LogEventLevel.Debug : LogEventLevel.Information;
 
-    var loggerConfiguration = new LoggerConfiguration()
+        var loggerConfiguration = new LoggerConfiguration()
+        .MinimumLevel.Debug()
         .WriteTo.Console(logLevel);
 
-    if (!string.IsNullOrWhiteSpace(cfg.LogPath))
-    {
-        if (cfg.LogMaxMegabytes > 0)
+        if (!string.IsNullOrWhiteSpace(cfg.LogPath))
         {
-            var limitBytes = (long)Math.Max(32 * 1024, cfg.LogMaxMegabytes * 1024 * 1024);
-            loggerConfiguration.WriteTo.File(
-                new CompactJsonFormatter(),
-                cfg.LogPath,
-                restrictedToMinimumLevel: logLevel,
-                rollingInterval: RollingInterval.Infinite,
-                fileSizeLimitBytes: limitBytes,
-                rollOnFileSizeLimit: true,
-                retainedFileCountLimit: Math.Max(1, cfg.LogRetainedFileCount + 1));
+            if (cfg.LogMaxMegabytes > 0)
+            {
+                var limitBytes = (long)Math.Max(32 * 1024, cfg.LogMaxMegabytes * 1024 * 1024);
+                loggerConfiguration.WriteTo.File(
+                    new CompactJsonFormatter(),
+                    cfg.LogPath,
+                    restrictedToMinimumLevel: logLevel,
+                    rollingInterval: RollingInterval.Infinite,
+                    fileSizeLimitBytes: limitBytes,
+                    rollOnFileSizeLimit: true,
+                    retainedFileCountLimit: Math.Max(1, cfg.LogRetainedFileCount + 1));
+            }
+            else
+            {
+                loggerConfiguration.WriteTo.File(new CompactJsonFormatter(), cfg.LogPath, logLevel, rollingInterval: RollingInterval.Hour);
+            }
         }
-        else
-        {
-            loggerConfiguration.WriteTo.File(new CompactJsonFormatter(), cfg.LogPath, logLevel, rollingInterval: RollingInterval.Hour);
-        }
-    }
 
-    builder.AddSerilog(loggerConfiguration.CreateLogger());
-})
+        builder
+        .ClearProviders()
+        .AddDebug()
+        .AddSerilog(loggerConfiguration.CreateLogger());
+    })
     .AddSingleton(cfg)
     .AddSingleton(dcOpt)
     .AddProxyApplication()
-    .AddProxyInfrastructure();
+    .AddProxyInfrastructure()
+    .BuildServiceProvider();
 
-await using var provider = services.BuildServiceProvider();
 var runtimeLoggerFactory = provider.GetRequiredService<ILoggerFactory>();
 var runtimeLogger = runtimeLoggerFactory.CreateLogger("runtime");
 
@@ -87,14 +98,7 @@ TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
 };
 
 var startupLogger = runtimeLoggerFactory.CreateLogger<ILogger<Program>>();
-if (cfg.Credentials.Count > 0)
-{
-    startupLogger.LogInformation("SOCKS5 auth enabled. Accounts: {Count}", cfg.Credentials.Count);
-}
-else
-{
-    startupLogger.LogInformation("SOCKS5 auth disabled.");
-}
+startupLogger.LogInformation("MTProto secrets: {Count}", cfg.Secrets.Count);
 
 var server = provider.GetRequiredService<IProxyServer>();
 var sessionHandler = provider.GetRequiredService<IClientSessionHandler>();

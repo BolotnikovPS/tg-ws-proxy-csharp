@@ -1,9 +1,12 @@
+#nullable enable
+
 using Microsoft.Extensions.Logging;
 using System.Buffers.Binary;
-using System.Net;
+using System.Collections.Frozen;
 using System.Net.Sockets;
-using System.Text;
+using System.Security.Cryptography;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Application.Logic.Helpers;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Domain.Exceptions;
@@ -22,49 +25,29 @@ internal sealed class ClientSessionHandler(
     ) : IClientSessionHandler
 {
     private const int WsFailTimeoutSeconds = 2;
-    private static readonly TimeSpan SocksIoTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan InitReadTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan WsPoolMaxAge = TimeSpan.FromSeconds(120);
     private static readonly TimeSpan DcFailCooldown = TimeSpan.FromSeconds(30);
 
-    private static readonly Dictionary<string, (int Dc, bool IsMedia)> IpToDc = new(StringComparer.Ordinal)
-    {
-        ["149.154.175.50"] = (1, false),
-        ["149.154.175.51"] = (1, false),
-        ["149.154.175.53"] = (1, false),
-        ["149.154.175.54"] = (1, false),
-        ["149.154.175.52"] = (1, true),
-        ["149.154.167.41"] = (2, false),
-        ["149.154.167.50"] = (2, false),
-        ["149.154.167.51"] = (2, false),
-        ["149.154.167.220"] = (2, false),
-        ["95.161.76.100"] = (2, false),
-        ["149.154.167.151"] = (2, true),
-        ["149.154.167.222"] = (2, true),
-        ["149.154.167.223"] = (2, true),
-        ["149.154.162.123"] = (2, true),
-        ["149.154.175.100"] = (3, false),
-        ["149.154.175.101"] = (3, false),
-        ["149.154.175.102"] = (3, true),
-        ["149.154.167.91"] = (4, false),
-        ["149.154.167.92"] = (4, false),
-        ["149.154.164.250"] = (4, true),
-        ["149.154.166.120"] = (4, true),
-        ["149.154.166.121"] = (4, true),
-        ["149.154.167.118"] = (4, true),
-        ["149.154.165.111"] = (4, true),
-        ["91.108.56.100"] = (5, false),
-        ["91.108.56.101"] = (5, false),
-        ["91.108.56.116"] = (5, false),
-        ["91.108.56.126"] = (5, false),
-        ["149.154.171.5"] = (5, false),
-        ["91.108.56.102"] = (5, true),
-        ["91.108.56.128"] = (5, true),
-        ["91.108.56.151"] = (5, true),
-        ["91.105.192.100"] = (203, false)
-    };
+    // Telegram protocol constants
+    private static readonly byte[] ProtoTagAbridged = [0xEF, 0xEF, 0xEF, 0xEF];
+    private static readonly byte[] ProtoTagIntermediate = [0xEE, 0xEE, 0xEE, 0xEE];
+    private static readonly byte[] ProtoTagSecure = [0xDD, 0xDD, 0xDD, 0xDD];
+    private static readonly byte[] Zero64 = new byte[64];
 
-    public async Task Handle(TcpClient client, ClientContext context, CancellationToken cancellationToken)
+    private static readonly FrozenDictionary<int, string> DC_DEFAULT_IPS = new Dictionary<int, string>()
+    {
+        { 1, "149.154.175.50" },
+        { 2, "149.154.167.51" },
+        { 3, "149.154.175.100" },
+        { 4, "149.154.167.91" },
+        { 5, "149.154.171.5" },
+        { 203, "91.105.192.100" }
+    }.ToFrozenDictionary();
+
+    private readonly byte[][] _secretBytesList = [.. cfg.Secrets.Select(s => Convert.FromHexString(s))];
+
+    public async Task Handle(Socket client, ClientContext context, CancellationToken cancellationToken)
     {
         stats.IncConnectionsTotal();
         using var _ = client;
@@ -72,106 +55,136 @@ internal sealed class ClientSessionHandler(
         var sockBuf = Math.Max(4, cfg.SocketBufferKb) * 1024;
         client.ReceiveBufferSize = sockBuf;
         client.SendBufferSize = sockBuf;
-        await using var stream = client.GetStream();
+        await using var stream = new NetworkStream(client);
 
         logger.LogInformation("[{Scope}] Client connected", context.Scope);
 
-        // These values are needed for graceful fallback in some WS error cases.
-        var dst = "";
-        var port = 0;
         var init = Array.Empty<byte>();
+        var dc = 2; // default DC for fallback
 
         try
         {
-            if (!await HandleSocks5Auth(stream, cfg.Credentials, context, cancellationToken))
-            {
-                logger.LogWarning("[{Scope}] SOCKS5 authentication failed", context.Scope);
-                return;
-            }
-
-            var req = await IoUtil.ReadExact(stream, 4, SocksIoTimeout, cancellationToken);
-            if (req[1] != 1)
-            {
-                await stream.WriteAsync(Socks5Reply(0x07), cancellationToken);
-                return;
-            }
-
-            var atyp = req[3];
-            if (atyp == 1)
-            {
-                dst = new IPAddress(await IoUtil.ReadExact(stream, 4, SocksIoTimeout, cancellationToken)).ToString();
-            }
-            else if (atyp == 3)
-            {
-                var dlen = (await IoUtil.ReadExact(stream, 1, SocksIoTimeout, cancellationToken))[0];
-                dst = Encoding.ASCII.GetString(await IoUtil.ReadExact(stream, dlen, SocksIoTimeout, cancellationToken));
-            }
-            else
-            {
-                await stream.WriteAsync(Socks5Reply(0x08), cancellationToken);
-                return;
-            }
-
-            port = BinaryPrimitives.ReadUInt16BigEndian(await IoUtil.ReadExact(stream, 2, SocksIoTimeout, cancellationToken));
-            if (dst.Contains(':'))
-            {
-                await stream.WriteAsync(Socks5Reply(0x05), cancellationToken);
-                return;
-            }
-
-            await stream.WriteAsync(Socks5Reply(0x00), cancellationToken);
-            if (!IsTelegramIp(dst))
-            {
-                stats.IncConnectionsPassthrough();
-                logger.LogDebug("[{Scope}] Non-Telegram destination {Dst}:{Port}, TCP passthrough", context.Scope, dst, port);
-                await bridgeService.TcpPassthrough(stream, dst, port, context.Scope, cancellationToken);
-                return;
-            }
-
-            init = await IoUtil.ReadExact(stream, 64, InitReadTimeout, cancellationToken);
+            // Direct MTProto handshake (no SOCKS5)
+            init = await stream.ReadExact(64, InitReadTimeout, cancellationToken);
             if (mtProtoInspector.IsHttpTransport(init))
             {
                 stats.IncConnectionsHttpRejected();
-                logger.LogWarning("[{Scope}] HTTP transport detected on Telegram route; closing", context.Scope);
+                logger.LogWarning("[{Scope}] HTTP transport detected; closing", context.Scope);
                 return;
             }
 
-            var (dc, isMedia) = mtProtoInspector.DcFromInit(init);
-            if (dc is null && IpToDc.TryGetValue(dst, out var ipInfo))
+            // Try each secret to find the right one for this client
+            byte[]? matchedSecretBytes = null;
+            int? matchedDc = null;
+            bool? matchedIsMedia = null;
+            byte[]? matchedProtoTag = null;
+
+            foreach (var secretBytes in _secretBytesList)
             {
-                dc = ipInfo.Dc;
-                isMedia = ipInfo.IsMedia;
-                if (dcOpt.ContainsKey(dc.Value))
+                var (dcVal, isMediaVal) = mtProtoInspector.DcFromInit(init, secretBytes);
+                if (dcVal is not null)
                 {
-                    // Keep Python behavior: patch with dc for media, -dc otherwise.
-                    var patchRaw = (short)(isMedia.Value ? dc.Value : -dc.Value);
-                    init = mtProtoInspector.PatchInitDc(init, patchRaw);
-                    logger.LogDebug("[{Scope}] MTProto init patched using destination IP map (DC{Dc}, media={IsMedia})", context.Scope, dc, isMedia);
+                    matchedSecretBytes = secretBytes;
+                    matchedDc = dcVal;
+                    matchedIsMedia = isMediaVal;
+                    matchedProtoTag = GetProtoTag(init, secretBytes);
+                    break;
                 }
             }
 
-            if (dc is null || !dcOpt.TryGetValue(dc.Value, out var targetIp))
+            if (matchedSecretBytes is null || matchedDc is null)
             {
-                logger.LogWarning("[{Scope}] Unknown DC for {Dst}:{Port}, fallback TCP", context.Scope, dst, port);
+                logger.LogWarning("[{Scope}] Unknown DC with any secret, fallback TCP", context.Scope);
                 stats.IncConnectionsTcpFallback();
-                await bridgeService.TcpFallback(stream, dst, port, init, context.Scope, cancellationToken);
+                await bridgeService.TcpFallback(stream, DC_DEFAULT_IPS[2], 443, init, context.Scope, cancellationToken);
                 return;
             }
 
+            dc = matchedDc.Value;
+            var isMedia = matchedIsMedia;
+            var protoTag = matchedProtoTag;
+
+            // DC 203 handling: map to DC 2 for WS domains
+            var wsDc = dc == 203 ? 2 : dc;
             var mediaFlag = isMedia ?? true;
-            var dcKey = (dc.Value, mediaFlag);
+            var dcKey = (wsDc, mediaFlag);
+            var dcIdx = (short)(mediaFlag ? -dc : dc);
+
+            // Generate relay_init
+            var relayInit = mtProtoInspector.GenerateRelayInit(protoTag, dcIdx);
+            logger.LogDebug("[{Scope}] relay_init: proto=0x{Proto:X8} dcIdx={DcIdx} rnd_tail={Tail}",
+                context.Scope,
+                BinaryPrimitives.ReadUInt32LittleEndian(protoTag),
+                dcIdx,
+                Convert.ToHexString(relayInit.AsSpan(56, 8)));
+
+            // Client-side keys dec_prekey_iv = init[8:56],
+            // dec_key = SHA256(dec_prekey + secret)
+            var clientDecPrekeyIv = init.AsSpan(8, 48).ToArray();
+            var clientDecPrekey = clientDecPrekeyIv.AsSpan(0, 32).ToArray();
+            var clientDecIv = clientDecPrekeyIv.AsSpan(32, 16).ToArray();
+            var clientDecKey = SHA256.HashData([.. clientDecPrekey, .. matchedSecretBytes]);
+
+            // enc_prekey_iv = dec_prekey_iv[::-1], enc_key = SHA256(enc_prekey + secret)
+            var clientEncPrekeyIv = clientDecPrekeyIv.ToArray();
+            Array.Reverse(clientEncPrekeyIv);
+            var clientEncPrekey = clientEncPrekeyIv.AsSpan(0, 32).ToArray();
+            var clientEncIv = clientEncPrekeyIv.AsSpan(32, 16).ToArray();
+            var clientEncKey = SHA256.HashData([.. clientEncPrekey, .. matchedSecretBytes]);
+
+            using var cltDecryptor = new IncrementalCipher(clientDecKey, clientDecIv);
+            using var cltEncryptor = new IncrementalCipher(clientEncKey, clientEncIv);
+
+            // Fast-forward clt_decryptor past the 64-byte init
+            cltDecryptor.Update(Zero64);
+
+            // Relay side keys (from relay_init)
+            var relayEncKey = relayInit.AsSpan(8, 32).ToArray();
+            var relayEncIv = relayInit.AsSpan(40, 16).ToArray();
+
+            // tg_encryptor uses relay_enc_key/iv (to encrypt data to Telegram) tg_decryptor uses
+            // relay_dec_key/iv (to decrypt data from Telegram) relay_dec_prekey_iv = relay_init[8:56][::-1]
+            var relayDecPrekeyIv = relayInit.AsSpan(8, 48).ToArray();
+            Array.Reverse(relayDecPrekeyIv);
+            var relayDecKey = relayDecPrekeyIv.AsSpan(0, 32).ToArray();
+            var relayDecIv = relayDecPrekeyIv.AsSpan(32, 16).ToArray();
+
+            using var tgEncryptor = new IncrementalCipher(relayEncKey, relayEncIv);
+            using var tgDecryptor = new IncrementalCipher(relayDecKey, relayDecIv);
+
+            // Fast-forward tg_encryptor past the 64-byte init
+            tgEncryptor.Update(Zero64);
+
             if (wsRoutingState.IsBlacklisted(dcKey))
             {
                 logger.LogDebug("[{Scope}] DC{Dc} media={IsMedia} WS blacklisted; using TCP fallback", context.Scope, dc, mediaFlag);
                 stats.IncConnectionsTcpFallback();
-                await bridgeService.TcpFallback(stream, dst, port, init, context.Scope, cancellationToken);
+                await DoFallback(
+                    stream, DC_DEFAULT_IPS[dc], relayInit, context.Scope, dc, mediaFlag,
+                    cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor, cancellationToken);
                 return;
             }
 
             var wsTimeout = wsRoutingState.IsInFailCooldown(dcKey, DateTimeOffset.UtcNow)
                 ? TimeSpan.FromSeconds(WsFailTimeoutSeconds)
                 : TimeSpan.FromSeconds(cfg.WsConnectTimeoutSeconds);
-            var domains = WsDomains(dc.Value, mediaFlag);
+            var domains = WsDomains(wsDc, mediaFlag);
+
+            // Try to get target IP from config or defaults
+            var targetIp = dcOpt.TryGetValue(dc, out var ip)
+                ? ip
+                : DC_DEFAULT_IPS.GetValueOrDefault(dc);
+
+            if (targetIp is null)
+            {
+                logger.LogWarning("[{Scope}] No target IP for DC{Dc}, fallback TCP", context.Scope, dc);
+                stats.IncConnectionsTcpFallback();
+                await DoFallback(
+                    stream, DC_DEFAULT_IPS[dc], relayInit, context.Scope, dc, mediaFlag,
+                    cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor, cancellationToken);
+                return;
+            }
+
             var ws = TryTakePooledWs(dcKey);
             var sawRedirect = false;
             var allRedirects = true;
@@ -239,29 +252,24 @@ internal sealed class ClientSessionHandler(
                 {
                     wsRoutingState.SetFailCooldown(dcKey, DateTimeOffset.UtcNow.Add(DcFailCooldown));
                 }
-                logger.LogWarning("[{Scope}] WS unavailable, fallback TCP {Dst}:{Port}", context.Scope, dst, port);
+                logger.LogWarning("[{Scope}] WS unavailable, fallback TCP", context.Scope);
                 stats.IncConnectionsTcpFallback();
-                await bridgeService.TcpFallback(stream, dst, port, init, context.Scope, cancellationToken);
+                await bridgeService.TcpFallback(stream, DC_DEFAULT_IPS[dc], 443, init, context.Scope, cancellationToken);
                 return;
             }
 
             stats.IncConnectionsWs();
-            logger.LogInformation("[{Scope}] WS bridge started DC{Dc} -> {Dst}:{Port}", context.Scope, dc, dst, port);
+            logger.LogInformation("[{Scope}] WS bridge DC{Dc} media={IsMedia}", context.Scope, dc, mediaFlag);
             try
             {
-                await ws.Send(init, cancellationToken);
-                await bridgeService.BridgeWs(stream, ws, context.Scope, init, cancellationToken);
+                await ws.Send(relayInit, cancellationToken);
+                await bridgeService.BridgeWsReencrypt(
+                    stream, ws, context.Scope, relayInit,
+                    cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor, cancellationToken);
             }
             finally
             {
-                try
-                {
-                    await ws.Close(cancellationToken);
-                }
-                catch
-                {
-                    // best-effort cleanup on error/cancellation
-                }
+                await ws.Close(cancellationToken);
             }
         }
         catch (OperationCanceledException)
@@ -288,15 +296,13 @@ internal sealed class ClientSessionHandler(
             }
 
             logger.LogWarning(
-                "[{Scope}] WS frame too large ({Len} > {Max}); fallback TCP {Dst}:{Port}",
+                "[{Scope}] WS frame too large ({Len} > {Max}); fallback TCP",
                 context.Scope,
                 ex.FramePayloadLen,
-                ex.MaxFramePayloadLen,
-                dst,
-                port);
+                ex.MaxFramePayloadLen);
 
             stats.IncConnectionsTcpFallback();
-            await bridgeService.TcpFallback(stream, dst, port, init, context.Scope, cancellationToken);
+            await bridgeService.TcpFallback(stream, DC_DEFAULT_IPS[dc], 443, init, context.Scope, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -324,73 +330,18 @@ internal sealed class ClientSessionHandler(
                 continue;
             }
 
+            // DC 203 -> DC 2 for WS domains
+            var wsDc = dc == 203 ? 2 : dc;
+
             foreach (var media in new[] { false, true })
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var dcKey = (dc, media);
-                var domains = WsDomains(dc, media);
+                var dcKey = (wsDc, media);
+                var domains = WsDomains(wsDc, media);
                 SchedulePoolRefill(dcKey, targetIp, domains, TimeSpan.FromSeconds(cfg.WsConnectTimeoutSeconds), "warmup", cancellationToken);
             }
         }
     }
-
-    /// <summary>
-    /// Выполняет SOCKS5-согласование и, при необходимости, проверку логина/пароля.
-    /// </summary>
-    /// <param name="stream">Сетевой поток клиентского подключения.</param>
-    /// <param name="credentials">Список допустимых учетных данных SOCKS5.</param>
-    /// <param name="cancellationToken">Токен отмены операций чтения/записи.</param>
-    /// <returns><see langword="true"/>, если аутентификация успешна; иначе <see langword="false"/>.</returns>
-    private async Task<bool> HandleSocks5Auth(NetworkStream stream, List<AuthCredential> credentials, ClientContext context, CancellationToken cancellationToken)
-    {
-        var greeting = await IoUtil.ReadExact(stream, 2, SocksIoTimeout, cancellationToken);
-        if (greeting[0] != 0x05)
-        {
-            return false;
-        }
-
-        var methods = await IoUtil.ReadExact(stream, greeting[1], SocksIoTimeout, cancellationToken);
-
-        if (credentials.Count > 0)
-        {
-            if (!methods.Contains((byte)0x02))
-            {
-                await stream.WriteAsync(new byte[] { 0x05, 0xff }, cancellationToken);
-                return false;
-            }
-            await stream.WriteAsync(new byte[] { 0x05, 0x02 }, cancellationToken);
-            var verUlen = await IoUtil.ReadExact(stream, 2, SocksIoTimeout, cancellationToken);
-            if (verUlen[0] != 0x01)
-            {
-                return false;
-            }
-
-            var user = Encoding.UTF8.GetString(await IoUtil.ReadExact(stream, verUlen[1], SocksIoTimeout, cancellationToken));
-            var plen = (await IoUtil.ReadExact(stream, 1, SocksIoTimeout, cancellationToken))[0];
-            var pass = Encoding.UTF8.GetString(await IoUtil.ReadExact(stream, plen, SocksIoTimeout, cancellationToken));
-            var ok = credentials.Any(c => c.Login == user && c.Password == pass);
-            // Avoid logging user/pass to keep credentials and PII out of logs.
-            logger.LogDebug("[{Scope}] SOCKS5 auth attempt result: {Result}", context.Scope, ok ? "ok" : "fail");
-
-            await stream.WriteAsync(ok ? [0x01, 0x00] : new byte[] { 0x01, 0x01 }, cancellationToken);
-            return ok;
-        }
-
-        if (!methods.Contains((byte)0x00))
-        {
-            await stream.WriteAsync(new byte[] { 0x05, 0xff }, cancellationToken);
-            return false;
-        }
-        await stream.WriteAsync(new byte[] { 0x05, 0x00 }, cancellationToken);
-        return true;
-    }
-
-    /// <summary>
-    /// Формирует стандартный SOCKS5-ответ с указанным статусом.
-    /// </summary>
-    /// <param name="status">Код статуса SOCKS5.</param>
-    /// <returns>Бинарный пакет ответа SOCKS5.</returns>
-    private static byte[] Socks5Reply(byte status) => [0x05, status, 0x00, 0x01, 0, 0, 0, 0, 0, 0];
 
     /// <summary>
     /// Возвращает упорядоченный список доменов WebSocket для заданного DC и типа трафика.
@@ -419,68 +370,22 @@ internal sealed class ClientSessionHandler(
             se.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted) || string.Equals(ex.Message, "Connection closed", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Определяет, принадлежит ли IPv4-адрес подсетям Telegram.
-    /// </summary>
-    /// <param name="dst">IPv4-адрес назначения в текстовом виде.</param>
-    /// <returns><see langword="true"/>, если адрес относится к известным подсетям Telegram.</returns>
-    private static bool IsTelegramIp(string dst)
-    {
-        if (!IPAddress.TryParse(dst, out var ip) || ip.AddressFamily != AddressFamily.InterNetwork)
-        {
-            return false;
-        }
-
-        var octets = ip.GetAddressBytes();
-        var value = ((uint)octets[0] << 24) | ((uint)octets[1] << 16) | ((uint)octets[2] << 8) | octets[3];
-        return InRange(value, "185.76.151.0", "185.76.151.255") ||
-               InRange(value, "149.154.160.0", "149.154.175.255") ||
-               InRange(value, "91.105.192.0", "91.105.193.255") ||
-               InRange(value, "91.108.0.0", "91.108.255.255");
-    }
-
-    /// <summary>
-    /// Проверяет, входит ли числовой IP в указанный диапазон.
-    /// </summary>
-    /// <param name="value">Числовое представление проверяемого IP.</param>
-    /// <param name="from">Нижняя граница диапазона в формате IPv4.</param>
-    /// <param name="to">Верхняя граница диапазона в формате IPv4.</param>
-    /// <returns><see langword="true"/>, если значение находится в диапазоне включительно.</returns>
-    private static bool InRange(uint value, string from, string to)
-    {
-        var start = ToUint(from);
-        var end = ToUint(to);
-        return value >= start && value <= end;
-    }
-
-    /// <summary>
-    /// Преобразует строковый IPv4-адрес в 32-битное целое в сетевом порядке.
-    /// </summary>
-    /// <param name="ip">IPv4-адрес в строковом виде.</param>
-    /// <returns>32-битное беззнаковое значение адреса.</returns>
-    private static uint ToUint(string ip)
-    {
-        var octets = IPAddress.Parse(ip).GetAddressBytes();
-        return ((uint)octets[0] << 24) | ((uint)octets[1] << 16) | ((uint)octets[2] << 8) | octets[3];
-    }
-
-    /// <summary>
     /// Пытается взять живое WebSocket-соединение из пула для указанного DC.
     /// </summary>
     /// <param name="dcKey">Ключ дата-центра и типа маршрута.</param>
     /// <returns>Соединение из пула или <see langword="null"/>, если подходящее не найдено.</returns>
-    private IRawWebSocket TryTakePooledWs((int Dc, bool IsMedia) dcKey)
+    private IRawWebSocket? TryTakePooledWs((int Dc, bool IsMedia) dcKey)
     {
         var ws = wsRoutingState.TryTakePooledWs(dcKey, DateTimeOffset.UtcNow, WsPoolMaxAge);
 
         if (ws is null)
         {
             stats.IncPoolMiss();
-        }
-        else
-        {
-            stats.IncPoolHit();
+
+            return null;
         }
 
+        stats.IncPoolHit();
         return ws;
     }
 
@@ -548,14 +453,7 @@ internal sealed class ClientSessionHandler(
             return;
         }
 
-        try
-        {
-            await ws.Close(cancellationToken);
-        }
-        catch
-        {
-            // best-effort close
-        }
+        await ws.Close(cancellationToken);
     }
 
     /// <summary>
@@ -566,7 +464,7 @@ internal sealed class ClientSessionHandler(
     /// <param name="timeout">Таймаут попытки подключения.</param>
     /// <param name="scope">Идентификатор скоупа для логирования.</param>
     /// <returns>Подключенный WebSocket либо <see langword="null"/> при неудаче.</returns>
-    private async Task<IRawWebSocket> ConnectOneForPool(string targetIp, List<string> domains, TimeSpan timeout, string scope)
+    private async Task<IRawWebSocket?> ConnectOneForPool(string targetIp, List<string> domains, TimeSpan timeout, string scope)
     {
         foreach (var domain in domains)
         {
@@ -584,5 +482,147 @@ internal sealed class ClientSessionHandler(
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Определяет тег протокола из init пакета.
+    /// </summary>
+    private static byte[]? GetProtoTag(byte[] init, byte[] secretBytes)
+    {
+        if (init.Length < 64)
+        {
+            return null;
+        }
+
+        try
+        {
+            var decPrekeyAndIv = init.AsSpan(8, 48).ToArray();
+            var decPrekey = decPrekeyAndIv.AsSpan(0, 32).ToArray();
+            var decIv = decPrekeyAndIv.AsSpan(32, 16).ToArray();
+            var decKey = SHA256.HashData([.. decPrekey, .. secretBytes]);
+
+            var counter = BuildCounterAt(decIv, 56L / 16);
+
+            using var aes = Aes.Create();
+            aes.Mode = CipherMode.ECB;
+            aes.Padding = PaddingMode.None;
+            aes.Key = decKey;
+            using var enc = aes.CreateEncryptor();
+
+            var keystream = new byte[16];
+            enc.TransformBlock(counter, 0, 16, keystream, 0);
+
+            var tag = new byte[4];
+            for (var i = 0; i < 4; i++)
+            {
+                tag[i] = (byte)(init[56 + i] ^ keystream[8 + i]);
+            }
+
+            if (tag.AsSpan().SequenceEqual(ProtoTagAbridged) ||
+                tag.AsSpan().SequenceEqual(ProtoTagIntermediate) ||
+                tag.AsSpan().SequenceEqual(ProtoTagSecure))
+            {
+                return tag;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+        return null;
+    }
+
+    private static byte[] BuildCounterAt(byte[] iv, long blockIndex)
+    {
+        var counter = iv.ToArray();
+        var carry = (ulong)blockIndex;
+        for (var b = 15; b >= 0 && carry != 0; b--)
+        {
+            var sum = (ushort)(counter[b] + (carry & 0xFF));
+            counter[b] = (byte)sum;
+            carry = (carry >> 8) + (uint)(sum >> 8);
+        }
+        return counter;
+    }
+
+    /// <summary>
+    /// Выполняет fallback с учетом CF Proxy и TCP fallback конфигурации.
+    /// </summary>
+    private async Task DoFallback(
+        NetworkStream stream,
+        string fallbackDst,
+        byte[] relayInit,
+        string scope,
+        int dc,
+        bool isMedia,
+        IncrementalCipher cltDecryptor,
+        IncrementalCipher cltEncryptor,
+        IncrementalCipher tgEncryptor,
+        IncrementalCipher tgDecryptor,
+        CancellationToken cancellationToken)
+    {
+        var useCf = cfg.CfProxyEnabled;
+        var cfFirst = cfg.CfProxyPriority;
+
+        // Build fallback order
+        var methods = new List<string>();
+        if (useCf && cfFirst)
+        {
+            methods.Add("cf");
+            if (fallbackDst is not null)
+            {
+                methods.Add("tcp");
+            }
+        }
+        else
+        {
+            if (fallbackDst is not null)
+            {
+                methods.Add("tcp");
+            }
+
+            if (useCf)
+            {
+                methods.Add("cf");
+            }
+        }
+
+        foreach (var method in methods)
+        {
+            if (method == "cf")
+            {
+                try
+                {
+                    await bridgeService.CfProxyFallback(
+                        stream, scope, relayInit, dc, isMedia,
+                        cfg.CfProxyDomain,
+                        cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor,
+                        cancellationToken);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "[{Scope}] CF proxy failed for DC{Dc}", scope, dc);
+                }
+            }
+            if (method == "tcp" && fallbackDst is not null)
+            {
+                logger.LogInformation("[{Scope}] DC{Dc} -> TCP fallback to {FallbackDst}:443", scope, dc, fallbackDst);
+                try
+                {
+                    await bridgeService.TcpFallbackReencrypt(
+                        stream, fallbackDst, 443, relayInit, scope,
+                        cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor,
+                        cancellationToken);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "[{Scope}] TCP fallback failed to {FallbackDst}", scope, fallbackDst);
+                }
+            }
+        }
+
+        logger.LogWarning("[{Scope}] DC{Dc} no fallback available", scope, dc);
     }
 }

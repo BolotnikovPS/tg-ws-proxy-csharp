@@ -1,6 +1,5 @@
 #nullable enable
 
-using System.IO;
 using TgWsProxy.Infrastructure.Instances;
 
 namespace TgWsProxy.Test;
@@ -61,4 +60,3 @@ public class WsBinaryMessageAssemblerTests
         await Assert.ThrowsAsync<IOException>(async () => await asm.OnFrame(fin: true, opcode: 0x1, payload: p2, cts));
     }
 }
-

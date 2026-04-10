@@ -9,6 +9,7 @@ internal sealed class ProxyStats : IProxyStats
     private long connectionsTcpFallback;
     private long connectionsPassthrough;
     private long connectionsHttpRejected;
+    private long connectionsCfProxy;
     private long wsErrors;
     private long bytesUp;
     private long bytesDown;
@@ -25,6 +26,8 @@ internal sealed class ProxyStats : IProxyStats
 
     public void IncConnectionsHttpRejected() => Interlocked.Increment(ref connectionsHttpRejected);
 
+    public void IncConnectionsCfProxy() => Interlocked.Increment(ref connectionsCfProxy);
+
     public void IncWsErrors() => Interlocked.Increment(ref wsErrors);
 
     public void IncPoolHit() => Interlocked.Increment(ref poolHits);
@@ -40,8 +43,9 @@ internal sealed class ProxyStats : IProxyStats
         var hit = Interlocked.Read(ref poolHits);
         var miss = Interlocked.Read(ref poolMisses);
         return $"total={Interlocked.Read(ref connectionsTotal)} ws={Interlocked.Read(ref connectionsWs)} " +
-               $"tcp_fb={Interlocked.Read(ref connectionsTcpFallback)} http_skip={Interlocked.Read(ref connectionsHttpRejected)} " +
-               $"pass={Interlocked.Read(ref connectionsPassthrough)} err={Interlocked.Read(ref wsErrors)} " +
-               $"pool={hit}/{hit + miss} up={Interlocked.Read(ref bytesUp)}B down={Interlocked.Read(ref bytesDown)}B";
+               $"tcp_fb={Interlocked.Read(ref connectionsTcpFallback)} cf={Interlocked.Read(ref connectionsCfProxy)} " +
+               $"http_skip={Interlocked.Read(ref connectionsHttpRejected)} pass={Interlocked.Read(ref connectionsPassthrough)} " +
+               $"err={Interlocked.Read(ref wsErrors)} pool={hit}/{hit + miss} " +
+               $"up={Interlocked.Read(ref bytesUp)}B down={Interlocked.Read(ref bytesDown)}B";
     }
 }
