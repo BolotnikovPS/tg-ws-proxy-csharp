@@ -54,6 +54,44 @@ public class UnitTest
         Assert.Empty(cfg.DcIp);
     }
 
+    [Fact]
+    public void CliParser_Parses_AllowAndDenyIp()
+    {
+        var cfg = CliParser.Parse([
+            "--allow-ip", "10.0.0.0/8,192.168.1.5",
+            "--deny-ip", "10.255.255.255",
+            "--deny-ip", "10.0.0.1"
+        ]);
+
+        Assert.Equal(["10.0.0.0/8", "192.168.1.5"], cfg.AllowIp);
+        Assert.Equal(["10.255.255.255", "10.0.0.1"], cfg.DenyIp);
+    }
+
+    [Fact]
+    public void CliParser_Dedups_IpList()
+    {
+        var cfg = CliParser.Parse([
+            "--allow-ip", "10.0.0.0/8",
+            "--allow-ip", "10.0.0.0/8",
+            "--deny-ip", "192.168.1.1;192.168.1.1"
+        ]);
+
+        Assert.Equal(["10.0.0.0/8"], cfg.AllowIp);
+        Assert.Equal(["192.168.1.1"], cfg.DenyIp);
+    }
+
+    [Fact]
+    public void ConfigValidator_Rejects_InvalidIpAcl()
+    {
+        var allow = new Config();
+        allow.AllowIp.Add("not-an-ip");
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(allow));
+
+        var deny = new Config();
+        deny.DenyIp.Add("10.0.0.0/33");
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(deny));
+    }
+
     [Theory]
     [InlineData("-h")]
     [InlineData("--help")]
@@ -303,6 +341,7 @@ public class UnitTest
         stats.IncConnectionsCfProxy();
         stats.IncConnectionsFronting();
         stats.IncConnectionsBad();
+        stats.IncConnectionsBlocked();
         stats.IncConnectionsMasked();
         stats.IncWsErrors();
         stats.IncPoolHit();
@@ -321,6 +360,7 @@ public class UnitTest
         Assert.Contains("cf=1", summary);
         Assert.Contains("front=1", summary);
         Assert.Contains("bad=1", summary);
+        Assert.Contains("blocked=1", summary);
         Assert.Contains("masked=1", summary);
         Assert.Contains("err=1", summary);
         Assert.Contains("pool=1/2", summary);

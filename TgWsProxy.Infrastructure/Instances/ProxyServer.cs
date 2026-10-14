@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 
@@ -12,6 +13,8 @@ internal sealed class ProxyServer(
     Config cfg,
     Dictionary<int, string> dcOpt,
     IClientSessionHandler sessionHandler,
+    PeerAccessControl accessControl,
+    IProxyStats stats,
     ILogger<ProxyServer> logger) : IProxyServer
 {
     /// <summary>Период проверки живости слушающего сокета (порт upstream <c>LISTENER_CHECK_INTERVAL</c>).</summary>
@@ -150,6 +153,17 @@ internal sealed class ProxyServer(
                 var peer = client.RemoteEndPoint?.ToString() ?? "?";
                 var scope = $"{peer}|{connectionId}";
                 var context = new ClientContext(scope, peer, connectionId);
+
+                // ACL проверяется до рукопожатия по реальному IP пира (PROXY protocol не подделывает адрес).
+                if (client.RemoteEndPoint is IPEndPoint remote && !accessControl.IsAllowed(remote.Address))
+                {
+                    stats.IncConnectionsTotal();
+                    stats.IncConnectionsBlocked();
+                    logger.LogWarning("[{Scope}] connection rejected by IP ACL", scope);
+                    client.Dispose();
+                    continue;
+                }
+
                 BackgroundTaskRunner.RunDetachedSafe(
                     async ct => await sessionHandler.Handle(client, context, ct),
                     logger,

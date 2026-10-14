@@ -17,8 +17,10 @@
 - **PROXY protocol v1** (работа за nginx/haproxy).
 - Поддержка тестовых DC Telegram (`dc >= 10000` или `--force-test-dc`).
 - Watchdog слушающего сокета: раз в 5 с проверяет живость сокета и перезапускает сервер.
+- **Управление доступом по IP** (`--allow-ip`/`--deny-ip` с CIDR): блокировка до рукопожатия по реальному IP пира, отдельный счётчик `blocked`.
+- Журнал подключений: connect и итог каждой сессии (peer, DC, media, маршрут, байты up/down, длительность).
 - Один MTProto-секрет (32 hex); при отсутствии — автогенерация. В лог пишутся готовые ссылки `dd…` и (при `--fake-tls-domain`) `ee…`.
-- Раз в минуту — сводка `stats` с счётчиками (WS/H2/TCP/CF/fronting/masking/bad, байты, попадания в пул).
+- Раз в минуту — сводка `stats` с счётчиками (WS/H2/TCP/CF/fronting/masking/bad/blocked, байты, попадания в пул).
 
 ## Архитектура
 
@@ -67,6 +69,8 @@ Telegram Client -> MTProto proxy (этот сервис) -> WSS/CF-H2/TCP -> Tel
 | `--fake-tls-domain <DOMAIN>` | пусто | Включает Fake TLS (ee-secret) маскировку с указанным доменом. |
 | `--force-test-dc` | выключено | Весь трафик направлять в тестовые DC Telegram. |
 | `--proxy-protocol` | выключено | Принимать заголовок PROXY protocol v1 (nginx/haproxy). |
+| `--allow-ip <IP|CIDR>` | пусто | Разрешить подключение только с перечисленных IP/подсетей. Можно несколько раз; значения делятся по `,`, `;`, пробелам. Пустой список — пускать всех. **Расширение порта**. |
+| `--deny-ip <IP|CIDR>` | пусто | Заблокировать перечисленные IP/подсети. Можно несколько раз; `deny` приоритетнее `allow`. Пустой список — никого не блокировать. **Расширение порта**. |
 | `--allow-invalid-certs` | выключено | Разрешать TLS с невалидным сертификатом. **Расширение порта**, в upstream отсутствует; только для диагностики. |
 | `--ws-timeout <SEC>` | `10` | Таймаут чтения ответа WS-рукопожатия; этапы TCP и TLS ограничены `min(значение, 10)` с. **Расширение порта**. |
 | `--ws-max-frame-bytes <BYTES>` | `16777216` (16 MiB) | Максимальный payload одного WS-фрейма (защита от DoS). **Расширение порта**. |
@@ -93,7 +97,7 @@ docker buildx build --platform linux/arm64 -t tg-ws-proxy:arm64 --load .
 **Один тег для amd64 + arm64** (в registry):
 
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/tg-ws-proxy:2.3 --push .
+docker buildx build --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/tg-ws-proxy:2.4 --push .
 ```
 
 Сборка **на самом ARM-сервере** (без эмуляции):
@@ -104,11 +108,11 @@ docker build -t tg-ws-proxy:local .
 
 ### CI/CD (GitHub Actions)
 
-Workflow [`.github/workflows/docker-build.yml`](.github/workflows/docker-build.yml) при пуше в `main` и на тег `v*`:
+Workflow [`.github/workflows/docker-build.yml`](.github/workflows/docker-build.yml) при пуше в `main` и на тег `v*` / `[0-9]*`:
 
 1. гоняет `dotnet test` (сборка + тесты);
 2. собирает мультиархитектурный образ `linux/amd64,linux/arm64` через BuildKit;
-3. пушит в Docker Hub `pboldev/tg-ws-proxy` с тегами `latest` (main)
+3. пушит в Docker Hub `pboldev/tg-ws-proxy`: пуш в `main` — теги `latest` и `main`; тег вида `v2.4` или `2.4` — семантический тег образа `2.4`.
 
 
 ### Docker Compose (`DockerCompose/docker-compose.yml`)
@@ -127,6 +131,8 @@ TG_HOST=0.0.0.0
 TG_PORT=1443
 TG_DC_IP_1=2:149.154.167.220
 TG_DC_IP_2=4:149.154.167.220
+TG_ALLOW_IP=
+TG_DENY_IP=
 ```
 
 ```bash
@@ -142,7 +148,7 @@ docker compose logs -f tg-ws-proxy
 docker compose down
 ```
 
-**Дополнительные аргументы** (`--verbose`, `--log-file`, `--secret`, CF Proxy, `--fake-tls-domain`, `--no-h2`) добавьте в список `command` в `docker-compose.yml` (по одному элементу на строку).
+**Дополнительные аргументы** (`--verbose`, `--log-file`, `--secret`, CF Proxy, `--fake-tls-domain`, `--no-h2`) добавьте в список `command` в `docker-compose.yml` (по одному элементу на строку). `--allow-ip`/`--deny-ip` уже подключены к переменным `TG_ALLOW_IP`/`TG_DENY_IP` — перечисляйте IP/подсети через запятую (пустое значение отключает фильтр).
 
 #### Почему TLS / warmup / `EOF` / `RST` бывают именно в Docker
 
@@ -193,5 +199,5 @@ docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
 
 - **`--auth` и `--cfproxy-priority` удалены** (в upstream их больше нет; несколько секретов заменены одним).
 - **`blacklist` WS-доменов удалён** — вместо постоянного исключения DC используется пул + экспоненциальный backoff.
-- Добавлены расширения, которых нет в upstream: `--ws-timeout`, `--ws-max-frame-bytes`, `--allow-invalid-certs`, алиас `--log-path`.
+- Добавлены расширения, которых нет в upstream: `--ws-timeout`, `--ws-max-frame-bytes`, `--allow-invalid-certs`, `--allow-ip`, `--deny-ip`, алиас `--log-path`.
 - Добавлен watchdog слушающего сокета (в upstream — `install_self_pipe_guard`/перезапуск сервера).

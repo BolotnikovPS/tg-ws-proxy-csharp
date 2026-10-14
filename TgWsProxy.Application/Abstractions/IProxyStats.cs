@@ -66,6 +66,11 @@ public interface IProxyStats
     void IncConnectionsBad();
 
     /// <summary>
+    /// Увеличивает счётчик подключений, отклонённых списком IP-доступа (--allow-ip/--deny-ip).
+    /// </summary>
+    void IncConnectionsBlocked();
+
+    /// <summary>
     /// Увеличивает счётчик подключений, замаскированных под чужой домен.
     /// </summary>
     void IncConnectionsMasked();

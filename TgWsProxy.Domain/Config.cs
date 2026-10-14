@@ -12,6 +12,17 @@ public sealed class Config
     /// </summary>
     public List<string> DcIp { get; } = [];
 
+    /// <summary>
+    /// Разрешённые IP/CIDR клиентов. Пусто — пускаем всех. Расширение порта, в upstream отсутствует.
+    /// </summary>
+    public List<string> AllowIp { get; } = [];
+
+    /// <summary>
+    /// Запрещённые IP/CIDR клиентов. Пусто — никого не блокируем. Deny имеет приоритет над allow.
+    /// Расширение порта, в upstream отсутствует.
+    /// </summary>
+    public List<string> DenyIp { get; } = [];
+
     public bool Verbose { get; set; }
 
     /// <summary>

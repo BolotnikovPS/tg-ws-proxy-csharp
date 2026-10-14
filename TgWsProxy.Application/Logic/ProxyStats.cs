@@ -16,6 +16,7 @@ internal sealed class ProxyStats : IProxyStats
     private long connectionsCfProxy;
     private long connectionsFronting;
     private long connectionsBad;
+    private long connectionsBlocked;
     private long connectionsMasked;
     private long wsErrors;
     private long bytesUp;
@@ -48,6 +49,8 @@ internal sealed class ProxyStats : IProxyStats
     public void IncConnectionsFronting() => Interlocked.Increment(ref connectionsFronting);
 
     public void IncConnectionsBad() => Interlocked.Increment(ref connectionsBad);
+
+    public void IncConnectionsBlocked() => Interlocked.Increment(ref connectionsBlocked);
 
     public void IncConnectionsMasked() => Interlocked.Increment(ref connectionsMasked);
 
@@ -87,6 +90,7 @@ internal sealed class ProxyStats : IProxyStats
                $"cf={Interlocked.Read(ref connectionsCfProxy)} " +
                $"front={Interlocked.Read(ref connectionsFronting)} " +
                $"bad={Interlocked.Read(ref connectionsBad)} " +
+               $"blocked={Interlocked.Read(ref connectionsBlocked)} " +
                $"masked={Interlocked.Read(ref connectionsMasked)} " +
                $"err={Interlocked.Read(ref wsErrors)} " +
                $"pool={pool} " +

@@ -2,11 +2,13 @@
 
 using Microsoft.Extensions.Logging;
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic.FakeTls;
 using TgWsProxy.Application.Logic.Helpers;
+using TgWsProxy.Application.Logic.Models;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 
@@ -37,6 +39,14 @@ internal sealed class ClientSessionHandler(
         stats.IncConnectionsActive();
         using var _ = client;
 
+        var stopwatch = Stopwatch.StartNew();
+        CountingStream? countingStream = null;
+        int? sessionDc = null;
+        var sessionMedia = false;
+        var sessionRoute = "unknown";
+        long sessionUp = 0;
+        long sessionDown = 0;
+
         try
         {
             client.NoDelay = true;
@@ -45,7 +55,7 @@ internal sealed class ClientSessionHandler(
             client.SendBufferSize = sockBuf;
             await using var stream = new NetworkStream(client);
 
-            logger.LogDebug("[{Scope}] Client connected", context.Scope);
+            logger.LogInformation("[{Scope}] client connected {Peer}", context.Scope, context.Peer);
 
             var init = await initReader.ReadAsync(stream, context.Scope, secret, cancellationToken)
                 .ConfigureAwait(false);
@@ -54,13 +64,16 @@ internal sealed class ClientSessionHandler(
             switch (init.Status)
             {
                 case ClientInitStatus.Closed:
+                    sessionRoute = "closed";
                     return;
 
                 case ClientInitStatus.HttpRedirect:
+                    sessionRoute = "redirect";
                     await SendMaskingRedirectAsync(stream, label, cancellationToken).ConfigureAwait(false);
                     return;
 
                 case ClientInitStatus.Masking:
+                    sessionRoute = "masking";
                     await maskingProxy
                         .RelayAsync(stream, init.FirstBytes ?? [], cfg.FakeTlsDomain, label, cancellationToken)
                         .ConfigureAwait(false);
@@ -68,6 +81,7 @@ internal sealed class ClientSessionHandler(
             }
 
             var clientStream = init.ClientStream ?? stream;
+            countingStream = new CountingStream(clientStream);
             var handshakeBytes = init.Init!;
 
             var handshake = mtProtoInspector.TryHandshake(handshakeBytes, secret);
@@ -75,6 +89,7 @@ internal sealed class ClientSessionHandler(
             {
                 stats.IncConnectionsBad();
                 logger.LogWarning("[{Scope}] bad handshake (wrong secret or proto)", label);
+                sessionRoute = "bad";
                 return;
             }
 
@@ -88,6 +103,8 @@ internal sealed class ClientSessionHandler(
             }
 
             var isMedia = hs.IsMedia;
+            sessionDc = dc;
+            sessionMedia = isMedia;
             var dcIdx = (short)(isMedia ? -dc : dc);
             var relayInit = mtProtoInspector.GenerateRelayInit(hs.ProtoTag, dcIdx);
             var mediaTag = isMedia ? " media" : "";
@@ -105,8 +122,9 @@ internal sealed class ClientSessionHandler(
             if (ws is null)
             {
                 logger.LogInformation("[{Scope}] DC{Dc}{MediaTag} WS pool unavailable -> fallback", label, dc, mediaTag);
+                sessionRoute = "fallback";
                 var request = new FallbackRequest(
-                    clientStream, relayInit, label, dc, isTestDc, isMedia, hs.ProtoTag, ctx, splitter);
+                    countingStream, relayInit, label, dc, isTestDc, isMedia, hs.ProtoTag, ctx, splitter);
 
                 if (await bridgeService.DoFallback(request, cancellationToken).ConfigureAwait(false))
                 {
@@ -121,12 +139,13 @@ internal sealed class ClientSessionHandler(
             }
 
             stats.IncConnectionsWs();
+            sessionRoute = "ws";
             logger.LogDebug("[{Scope}] DC{Dc}{MediaTag} -> WS bridge", label, dc, mediaTag);
             try
             {
                 await ws.Send(relayInit, cancellationToken).ConfigureAwait(false);
                 await bridgeService
-                    .BridgeWsReencrypt(clientStream, ws, label, ctx, dc, isMedia, splitter, cancellationToken)
+                    .BridgeWsReencrypt(countingStream, ws, label, ctx, dc, isMedia, splitter, cancellationToken)
                     .ConfigureAwait(false);
             }
             finally
@@ -157,7 +176,23 @@ internal sealed class ClientSessionHandler(
         finally
         {
             stats.DecConnectionsActive();
-            logger.LogDebug("[{Scope}] Client disconnected", context.Scope);
+            stopwatch.Stop();
+            if (countingStream is not null)
+            {
+                sessionUp = countingStream.BytesRead;
+                sessionDown = countingStream.BytesWritten;
+            }
+
+            logger.LogInformation(
+                "[{Scope}] session ended peer={Peer} dc={Dc} media={Media} route={Route} up={Up}B down={Down}B duration={Duration:F1}s",
+                context.Scope,
+                context.Peer,
+                sessionDc?.ToString() ?? "-",
+                sessionMedia,
+                sessionRoute,
+                sessionUp,
+                sessionDown,
+                stopwatch.Elapsed.TotalSeconds);
         }
     }
 

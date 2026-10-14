@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Application.Logic.FakeTls;
+using TgWsProxy.Application.Logic.Models;
 using TgWsProxy.Domain;
 
 namespace TgWsProxy.Test;

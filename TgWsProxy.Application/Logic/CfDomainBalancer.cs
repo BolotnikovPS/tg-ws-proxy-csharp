@@ -22,7 +22,7 @@ public sealed class CfDomainBalancer : ICfDomainBalancer
         {
             lock (sync)
             {
-                return domains.ToArray();
+                return [.. domains];
             }
         }
     }

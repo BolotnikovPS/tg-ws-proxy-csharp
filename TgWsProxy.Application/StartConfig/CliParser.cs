@@ -153,6 +153,14 @@ public static class CliParser
                     cfg.Secret = NextValue(args, ref i, "--secret");
                     break;
 
+                case "--allow-ip":
+                    AddIpList(cfg.AllowIp, NextValue(args, ref i, "--allow-ip"));
+                    break;
+
+                case "--deny-ip":
+                    AddIpList(cfg.DenyIp, NextValue(args, ref i, "--deny-ip"));
+                    break;
+
                 default:
                     throw new ArgumentException($"Unknown argument: {args[i]}");
             }
@@ -184,6 +192,27 @@ public static class CliParser
                 continue;
             }
             target.Add(domain);
+        }
+    }
+
+    /// <summary>
+    /// Повторяемый флаг IP/CIDR: значение разбивается по запятым/точкам с запятой/пробелам,
+    /// дубликаты (без учёта регистра) отбрасываются.
+    /// </summary>
+    private static void AddIpList(List<string> target, string raw)
+    {
+        foreach (var item in raw.Replace(',', ' ').Replace(';', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var ip = item.Trim();
+            if (ip.Length == 0)
+            {
+                continue;
+            }
+            if (target.Exists(existing => string.Equals(existing, ip, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+            target.Add(ip);
         }
     }
 
@@ -224,6 +253,7 @@ public static class CliParser
                          [--force-test-dc] [--proxy-protocol] [-v] [--log-file PATH]
                          [--log-max-mb MB] [--log-backups N] [--buf-kb KB] [--pool-size N]
                          [--ws-timeout SEC] [--ws-max-frame-bytes BYTES] [--allow-invalid-certs]
+                         [--allow-ip IP/CIDR] [--deny-ip IP/CIDR]
 
         Telegram MTProto WebSocket Bridge Proxy
 
@@ -254,6 +284,10 @@ public static class CliParser
           --ws-max-frame-bytes BYTES
                                 максимальный размер WS-кадра (по умолчанию 16 МиБ)
           --allow-invalid-certs не проверять сертификаты TLS
+          --allow-ip IP/CIDR   разрешить подключение только с этих IP/подсетей, можно
+                                повторять (пусто — пускаем всех)
+          --deny-ip IP/CIDR    запретить подключение с этих IP/подсетей, можно
+                                повторять (пусто — никого не блокируем)
         """;
 
     public static Dictionary<int, string> ParseDcIpList(List<string> dcIpList)

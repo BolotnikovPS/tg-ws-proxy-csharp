@@ -1,3 +1,4 @@
+using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
 
 namespace TgWsProxy.Application.StartConfig;
@@ -60,6 +61,22 @@ public static class ConfigValidator
             catch (FormatException)
             {
                 throw new ArgumentException("Secret must be valid hex");
+            }
+        }
+
+        foreach (var entry in config.AllowIp)
+        {
+            if (!PeerAccessControl.TryParseEntry(entry, out _))
+            {
+                throw new ArgumentException($"Invalid --allow-ip entry: {entry}");
+            }
+        }
+
+        foreach (var entry in config.DenyIp)
+        {
+            if (!PeerAccessControl.TryParseEntry(entry, out _))
+            {
+                throw new ArgumentException($"Invalid --deny-ip entry: {entry}");
             }
         }
     }

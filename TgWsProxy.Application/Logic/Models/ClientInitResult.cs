@@ -1,6 +1,8 @@
 #nullable enable
 
-namespace TgWsProxy.Application.Logic;
+using TgWsProxy;
+
+namespace TgWsProxy.Application.Logic.Models;
 
 /// <summary>
 /// Результат чтения init-пакета: статус, данные, поток для дальнейшей работы и метка сессии.

@@ -13,7 +13,7 @@ using TgWsProxy.Infrastructure;
 using TgWsProxy.Infrastructure.Instances;
 
 // Информационные флаги обрабатываются до разбора конфигурации: --help/-h и --version.
-// InformationalVersion хранит ровно то, что указано в <Version> проекта (например "2.3").
+// InformationalVersion хранит ровно то, что указано в <Version> проекта (например "2.4").
 var appVersion = typeof(Program).Assembly
     .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
     .Split('+')[0] ?? "unknown";

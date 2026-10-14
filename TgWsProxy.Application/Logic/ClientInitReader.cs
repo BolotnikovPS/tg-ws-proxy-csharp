@@ -2,6 +2,7 @@
 
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Logic.FakeTls;
+using TgWsProxy.Application.Logic.Models;
 using TgWsProxy.Domain;
 
 namespace TgWsProxy.Application.Logic;
