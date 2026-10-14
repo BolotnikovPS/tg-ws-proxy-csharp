@@ -7,3 +7,7 @@
 **/*.rsuser
 README.md
 LICENSE
+
+# Эталонные исходники upstream на Python: в образе не нужны.
+.upstream-reference
+tg_ws_proxy.py

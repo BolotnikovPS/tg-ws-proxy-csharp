@@ -1,56 +1,90 @@
 # TG WS Proxy (C#)
 
-Локальный MTProto-прокси для Telegram, который маршрутизирует трафик через WebSocket/TLS к дата-центрам Telegram и автоматически переключается на TCP fallback при проблемах с WS.
+Локальный MTProto-прокси для Telegram на C#/.NET 8: маршрутизирует трафик через WebSocket/TLS к дата-центрам Telegram, умеет маскироваться под обычный HTTPS (Fake TLS) и автоматически переключается на резервные транспорты (Cloudflare Worker → Cloudflare → TCP) при проблемах с WS.
 
-## Особенности проекта
+Проект — порт Python-реализации [Flowseal/tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy). Исходники **актуализированы до состояния upstream v1.11.2** (модульный пакет `proxy/`, 336 коммитов) и оптимизированы по горячим путям.
 
-- Поднимает локальный MTProto-сервер (по умолчанию `127.0.0.1:1080`).
-- Определяет Telegram-трафик и извлекает DC из init-пакета MTProto.
-- Пытается подключить трафик через WSS-домены Telegram (`/apiws`).
-- При сбоях WS автоматически уходит в TCP fallback и продолжает работу.
-- Поддерживает пул WebSocket-соединений, cooldown после ошибок и blacklist при постоянных redirect.
-- **Поддерживает несколько MTProto-секретов** (`--secret SECRET`, можно указывать несколько раз).
-- Поддерживает Cloudflare proxy fallback (`--no-cfproxy`, `--cfproxy-domain`, `--cfproxy-priority`).
-- Раз в минуту пишет в лог сводку `stats` и `ws_bl` (чёрный список DC для WS после серии редиректов).
+## Возможности
+
+- Локальный MTProto-сервер (по умолчанию `127.0.0.1:1443`).
+- Определение Telegram-трафика и извлечение DC из init-пакета MTProto (abridged / intermediate / padded intermediate — «secure»).
+- Основной транспорт — WSS к `/apiws` (или `/apiws_test` для тестовых DC).
+- **Пул WS-соединений** per (DC, media): предварительный прогрев, TTL 120 с, периодическая чистка, refill с экспоненциальным backoff (1 с → 3600 с).
+- **TCP fallback** с экспоненциальным backoff (30 с → 3600 с) вместо прежнего фиксированного cooldown.
+- **Cloudflare fallback**: балансировщик CF-доменов (20 встроенных «обфусцированных» доменов, автообновление раз в час с GitHub, минимум 3 валидных), пул Cloudflare Worker-доменов и прямые CF-proxy подключения.
+- **HTTP/2 мультиплексирование media-трафика** через Cloudflare (`/api`): переиспользование одного H2-соединения каналами (lane), учёт бюджета байт/запросов, восстановление потерянных пакетов (replay/recovery).
+- **Fake TLS (ee-secret) маскировка**: приём TLS ClientHello, ответ ServerHello + ChangeCipherSpec, упаковка MTProto в TLS application data; при невалидном секрете — проксирование на домен-маскировку; при обычном HTTP — редирект 301.
+- **PROXY protocol v1** (работа за nginx/haproxy).
+- Поддержка тестовых DC Telegram (`dc >= 10000` или `--force-test-dc`).
+- Watchdog слушающего сокета: раз в 5 с проверяет живость сокета и перезапускает сервер.
+- Один MTProto-секрет (32 hex); при отсутствии — автогенерация. В лог пишутся готовые ссылки `dd…` и (при `--fake-tls-domain`) `ee…`.
+- Раз в минуту — сводка `stats` с счётчиками (WS/H2/TCP/CF/fronting/masking/bad, байты, попадания в пул).
+
+## Архитектура
+
+| Проект | Назначение |
+|---|---|
+| `TgWsProxy.Domain` | Конфигурация (`Config`), модель handshake (`MtProtoHandshake`), исключения. Без внешних зависимостей. |
+| `TgWsProxy.Application` | Разбор CLI и валидация конфига, протокольные хелперы (`Protocol`, `MsgSplitter`, `IncrementalCipher`, `CryptoCtx`, `H2PacketCodec`), Fake TLS, `MtProtoInspector`, `ClientInitReader`, `ClientSessionHandler`, статистика. |
+| `TgWsProxy.Infrastructure` | Сетевые реализации: `ProxyServer` (+ watchdog), `RawWebSocket(Factory)`, `WsPool`, `CfWorkerPool`, `CfDomainBalancer`/`CfDomainRefresher`, `CfH2Pool`/`CfH2Lane`/`CfH2Channel`/`H2Bridge`, `TcpBridgeService`. |
+| `TgWsProxy` | Точка входа: DI, логирование с ротацией, запуск сервера, graceful shutdown. |
+| `TgWsProxy.Test` | xUnit-тесты (114 шт.): CLI/Config, протокол, Fake TLS, H2-пакеты, WS-кадрирование, регрессия порядка перешифрования, liveness пула. |
 
 ## Как это работает
 
 ```text
-Telegram Desktop -> MTProto proxy -> TG WS Proxy -> WSS/TCP -> Telegram DC
+Telegram Client -> MTProto proxy (этот сервис) -> WSS/CF-H2/TCP -> Telegram DC
 ```
+
+Порядок выбора транспорта для каждого нового подключения:
+
+1. **Пул прямых WS** (если пул не отключён и DC не в «cooldown» после ошибки).
+2. **Cloudflare Worker** (`--cfproxy-worker-domain`) — если заданы.
+3. **Cloudflare**: для media-трафика — HTTP/2 мультиплексирование на `/api` (если H2 доступен), иначе WS через CF-proxy домен.
+4. **TCP fallback** на IP дата-центра (с экспоненциальным backoff при повторных неудачах).
+
+Для каждого соединения MTProto-трафик перешифровывается: расшифровка клиентским ключом и шифрование ключом Telegram (и наоборот в обратную сторону).
 
 ## Аргументы запуска
 
 | Аргумент | По умолчанию | Описание |
 |---|---|---|
-| `--port <PORT>` | `1080` | Порт локального MTProto-сервера. |
-| `--host <HOST>` | `127.0.0.1` | Адрес локального MTProto-сервера. |
-| `--dc-ip <DC:IP>` | нет (если не задан, в `Program` добавляются `2:149.154.167.220`, `4:149.154.167.220` и `203:149.154.167.220`) | Явное сопоставление дата-центра Telegram с IP. **Номер DC и IP должны соответствовать друг другу**, иначе TLS к `kws{N}.web.telegram.org` может обрываться. Можно указывать несколько раз. |
-| `--secret <SECRET>` | нет (автогенерация) | MTProto-секрет (32 hex-символа). Можно указывать **несколько раз** для поддержки разных клиентов. Допустим формат с префиксом `dd`/`ee` (например `ddf43b...`), префикс автоматически strip-ится. |
-| `--no-cfproxy` | выключен | Отключает fallback через Cloudflare-proxied WebSocket домены. |
-| `--cfproxy-domain <DOMAIN>` | `pclead.co.uk` | Базовый домен для CF Proxy fallback. |
-| `--cfproxy-priority <true\|false>` | `true` | Приоритет CF Proxy над TCP fallback (`true` = CF first, `false` = TCP first). |
-| `-v`, `--verbose` | выключен | Включает подробное логирование (`Debug`). |
-| `--allow-invalid-certs` | выключен | Разрешает TLS-подключение при невалидном сертификате (только для диагностики; по умолчанию выключено). |
-| `--log-path <PATH>` | не задан | Путь к лог-файлу. Без `--log-max-mb` используется **почасовая** ротация (JSON). |
-| `--log-max-mb <MB>` | `0` | Если `> 0`, ротация **по размеру** файла, минимальный размер одного файла 32 КБ. |
-| `--log-backups <N>` | `0` | Сколько архивных файлов хранить при ротации по размеру (текущий + N). |
-| `--ws-timeout <SEC>` | `10` | Таймаут (сек.) на **чтение** HTTP-ответа WS-рукопожатия. Этапы **TCP и TLS** ограничены `default(значение, 10)` секунд. Диапазон `1`…`300`. После ошибки WS используется быстрый повтор **2 с**. При проблемах в Docker см. раздел ниже. |
-| `--buf-kb <KB>` | `256` | Размер `SO_RCVBUF`/`SO_SNDBUF` для клиентского сокета и исходящего WSS. |
-| `--pool-size <N>` | `4` | Размер пула заранее открытых WS на пару (DC, media). `0` отключает пул. |
-| `--ws-max-frame-bytes <BYTES>` | `1048576` | Максимальный размер payload одного WS-фрейма (в байтах). При превышении соединение закрывается и происходит TCP fallback. |
+| `--port <PORT>` | `1443` | Порт локального MTProto-сервера. |
+| `--host <HOST>` | `127.0.0.1` | Адрес прослушивания. |
+| `--secret <HEX>` | автогенерация | MTProto-секрет: ровно 32 hex-символа. |
+| `--dc-ip <DC:IP>` | `2:149.154.167.220`, `4:149.154.167.220` | Явное сопоставление DC → IP. Можно указывать несколько раз. **Голый `--dc-ip` без значения очищает список** (WS-пул и прямые WS отключаются, весь трафик идёт в fallback). |
+| `-v`, `--verbose` | выключено | Подробное логирование (`Debug`). |
+| `--log-file <PATH>` | нет (только консоль) | Лог в файл с ротацией. Алиас `--log-path` сохранён для совместимости. |
+| `--log-max-mb <MB>` | `5` | Лимит размера файла лога перед ротацией. |
+| `--log-backups <N>` | `1` | Сколько архивных лог-файлов хранить (минимум 1). |
+| `--buf-kb <KB>` | `256` | Размер `SO_RCVBUF`/`SO_SNDBUF` клиентского сокета и исходящего WSS. |
+| `--pool-size <N>` | `4` | Размер пула WS на пару (DC, media); `0` отключает прямые WS. |
+| `--cfproxy-domain <DOMAIN>` | встроенный список | Пользовательские CF-proxy домены для H2 media и WS fallback. Можно указывать несколько раз; значения делятся по `,`, `;`, пробелам. |
+| `--cfproxy-worker-domain <DOMAIN>` | нет | Домены Cloudflare Worker (пробуются первыми в fallback). Можно несколько раз. |
+| `--no-h2` | H2 включён | Отключает HTTP/2 мультиплексирование media через CF. |
+| `--no-cfproxy` | CF включён | Полностью отключает Cloudflare fallback. |
+| `--no-secure` | выключено | Использовать порт 80 вместо 443 для CF-proxy и CF-worker. |
+| `--fake-tls-domain <DOMAIN>` | пусто | Включает Fake TLS (ee-secret) маскировку с указанным доменом. |
+| `--force-test-dc` | выключено | Весь трафик направлять в тестовые DC Telegram. |
+| `--proxy-protocol` | выключено | Принимать заголовок PROXY protocol v1 (nginx/haproxy). |
+| `--allow-invalid-certs` | выключено | Разрешать TLS с невалидным сертификатом. **Расширение порта**, в upstream отсутствует; только для диагностики. |
+| `--ws-timeout <SEC>` | `10` | Таймаут чтения ответа WS-рукопожатия; этапы TCP и TLS ограничены `min(значение, 10)` с. **Расширение порта**. |
+| `--ws-max-frame-bytes <BYTES>` | `16777216` (16 MiB) | Максимальный payload одного WS-фрейма (защита от DoS). **Расширение порта**. |
+| `-h`, `--help` | — | Печатает справку по всем параметрам и завершает работу с кодом 0. |
+| `--version` | — | Печатает версию (`tg-ws-proxy <версия>`) и завершает работу с кодом 0. |
 
-## Сборка
+## Сборка и тесты
 
 ```bash
 dotnet build TgWsProxy.slnx
+dotnet test TgWsProxy.slnx
 ```
 
-### Docker: образ под Linux AArch64 (arm64)
+## Docker
 
 `Dockerfile` рассчитан на **мультиархитектурную** сборку через BuildKit: этап `build` идёт на архитектуре билд-машины (`BUILDPLATFORM`), а `dotnet publish` получает RID из `TARGETARCH` (`linux-arm64` для arm64). Финальный слой берётся под целевую платформу (`TARGETPLATFORM`).
 
-**Один образ только под AArch64** (на x86-ПК нужен [buildx](https://docs.docker.com/build/buildx/) и эмуляция или кросс-сборка .NET — образ SDK сам соберёт `linux-arm64`):
+**Один образ только под AArch64:**
 
 ```bash
 docker buildx build --platform linux/arm64 -t tg-ws-proxy:arm64 --load .
@@ -59,7 +93,7 @@ docker buildx build --platform linux/arm64 -t tg-ws-proxy:arm64 --load .
 **Один тег для amd64 + arm64** (в registry):
 
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/tg-ws-proxy:2.2 --push .
+docker buildx build --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/tg-ws-proxy:2.3 --push .
 ```
 
 Сборка **на самом ARM-сервере** (без эмуляции):
@@ -68,45 +102,21 @@ docker buildx build --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/tg-ws-pr
 docker build -t tg-ws-proxy:local .
 ```
 
-## Примеры запуска
+### CI/CD (GitHub Actions)
 
-Проект изначально рассчитан на **установку на сервер** (выделенная машина, контейнер на хосте, VPS): прокси слушает сеть, а **клиент Telegram подключается к этому серверу** по SOCKS5 (адрес/порт сервера или проброшенного порта), а не обязательно к `127.0.0.1` на той же машине, где открыт Telegram. Локальный запуск с `127.0.0.1` возможен, но типовой сценарий — сервер + удалённый клиент.
+Workflow [`.github/workflows/docker-build.yml`](.github/workflows/docker-build.yml) при пуше в `main` и на тег `v*`:
 
-### Из исходников
+1. гоняет `dotnet test` (сборка + тесты);
+2. собирает мультиархитектурный образ `linux/amd64,linux/arm64` через BuildKit;
+3. пушит в Docker Hub `pboldev/tg-ws-proxy` с тегами `latest` (main)
 
-```bash
-# Запуск с настройками по умолчанию (секрет автогенерируется)
-dotnet TgWsProxy.dll
 
-# Другой порт и подробный лог
-dotnet TgWsProxy.dll --port 9050 --verbose
+### Docker Compose (`DockerCompose/docker-compose.yml`)
 
-# Привязка к другому хосту и явные DC
-dotnet TgWsProxy.dll --host 0.0.0.0 --dc-ip 1:149.154.175.50 --dc-ip 2:149.154.167.220
-
-# Запуск с несколькими MTProto-секретами (для разных клиентов)
-dotnet TgWsProxy.dll --secret ddf43b08aef31a50b7b92c17f07bb66b11 --secret ddaaa111bbb222ccc333ddd444eee555
-
-# С Cloudflare fallback через другой домен
-dotnet TgWsProxy.dll --cfproxy-domain example.com --cfproxy-priority true
-```
-
-### Запуск опубликованного бинарника
+Запуск из готового образа на [Docker Hub](https://hub.docker.com/r/pboldev/tg-ws-proxy). При каждом `up` образ подтягивается заново (`pull_policy: always`).
 
 ```bash
-# Пример для Windows PowerShell
-.\TgWsProxy.exe --port 1080 --dc-ip 2:149.154.167.220 --dc-ip 4:149.154.167.220 --secret ddf43b08aef31a50b7b92c17f07bb66b11
-```
-
-### Docker Compose (`docker-compose.yml`)
-
-Запуск из готового образа на [Docker Hub](https://hub.docker.com/r/pboldev/tg-ws-proxy) (тег образа задаётся в `docker-compose.yml`, по умолчанию в репозитории указан актуальный тег). При каждом `up` образ подтягивается заново (`pull_policy: always`).
-
-**Требования:** установленные Docker и Docker Compose v2.
-
-**Запуск в фоне:**
-
-```bash
+cd DockerCompose
 docker compose up -d
 ```
 
@@ -114,8 +124,7 @@ docker compose up -d
 
 ```env
 TG_HOST=0.0.0.0
-TG_PORT=1080
-TG_WS_TIMEOUT=10
+TG_PORT=1443
 TG_DC_IP_1=2:149.154.167.220
 TG_DC_IP_2=4:149.154.167.220
 ```
@@ -133,7 +142,7 @@ docker compose logs -f tg-ws-proxy
 docker compose down
 ```
 
-**Дополнительные аргументы** (`--verbose`, `--log-path`, несколько `--secret`, CF Proxy) добавьте в список `command` в `docker-compose.yml` (по одному элементу на строку), по аналогии с таблицей аргументов выше.
+**Дополнительные аргументы** (`--verbose`, `--log-file`, `--secret`, CF Proxy, `--fake-tls-domain`, `--no-h2`) добавьте в список `command` в `docker-compose.yml` (по одному элементу на строку).
 
 #### Почему TLS / warmup / `EOF` / `RST` бывают именно в Docker
 
@@ -159,17 +168,30 @@ docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
 
 ## Настройка Telegram
 
-При запуске прокси выводит в лог готовую ссылку формата `tg://proxy?server=...&port=...&secret=dd...`. Нажмите на неё в логе — Telegram автоматически добавит прокси.
+При запуске прокси выводит в лог готовые ссылки:
+
+- `tg://proxy?server=...&port=...&secret=dd<secret>` — обычный режим;
+- `tg://proxy?server=...&port=...&secret=ee<secret><hex(домен)>` — если задан `--fake-tls-domain` (маскировка под HTTPS к указанному домену).
+
+Нажмите на ссылку в логе — Telegram автоматически добавит прокси.
 
 ### Telegram Desktop
 
 1. Откройте: **Настройки → Продвинутые настройки → Тип подключения → Прокси**.
 2. Добавьте прокси типа **MTProto**:
    - Сервер: `127.0.0.1` (или адрес сервера)
-   - Порт: `1080` (или ваш `--port`)
-   - Секрет: `ddf43b08aef31a50b7b92c17f07bb66b11` (из лога при запуске)
+   - Порт: `1443` (или ваш `--port`)
+   - Секрет: `dd…` или `ee…` из лога при запуске.
 
 ### Telegram Mobile
 
 Нажмите на ссылку `tg://proxy?...` из лога — Telegram автоматически предложит добавить прокси.
 
+## Отличия от upstream
+
+Порт следует upstream v1.11.2 по поведению и CLI. Осознанные отличия:
+
+- **`--auth` и `--cfproxy-priority` удалены** (в upstream их больше нет; несколько секретов заменены одним).
+- **`blacklist` WS-доменов удалён** — вместо постоянного исключения DC используется пул + экспоненциальный backoff.
+- Добавлены расширения, которых нет в upstream: `--ws-timeout`, `--ws-max-frame-bytes`, `--allow-invalid-certs`, алиас `--log-path`.
+- Добавлен watchdog слушающего сокета (в upstream — `install_self_pipe_guard`/перезапуск сервера).

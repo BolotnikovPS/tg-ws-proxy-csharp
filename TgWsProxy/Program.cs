@@ -3,25 +3,32 @@ using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
+using System.Reflection;
 using System.Security.Cryptography;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure;
+using TgWsProxy.Infrastructure.Instances;
 
-var cfg = CliParser.Parse(args);
-if (cfg.DcIp.Count == 0)
+// Информационные флаги обрабатываются до разбора конфигурации: --help/-h и --version.
+// InformationalVersion хранит ровно то, что указано в <Version> проекта (например "2.3").
+var appVersion = typeof(Program).Assembly
+    .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+    .Split('+')[0] ?? "unknown";
+if (CliParser.TryHandleInfo(args, appVersion, out var infoText))
 {
-    // IP должны соответствовать номеру DC: для WSS используется SNI kws{N}.web.telegram.org к этому адресу.
-    cfg.DcIp.Add("2:149.154.167.220");
-    cfg.DcIp.Add("4:149.154.167.220");
-    cfg.DcIp.Add("203:149.154.167.220");
+    Console.WriteLine(infoText);
+    return 0;
 }
 
-if (cfg.Secrets.Count == 0)
+var cfg = CliParser.Parse(args);
+
+
+if (string.IsNullOrWhiteSpace(cfg.Secret))
 {
-    cfg.Secrets.Add(Convert.ToHexString(RandomNumberGenerator.GetBytes(16)));
+    cfg.Secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
 }
 
 Dictionary<int, string> dcOpt;
@@ -98,12 +105,15 @@ TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
 };
 
 var startupLogger = runtimeLoggerFactory.CreateLogger<ILogger<Program>>();
-startupLogger.LogInformation("MTProto secrets: {Count}", cfg.Secrets.Count);
 
 var server = provider.GetRequiredService<IProxyServer>();
 var sessionHandler = provider.GetRequiredService<IClientSessionHandler>();
 var stats = provider.GetRequiredService<IProxyStats>();
-var wsRoutingState = provider.GetRequiredService<IWsRoutingState>();
+var wsPool = provider.GetRequiredService<IWsPool>();
+var cfWorkerPool = provider.GetRequiredService<ICfWorkerPool>();
+var cfDomainRefresher = provider.GetRequiredService<ICfDomainRefresher>();
+var cfH2Pool = provider.GetRequiredService<ICfH2Pool>();
+var bridgeService = provider.GetRequiredService<ITcpBridgeService>();
 using var cts = new CancellationTokenSource();
 
 Console.CancelKeyPress += (_, eventArgs) =>
@@ -112,6 +122,12 @@ Console.CancelKeyPress += (_, eventArgs) =>
     cts.Cancel();
 };
 
+// Сброс состояния маршрутизации перед стартом (порт upstream _run).
+bridgeService.ResetTcpBackoff();
+wsPool.Reset();
+cfWorkerPool.Reset();
+cfDomainRefresher.Start(cts.Token);
+
 var statsTask = Task.Factory.StartNew(async () =>
 {
     while (!cts.Token.IsCancellationRequested)
@@ -119,7 +135,7 @@ var statsTask = Task.Factory.StartNew(async () =>
         try
         {
             await Task.Delay(TimeSpan.FromSeconds(60), cts.Token);
-            startupLogger.LogInformation("stats: {Summary} | ws_bl: {WsBl}", stats.Summary(), wsRoutingState.FormatBlacklistSummary());
+            startupLogger.LogInformation("stats: {Summary} | pool: {Pool}", stats.Summary(), wsPool.FormatPoolSummary());
         }
         catch (OperationCanceledException)
         {
@@ -135,6 +151,7 @@ TaskScheduler.Current
 try
 {
     sessionHandler.Warmup(cts.Token);
+    cfWorkerPool.Warmup();
     await server.Run(cts.Token);
 }
 catch (Exception ex)
@@ -145,6 +162,10 @@ catch (Exception ex)
 finally
 {
     cts.Cancel();
+    cfDomainRefresher.Stop();
+    wsPool.Reset();
+    cfWorkerPool.Reset();
+    try { await cfH2Pool.CloseAsync(); } catch (Exception) { }
     try { await statsTask; } catch (OperationCanceledException) { }
 }
 return 0;

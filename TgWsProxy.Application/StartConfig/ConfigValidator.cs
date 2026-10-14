@@ -36,9 +36,10 @@ public static class ConfigValidator
             throw new ArgumentException("LogMaxMegabytes (--log-max-mb) must be in range 0..4096");
         }
 
-        if (config.LogRetainedFileCount is < 0 or > 1000)
+        // Ротация по размеру требует минимум один бэкап, иначе размер файла не ограничен.
+        if (config.LogRetainedFileCount is < 1 or > 1000)
         {
-            throw new ArgumentException("LogRetainedFileCount (--log-backups) must be in range 0..1000");
+            throw new ArgumentException("LogRetainedFileCount (--log-backups) must be in range 1..1000");
         }
 
         if (config.WsMaxFrameBytes is < 1024 or > 64 * 1024 * 1024)
@@ -46,24 +47,19 @@ public static class ConfigValidator
             throw new ArgumentException("WsMaxFrameBytes (--ws-max-frame-bytes) must be in range 1024..67108864");
         }
 
-        // Validate all provided secrets
-        if (config.Secrets.Count > 0)
+        if (!string.IsNullOrWhiteSpace(config.Secret))
         {
-            for (var i = 0; i < config.Secrets.Count; i++)
+            if (config.Secret.Length != 32)
             {
-                var secret = config.Secrets[i];
-                if (secret.Length != 32)
-                {
-                    throw new ArgumentException($"Secret #{i + 1} must be exactly 32 hex characters (got {secret.Length})");
-                }
-                try
-                {
-                    Convert.FromHexString(secret);
-                }
-                catch (FormatException)
-                {
-                    throw new ArgumentException($"Secret #{i + 1} is not valid hex");
-                }
+                throw new ArgumentException($"Secret must be exactly 32 hex characters (got {config.Secret.Length})");
+            }
+            try
+            {
+                Convert.FromHexString(config.Secret);
+            }
+            catch (FormatException)
+            {
+                throw new ArgumentException("Secret must be valid hex");
             }
         }
     }

@@ -1,5 +1,8 @@
 namespace TgWsProxy.Application.Abstractions;
 
+/// <summary>
+/// Счётчики работы прокси. Набор и формат сводки соответствуют upstream stats.py.
+/// </summary>
 public interface IProxyStats
 {
     /// <summary>
@@ -8,9 +11,39 @@ public interface IProxyStats
     void IncConnectionsTotal();
 
     /// <summary>
-    /// Увеличивает счетчик подключений, обслуженных через WebSocket.
+    /// Увеличивает счётчик активных клиентских сессий.
+    /// </summary>
+    void IncConnectionsActive();
+
+    /// <summary>
+    /// Уменьшает счётчик активных клиентских сессий.
+    /// </summary>
+    void DecConnectionsActive();
+
+    /// <summary>
+    /// Увеличивает счетчик подключений, обслуженных через прямой WebSocket.
     /// </summary>
     void IncConnectionsWs();
+
+    /// <summary>
+    /// Увеличивает счетчик media-подключений, обслуженных через HTTP/2 мультиплексирование.
+    /// </summary>
+    void IncConnectionsH2();
+
+    /// <summary>
+    /// Увеличивает счётчик установленных TCP-соединений HTTP/2 транспорта.
+    /// </summary>
+    void IncH2TcpConnections();
+
+    /// <summary>
+    /// Увеличивает счётчик HTTP/2 запросов.
+    /// </summary>
+    void IncH2Requests();
+
+    /// <summary>
+    /// Увеличивает счётчик ошибок HTTP/2.
+    /// </summary>
+    void IncH2Errors();
 
     /// <summary>
     /// Увеличивает счетчик подключений, переведенных на TCP fallback.
@@ -18,19 +51,24 @@ public interface IProxyStats
     void IncConnectionsTcpFallback();
 
     /// <summary>
-    /// Увеличивает счетчик прямых TCP passthrough-подключений.
-    /// </summary>
-    void IncConnectionsPassthrough();
-
-    /// <summary>
-    /// Увеличивает счетчик отклоненных HTTP-транспортов.
-    /// </summary>
-    void IncConnectionsHttpRejected();
-
-    /// <summary>
     /// Увеличивает счетчик подключений через Cloudflare proxy fallback.
     /// </summary>
     void IncConnectionsCfProxy();
+
+    /// <summary>
+    /// Увеличивает счётчик подключений через домен-фронтинг (Fake TLS маскировка).
+    /// </summary>
+    void IncConnectionsFronting();
+
+    /// <summary>
+    /// Увеличивает счётчик подключений с некорректным MTProto handshake (неверный secret).
+    /// </summary>
+    void IncConnectionsBad();
+
+    /// <summary>
+    /// Увеличивает счётчик подключений, замаскированных под чужой домен.
+    /// </summary>
+    void IncConnectionsMasked();
 
     /// <summary>
     /// Увеличивает счетчик ошибок WebSocket.
@@ -46,6 +84,16 @@ public interface IProxyStats
     /// Увеличивает счетчик промахов по пулу WebSocket.
     /// </summary>
     void IncPoolMiss();
+
+    /// <summary>
+    /// Увеличивает счётчик попаданий в пул CF worker соединений.
+    /// </summary>
+    void IncCfPoolHit();
+
+    /// <summary>
+    /// Увеличивает счётчик промахов по пулу CF worker соединений.
+    /// </summary>
+    void IncCfPoolMiss();
 
     /// <summary>
     /// Добавляет объем исходящего трафика от клиента к апстриму.

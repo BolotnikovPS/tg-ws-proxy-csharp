@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "TgWsProxy": {
+      "commandName": "Project",
+      "commandLineArgs": "--host 0.0.0.0 --secret f43b08aef31a50b7b92c17f07bb66b11 -v"
+    }
+  }
+}

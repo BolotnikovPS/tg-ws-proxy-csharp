@@ -2,274 +2,136 @@
 
 using Microsoft.Extensions.Logging;
 using System.Buffers.Binary;
-using System.Collections.Frozen;
 using System.Net.Sockets;
-using System.Security.Cryptography;
+using System.Text;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Application.Logic.FakeTls;
 using TgWsProxy.Application.Logic.Helpers;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
-using TgWsProxy.Domain.Exceptions;
 
 namespace TgWsProxy.Application.Logic;
 
+/// <summary>
+/// Обрабатывает одно клиентское подключение: читает MTProto init (при необходимости через
+/// PROXY protocol и Fake TLS), определяет DC и протокол, затем уводит трафик в пул WebSocket
+/// или в цепочку fallback (порт upstream <c>_handle_client</c>).
+/// </summary>
 internal sealed class ClientSessionHandler(
     Config cfg,
-    Dictionary<int, string> dcOpt,
-    IRawWebSocketFactory wsFactory,
+    ClientInitReader initReader,
+    MaskingProxy maskingProxy,
     ITcpBridgeService bridgeService,
     IMtProtoInspector mtProtoInspector,
-    IWsRoutingState wsRoutingState,
+    IWsPool wsPool,
     IProxyStats stats,
-    ILogger<ClientSessionHandler> logger
-    ) : IClientSessionHandler
+    ILogger<ClientSessionHandler> logger) : IClientSessionHandler
 {
-    private const int WsFailTimeoutSeconds = 2;
-    private static readonly TimeSpan InitReadTimeout = TimeSpan.FromSeconds(15);
-    private static readonly TimeSpan WsPoolMaxAge = TimeSpan.FromSeconds(120);
-    private static readonly TimeSpan DcFailCooldown = TimeSpan.FromSeconds(30);
+    /// <summary>Ключ secret в байтах (hex из конфигурации).</summary>
+    private readonly byte[] secret = Convert.FromHexString(cfg.Secret);
 
-    // Telegram protocol constants
-    private static readonly byte[] ProtoTagAbridged = [0xEF, 0xEF, 0xEF, 0xEF];
-    private static readonly byte[] ProtoTagIntermediate = [0xEE, 0xEE, 0xEE, 0xEE];
-    private static readonly byte[] ProtoTagSecure = [0xDD, 0xDD, 0xDD, 0xDD];
-    private static readonly byte[] Zero64 = new byte[64];
-
-    private static readonly FrozenDictionary<int, string> DC_DEFAULT_IPS = new Dictionary<int, string>()
-    {
-        { 1, "149.154.175.50" },
-        { 2, "149.154.167.51" },
-        { 3, "149.154.175.100" },
-        { 4, "149.154.167.91" },
-        { 5, "149.154.171.5" },
-        { 203, "91.105.192.100" }
-    }.ToFrozenDictionary();
-
-    private readonly byte[][] _secretBytesList = [.. cfg.Secrets.Select(s => Convert.FromHexString(s))];
-
+    /// <inheritdoc />
     public async Task Handle(Socket client, ClientContext context, CancellationToken cancellationToken)
     {
         stats.IncConnectionsTotal();
+        stats.IncConnectionsActive();
         using var _ = client;
-        client.NoDelay = true;
-        var sockBuf = Math.Max(4, cfg.SocketBufferKb) * 1024;
-        client.ReceiveBufferSize = sockBuf;
-        client.SendBufferSize = sockBuf;
-        await using var stream = new NetworkStream(client);
-
-        logger.LogInformation("[{Scope}] Client connected", context.Scope);
-
-        var init = Array.Empty<byte>();
-        var dc = 2; // default DC for fallback
 
         try
         {
-            // Direct MTProto handshake (no SOCKS5)
-            init = await stream.ReadExact(64, InitReadTimeout, cancellationToken);
-            if (mtProtoInspector.IsHttpTransport(init))
+            client.NoDelay = true;
+            var sockBuf = Math.Max(4, cfg.SocketBufferKb) * 1024;
+            client.ReceiveBufferSize = sockBuf;
+            client.SendBufferSize = sockBuf;
+            await using var stream = new NetworkStream(client);
+
+            logger.LogDebug("[{Scope}] Client connected", context.Scope);
+
+            var init = await initReader.ReadAsync(stream, context.Scope, secret, cancellationToken)
+                .ConfigureAwait(false);
+            var label = init.Label;
+
+            switch (init.Status)
             {
-                stats.IncConnectionsHttpRejected();
-                logger.LogWarning("[{Scope}] HTTP transport detected; closing", context.Scope);
+                case ClientInitStatus.Closed:
+                    return;
+
+                case ClientInitStatus.HttpRedirect:
+                    await SendMaskingRedirectAsync(stream, label, cancellationToken).ConfigureAwait(false);
+                    return;
+
+                case ClientInitStatus.Masking:
+                    await maskingProxy
+                        .RelayAsync(stream, init.FirstBytes ?? [], cfg.FakeTlsDomain, label, cancellationToken)
+                        .ConfigureAwait(false);
+                    return;
+            }
+
+            var clientStream = init.ClientStream ?? stream;
+            var handshakeBytes = init.Init!;
+
+            var handshake = mtProtoInspector.TryHandshake(handshakeBytes, secret);
+            if (handshake is null)
+            {
+                stats.IncConnectionsBad();
+                logger.LogWarning("[{Scope}] bad handshake (wrong secret or proto)", label);
                 return;
             }
 
-            // Try each secret to find the right one for this client
-            byte[]? matchedSecretBytes = null;
-            int? matchedDc = null;
-            bool? matchedIsMedia = null;
-            byte[]? matchedProtoTag = null;
-
-            foreach (var secretBytes in _secretBytesList)
+            var hs = handshake.Value;
+            var isTestDc = cfg.ForceTestDc || hs.Dc >= 10000;
+            var dc = hs.Dc;
+            if (dc >= 10000)
             {
-                var (dcVal, isMediaVal) = mtProtoInspector.DcFromInit(init, secretBytes);
-                if (dcVal is not null)
-                {
-                    matchedSecretBytes = secretBytes;
-                    matchedDc = dcVal;
-                    matchedIsMedia = isMediaVal;
-                    matchedProtoTag = GetProtoTag(init, secretBytes);
-                    break;
-                }
+                logger.LogInformation("[{Scope}] test DC{Dc} -> DC{Dc}", label, dc, dc - 10000);
+                dc -= 10000;
             }
 
-            if (matchedSecretBytes is null || matchedDc is null)
-            {
-                logger.LogWarning("[{Scope}] Unknown DC with any secret, fallback TCP", context.Scope);
-                stats.IncConnectionsTcpFallback();
-                await bridgeService.TcpFallback(stream, DC_DEFAULT_IPS[2], 443, init, context.Scope, cancellationToken);
-                return;
-            }
+            var isMedia = hs.IsMedia;
+            var dcIdx = (short)(isMedia ? -dc : dc);
+            var relayInit = mtProtoInspector.GenerateRelayInit(hs.ProtoTag, dcIdx);
+            var mediaTag = isMedia ? " media" : "";
 
-            dc = matchedDc.Value;
-            var isMedia = matchedIsMedia;
-            var protoTag = matchedProtoTag;
+            logger.LogDebug(
+                "[{Scope}] handshake ok: DC{Dc}{MediaTag} proto=0x{Proto:X8} dcIdx={DcIdx} test={Test}",
+                label, dc, mediaTag, BinaryPrimitives.ReadUInt32LittleEndian(hs.ProtoTag), dcIdx, isTestDc);
 
-            // DC 203 handling: map to DC 2 for WS domains
-            var wsDc = dc == 203 ? 2 : dc;
-            var mediaFlag = isMedia ?? true;
-            var dcKey = (wsDc, mediaFlag);
-            var dcIdx = (short)(mediaFlag ? -dc : dc);
+            using var ctx = BuildCryptoContext(handshakeBytes, relayInit);
 
-            // Generate relay_init
-            var relayInit = mtProtoInspector.GenerateRelayInit(protoTag, dcIdx);
-            logger.LogDebug("[{Scope}] relay_init: proto=0x{Proto:X8} dcIdx={DcIdx} rnd_tail={Tail}",
-                context.Scope,
-                BinaryPrimitives.ReadUInt32LittleEndian(protoTag),
-                dcIdx,
-                Convert.ToHexString(relayInit.AsSpan(56, 8)));
-
-            // Client-side keys dec_prekey_iv = init[8:56],
-            // dec_key = SHA256(dec_prekey + secret)
-            var clientDecPrekeyIv = init.AsSpan(8, 48).ToArray();
-            var clientDecPrekey = clientDecPrekeyIv.AsSpan(0, 32).ToArray();
-            var clientDecIv = clientDecPrekeyIv.AsSpan(32, 16).ToArray();
-            var clientDecKey = SHA256.HashData([.. clientDecPrekey, .. matchedSecretBytes]);
-
-            // enc_prekey_iv = dec_prekey_iv[::-1], enc_key = SHA256(enc_prekey + secret)
-            var clientEncPrekeyIv = clientDecPrekeyIv.ToArray();
-            Array.Reverse(clientEncPrekeyIv);
-            var clientEncPrekey = clientEncPrekeyIv.AsSpan(0, 32).ToArray();
-            var clientEncIv = clientEncPrekeyIv.AsSpan(32, 16).ToArray();
-            var clientEncKey = SHA256.HashData([.. clientEncPrekey, .. matchedSecretBytes]);
-
-            using var cltDecryptor = new IncrementalCipher(clientDecKey, clientDecIv);
-            using var cltEncryptor = new IncrementalCipher(clientEncKey, clientEncIv);
-
-            // Fast-forward clt_decryptor past the 64-byte init
-            cltDecryptor.Update(Zero64);
-
-            // Relay side keys (from relay_init)
-            var relayEncKey = relayInit.AsSpan(8, 32).ToArray();
-            var relayEncIv = relayInit.AsSpan(40, 16).ToArray();
-
-            // tg_encryptor uses relay_enc_key/iv (to encrypt data to Telegram) tg_decryptor uses
-            // relay_dec_key/iv (to decrypt data from Telegram) relay_dec_prekey_iv = relay_init[8:56][::-1]
-            var relayDecPrekeyIv = relayInit.AsSpan(8, 48).ToArray();
-            Array.Reverse(relayDecPrekeyIv);
-            var relayDecKey = relayDecPrekeyIv.AsSpan(0, 32).ToArray();
-            var relayDecIv = relayDecPrekeyIv.AsSpan(32, 16).ToArray();
-
-            using var tgEncryptor = new IncrementalCipher(relayEncKey, relayEncIv);
-            using var tgDecryptor = new IncrementalCipher(relayDecKey, relayDecIv);
-
-            // Fast-forward tg_encryptor past the 64-byte init
-            tgEncryptor.Update(Zero64);
-
-            if (wsRoutingState.IsBlacklisted(dcKey))
-            {
-                logger.LogDebug("[{Scope}] DC{Dc} media={IsMedia} WS blacklisted; using TCP fallback", context.Scope, dc, mediaFlag);
-                stats.IncConnectionsTcpFallback();
-                await DoFallback(
-                    stream, DC_DEFAULT_IPS[dc], relayInit, context.Scope, dc, mediaFlag,
-                    cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor, cancellationToken);
-                return;
-            }
-
-            var wsTimeout = wsRoutingState.IsInFailCooldown(dcKey, DateTimeOffset.UtcNow)
-                ? TimeSpan.FromSeconds(WsFailTimeoutSeconds)
-                : TimeSpan.FromSeconds(cfg.WsConnectTimeoutSeconds);
-            var domains = WsDomains(wsDc, mediaFlag);
-
-            // Try to get target IP from config or defaults
-            var targetIp = dcOpt.TryGetValue(dc, out var ip)
-                ? ip
-                : DC_DEFAULT_IPS.GetValueOrDefault(dc);
-
-            if (targetIp is null)
-            {
-                logger.LogWarning("[{Scope}] No target IP for DC{Dc}, fallback TCP", context.Scope, dc);
-                stats.IncConnectionsTcpFallback();
-                await DoFallback(
-                    stream, DC_DEFAULT_IPS[dc], relayInit, context.Scope, dc, mediaFlag,
-                    cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor, cancellationToken);
-                return;
-            }
-
-            var ws = TryTakePooledWs(dcKey);
-            var sawRedirect = false;
-            var allRedirects = true;
-            if (ws is null)
-            {
-                SchedulePoolRefill(dcKey, targetIp, domains, wsTimeout, context.Scope, cancellationToken);
-                for (var di = 0; di < domains.Count; di++)
-                {
-                    var domain = domains[di];
-                    var moreDomains = di < domains.Count - 1;
-                    try
-                    {
-                        logger.LogDebug("[{Scope}] Try WS {Domain} via {TargetIp}", context.Scope, domain, targetIp);
-                        ws = await wsFactory.Connect(targetIp, domain, "/apiws", context.Scope, wsTimeout);
-                        wsRoutingState.ClearFailCooldown(dcKey);
-                        SchedulePoolRefill(dcKey, targetIp, domains, wsTimeout, context.Scope, cancellationToken);
-                        break;
-                    }
-                    catch (WsHandshakeException ex) when (ex.IsRedirect)
-                    {
-                        stats.IncWsErrors();
-                        sawRedirect = true;
-                        logger.LogWarning("[{Scope}] WS redirect for {Domain}: {StatusLine}", context.Scope, domain, ex.StatusLine);
-                        ws = null;
-                    }
-                    catch (TimeoutException ex)
-                    {
-                        stats.IncWsErrors();
-                        allRedirects = false;
-                        if (moreDomains)
-                        {
-                            logger.LogDebug(ex, "[{Scope}] WS connect timeout ({Domain} via {TargetIp}), пробуем следующий хост", context.Scope, domain, targetIp);
-                        }
-                        else
-                        {
-                            logger.LogWarning(ex, "[{Scope}] WS connect timeout ({Domain} via {TargetIp})", context.Scope, domain, targetIp);
-                        }
-                        ws = null;
-                    }
-                    catch (Exception ex)
-                    {
-                        stats.IncWsErrors();
-                        allRedirects = false;
-                        if (moreDomains && ex is IOException)
-                        {
-                            logger.LogDebug(ex, "[{Scope}] WS connect failed ({Domain} via {TargetIp}), пробуем следующий хост", context.Scope, domain, targetIp);
-                        }
-                        else
-                        {
-                            logger.LogError(ex, "[{Scope}] WS connect failed ({Domain} via {TargetIp})", context.Scope, domain, targetIp);
-                        }
-                        ws = null;
-                    }
-                }
-            }
+            // Splitter нужен и для fallback-маршрутов: там пакеты тоже режутся по одному.
+            var splitter = new MsgSplitter(hs.ProtoInt);
+            var ws = wsPool.TryGet(dc, isMedia, isTestDc);
 
             if (ws is null)
             {
-                if (sawRedirect && allRedirects)
+                logger.LogInformation("[{Scope}] DC{Dc}{MediaTag} WS pool unavailable -> fallback", label, dc, mediaTag);
+                var request = new FallbackRequest(
+                    clientStream, relayInit, label, dc, isTestDc, isMedia, hs.ProtoTag, ctx, splitter);
+
+                if (await bridgeService.DoFallback(request, cancellationToken).ConfigureAwait(false))
                 {
-                    wsRoutingState.AddBlacklist(dcKey);
-                    logger.LogWarning("[{Scope}] DC{Dc} media={IsMedia} switched to permanent TCP fallback due to redirects", context.Scope, dc, mediaFlag);
+                    logger.LogInformation("[{Scope}] DC{Dc}{MediaTag} fallback closed", label, dc, mediaTag);
                 }
                 else
                 {
-                    wsRoutingState.SetFailCooldown(dcKey, DateTimeOffset.UtcNow.Add(DcFailCooldown));
+                    logger.LogWarning("[{Scope}] DC{Dc}{MediaTag} no fallback available", label, dc, mediaTag);
                 }
-                logger.LogWarning("[{Scope}] WS unavailable, fallback TCP", context.Scope);
-                stats.IncConnectionsTcpFallback();
-                await bridgeService.TcpFallback(stream, DC_DEFAULT_IPS[dc], 443, init, context.Scope, cancellationToken);
+
                 return;
             }
 
             stats.IncConnectionsWs();
-            logger.LogInformation("[{Scope}] WS bridge DC{Dc} media={IsMedia}", context.Scope, dc, mediaFlag);
+            logger.LogDebug("[{Scope}] DC{Dc}{MediaTag} -> WS bridge", label, dc, mediaTag);
             try
             {
-                await ws.Send(relayInit, cancellationToken);
-                await bridgeService.BridgeWsReencrypt(
-                    stream, ws, context.Scope, relayInit,
-                    cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor, cancellationToken);
+                await ws.Send(relayInit, cancellationToken).ConfigureAwait(false);
+                await bridgeService
+                    .BridgeWsReencrypt(clientStream, ws, label, ctx, dc, isMedia, splitter, cancellationToken)
+                    .ConfigureAwait(false);
             }
             finally
             {
-                await ws.Close(cancellationToken);
+                await CloseQuietlyAsync(ws, cancellationToken).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -288,341 +150,119 @@ internal sealed class ClientSessionHandler(
         {
             logger.LogDebug("[{Scope}] Client socket disconnected", context.Scope);
         }
-        catch (WsFrameTooLargeException ex)
-        {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                return;
-            }
-
-            logger.LogWarning(
-                "[{Scope}] WS frame too large ({Len} > {Max}); fallback TCP",
-                context.Scope,
-                ex.FramePayloadLen,
-                ex.MaxFramePayloadLen);
-
-            stats.IncConnectionsTcpFallback();
-            await bridgeService.TcpFallback(stream, DC_DEFAULT_IPS[dc], 443, init, context.Scope, cancellationToken);
-        }
         catch (Exception ex)
         {
             logger.LogError(ex, "[{Scope}] Unhandled client processing error", context.Scope);
         }
         finally
         {
-            logger.LogInformation("[{Scope}] Client disconnected", context.Scope);
+            stats.DecConnectionsActive();
+            logger.LogDebug("[{Scope}] Client disconnected", context.Scope);
         }
     }
 
+    /// <inheritdoc />
     public void Warmup(CancellationToken cancellationToken)
+        => wsPool.Warmup();
+
+    /// <summary>
+    /// Отвечает HTTP 301 на домен маскировки, когда клиент пришёл без TLS
+    /// (порт upstream <c>_read_client_init</c>).
+    /// </summary>
+    private async Task SendMaskingRedirectAsync(Stream stream, string label, CancellationToken cancellationToken)
     {
-        if (cfg.WsPoolSize <= 0)
+        var redirect = Encoding.ASCII.GetBytes(
+            $"HTTP/1.1 301 Moved Permanently\r\n" +
+            $"Location: https://{cfg.FakeTlsDomain}/\r\n" +
+            $"Content-Length: 0\r\n" +
+            $"Connection: close\r\n\r\n");
+
+        try
         {
-            return;
+            await stream.WriteAsync(redirect, cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+            logger.LogDebug("[{Scope}] masking redirect sent", label);
         }
-
-        foreach (var kv in dcOpt)
+        catch (Exception ex)
         {
-            var dc = kv.Key;
-            var targetIp = kv.Value;
-            if (string.IsNullOrWhiteSpace(targetIp))
-            {
-                continue;
-            }
-
-            // DC 203 -> DC 2 for WS domains
-            var wsDc = dc == 203 ? 2 : dc;
-
-            foreach (var media in new[] { false, true })
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var dcKey = (wsDc, media);
-                var domains = WsDomains(wsDc, media);
-                SchedulePoolRefill(dcKey, targetIp, domains, TimeSpan.FromSeconds(cfg.WsConnectTimeoutSeconds), "warmup", cancellationToken);
-            }
+            logger.LogDebug(ex, "[{Scope}] masking redirect failed", label);
         }
     }
 
     /// <summary>
-    /// Возвращает упорядоченный список доменов WebSocket для заданного DC и типа трафика.
+    /// Собирает четыре AES-CTR потока: два для клиента и два для Telegram
+    /// (порт upstream <c>_build_crypto_ctx</c>).
     /// </summary>
-    /// <param name="dc">Идентификатор дата-центра Telegram.</param>
-    /// <param name="isMedia">Признак media-маршрута.</param>
-    /// <returns>Список доменов для попыток подключения в порядке приоритета.</returns>
-    private static List<string> WsDomains(int dc, bool isMedia)
+    /// <param name="init">Init-пакет клиента (obfs2 handshake).</param>
+    /// <param name="relayInit">Сгенерированный relay init.</param>
+    private CryptoCtx BuildCryptoContext(byte[] init, byte[] relayInit)
     {
-        if (dc == 203)
-        {
-            dc = 2;
-        }
+        // dec_prekey_iv = init[8:56]; dec_key = SHA256(dec_prekey + secret)
+        var clientDecPrekeyIv = init.AsSpan(Protocol.SkipLen, Protocol.PreKeyLen + Protocol.IvLen).ToArray();
+        var clientDecKey = DeriveKey(clientDecPrekeyIv.AsSpan(0, Protocol.PreKeyLen));
+        var clientDecIv = clientDecPrekeyIv.AsSpan(Protocol.PreKeyLen, Protocol.IvLen).ToArray();
 
-        return isMedia
-            ? [$"kws{dc}-1.web.telegram.org", $"kws{dc}.web.telegram.org"]
-            : [$"kws{dc}.web.telegram.org", $"kws{dc}-1.web.telegram.org"];
+        // enc_prekey_iv = dec_prekey_iv[::-1]
+        var clientEncPrekeyIv = clientDecPrekeyIv.ToArray();
+        Array.Reverse(clientEncPrekeyIv);
+        var clientEncKey = DeriveKey(clientEncPrekeyIv.AsSpan(0, Protocol.PreKeyLen));
+        var clientEncIv = clientEncPrekeyIv.AsSpan(Protocol.PreKeyLen, Protocol.IvLen).ToArray();
+
+        var cltDecryptor = new IncrementalCipher(clientDecKey, clientDecIv);
+        var cltEncryptor = new IncrementalCipher(clientEncKey, clientEncIv);
+
+        // Пропускаем 64 байта init без выделения памяти.
+        cltDecryptor.Skip(Protocol.HandshakeLen);
+
+        // Relay: enc — как есть, dec — реверс prekey_iv.
+        var relayEncKey = relayInit.AsSpan(Protocol.SkipLen, Protocol.KeyLen).ToArray();
+        var relayEncIv = relayInit.AsSpan(Protocol.SkipLen + Protocol.KeyLen, Protocol.IvLen).ToArray();
+
+        var relayDecPrekeyIv = relayInit.AsSpan(Protocol.SkipLen, Protocol.PreKeyLen + Protocol.IvLen).ToArray();
+        Array.Reverse(relayDecPrekeyIv);
+        var relayDecKey = relayDecPrekeyIv.AsSpan(0, Protocol.PreKeyLen).ToArray();
+        var relayDecIv = relayDecPrekeyIv.AsSpan(Protocol.PreKeyLen, Protocol.IvLen).ToArray();
+
+        var tgEncryptor = new IncrementalCipher(relayEncKey, relayEncIv);
+        var tgDecryptor = new IncrementalCipher(relayDecKey, relayDecIv);
+
+        tgEncryptor.Skip(Protocol.HandshakeLen);
+
+        return new CryptoCtx(cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor);
+    }
+
+    /// <summary>
+    /// Считает ключ как SHA256(prekey + secret).
+    /// </summary>
+    private byte[] DeriveKey(ReadOnlySpan<byte> prekey)
+    {
+        var buffer = new byte[prekey.Length + secret.Length];
+        prekey.CopyTo(buffer);
+        secret.AsSpan().CopyTo(buffer.AsSpan(prekey.Length));
+        return System.Security.Cryptography.SHA256.HashData(buffer);
     }
 
     /// <summary>
     /// Проверяет, относится ли исключение к ожидаемому разрыву клиентского соединения.
     /// </summary>
-    /// <param name="ex">Исключение ввода/вывода, возникшее при работе с сокетом.</param>
-    /// <returns><see langword="true"/>, если отключение считается штатным.</returns>
-    private static bool IsExpectedDisconnect(IOException ex) => ex is EndOfStreamException || (ex.InnerException is SocketException se &&
-            se.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted) || string.Equals(ex.Message, "Connection closed", StringComparison.OrdinalIgnoreCase);
+    private static bool IsExpectedDisconnect(IOException ex) =>
+        ex is EndOfStreamException ||
+        (ex.InnerException is SocketException se &&
+         se.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted) ||
+        string.Equals(ex.Message, "Connection closed", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Пытается взять живое WebSocket-соединение из пула для указанного DC.
+    /// Закрывает WS-соединение, подавляя ошибки закрытия.
     /// </summary>
-    /// <param name="dcKey">Ключ дата-центра и типа маршрута.</param>
-    /// <returns>Соединение из пула или <see langword="null"/>, если подходящее не найдено.</returns>
-    private IRawWebSocket? TryTakePooledWs((int Dc, bool IsMedia) dcKey)
+    private async Task CloseQuietlyAsync(IRawWebSocket ws, CancellationToken cancellationToken)
     {
-        var ws = wsRoutingState.TryTakePooledWs(dcKey, DateTimeOffset.UtcNow, WsPoolMaxAge);
-
-        if (ws is null)
-        {
-            stats.IncPoolMiss();
-
-            return null;
-        }
-
-        stats.IncPoolHit();
-        return ws;
-    }
-
-    /// <summary>
-    /// Запускает фоновое пополнение пула WebSocket-соединений для указанного DC.
-    /// </summary>
-    /// <param name="dcKey">Ключ дата-центра и типа маршрута.</param>
-    /// <param name="targetIp">Целевой IP-адрес Telegram DC.</param>
-    /// <param name="domains">Список доменов для попыток WebSocket-подключения.</param>
-    /// <param name="timeout">Таймаут отдельной попытки подключения.</param>
-    /// <param name="scope">Идентификатор скоупа для логирования.</param>
-    /// <param name="cancellationToken">Токен отмены фонового refill-процесса.</param>
-    private void SchedulePoolRefill((int Dc, bool IsMedia) dcKey, string targetIp, List<string> domains, TimeSpan timeout, string scope, CancellationToken cancellationToken)
-    {
-        if (cfg.WsPoolSize <= 0)
-        {
-            return;
-        }
-
-        if (!wsRoutingState.TryBeginRefill(dcKey))
-        {
-            return;
-        }
-
-        BackgroundTaskRunner.RunDetachedSafe(
-            async ct =>
-            {
-                try
-                {
-                    var ws = await ConnectOneForPool(targetIp, domains, timeout, scope);
-                    if (ws is null)
-                    {
-                        return;
-                    }
-
-                    var evicted = wsRoutingState.AddToPool(dcKey, ws, DateTimeOffset.UtcNow, cfg.WsPoolSize);
-                    foreach (var stale in evicted)
-                    {
-                        BackgroundTaskRunner.RunDetachedSafe(
-                            async closeCt => await CloseSilently(stale, closeCt),
-                            logger,
-                            $"[{scope}] close evicted ws",
-                            ct);
-                    }
-                }
-                finally
-                {
-                    wsRoutingState.EndRefill(dcKey);
-                }
-            },
-            logger,
-            $"[{scope}] ws pool refill",
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Закрывает WS-соединение без проброса исключений в вызывающий код.
-    /// </summary>
-    /// <param name="ws">Соединение для закрытия.</param>
-    /// <param name="cancellationToken">Токен отмены операции.</param>
-    private static async Task CloseSilently(IRawWebSocket ws, CancellationToken cancellationToken)
-    {
-        if (cancellationToken.IsCancellationRequested)
-        {
-            return;
-        }
-
-        await ws.Close(cancellationToken);
-    }
-
-    /// <summary>
-    /// Создает одно WebSocket-соединение для пула, перебирая список доменов.
-    /// </summary>
-    /// <param name="targetIp">Целевой IP-адрес Telegram DC.</param>
-    /// <param name="domains">Список доменов для подключения.</param>
-    /// <param name="timeout">Таймаут попытки подключения.</param>
-    /// <param name="scope">Идентификатор скоупа для логирования.</param>
-    /// <returns>Подключенный WebSocket либо <see langword="null"/> при неудаче.</returns>
-    private async Task<IRawWebSocket?> ConnectOneForPool(string targetIp, List<string> domains, TimeSpan timeout, string scope)
-    {
-        foreach (var domain in domains)
-        {
-            try
-            {
-                return await wsFactory.Connect(targetIp, domain, "/apiws", scope, timeout);
-            }
-            catch (WsHandshakeException ex) when (ex.IsRedirect)
-            {
-                continue;
-            }
-            catch
-            {
-                return null;
-            }
-        }
-        return null;
-    }
-
-    /// <summary>
-    /// Определяет тег протокола из init пакета.
-    /// </summary>
-    private static byte[]? GetProtoTag(byte[] init, byte[] secretBytes)
-    {
-        if (init.Length < 64)
-        {
-            return null;
-        }
-
         try
         {
-            var decPrekeyAndIv = init.AsSpan(8, 48).ToArray();
-            var decPrekey = decPrekeyAndIv.AsSpan(0, 32).ToArray();
-            var decIv = decPrekeyAndIv.AsSpan(32, 16).ToArray();
-            var decKey = SHA256.HashData([.. decPrekey, .. secretBytes]);
-
-            var counter = BuildCounterAt(decIv, 56L / 16);
-
-            using var aes = Aes.Create();
-            aes.Mode = CipherMode.ECB;
-            aes.Padding = PaddingMode.None;
-            aes.Key = decKey;
-            using var enc = aes.CreateEncryptor();
-
-            var keystream = new byte[16];
-            enc.TransformBlock(counter, 0, 16, keystream, 0);
-
-            var tag = new byte[4];
-            for (var i = 0; i < 4; i++)
-            {
-                tag[i] = (byte)(init[56 + i] ^ keystream[8 + i]);
-            }
-
-            if (tag.AsSpan().SequenceEqual(ProtoTagAbridged) ||
-                tag.AsSpan().SequenceEqual(ProtoTagIntermediate) ||
-                tag.AsSpan().SequenceEqual(ProtoTagSecure))
-            {
-                return tag;
-            }
+            await ws.Close(cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (Exception ex)
         {
-            // ignore
+            logger.LogDebug(ex, "WS close failed");
         }
-        return null;
-    }
-
-    private static byte[] BuildCounterAt(byte[] iv, long blockIndex)
-    {
-        var counter = iv.ToArray();
-        var carry = (ulong)blockIndex;
-        for (var b = 15; b >= 0 && carry != 0; b--)
-        {
-            var sum = (ushort)(counter[b] + (carry & 0xFF));
-            counter[b] = (byte)sum;
-            carry = (carry >> 8) + (uint)(sum >> 8);
-        }
-        return counter;
-    }
-
-    /// <summary>
-    /// Выполняет fallback с учетом CF Proxy и TCP fallback конфигурации.
-    /// </summary>
-    private async Task DoFallback(
-        NetworkStream stream,
-        string fallbackDst,
-        byte[] relayInit,
-        string scope,
-        int dc,
-        bool isMedia,
-        IncrementalCipher cltDecryptor,
-        IncrementalCipher cltEncryptor,
-        IncrementalCipher tgEncryptor,
-        IncrementalCipher tgDecryptor,
-        CancellationToken cancellationToken)
-    {
-        var useCf = cfg.CfProxyEnabled;
-        var cfFirst = cfg.CfProxyPriority;
-
-        // Build fallback order
-        var methods = new List<string>();
-        if (useCf && cfFirst)
-        {
-            methods.Add("cf");
-            if (fallbackDst is not null)
-            {
-                methods.Add("tcp");
-            }
-        }
-        else
-        {
-            if (fallbackDst is not null)
-            {
-                methods.Add("tcp");
-            }
-
-            if (useCf)
-            {
-                methods.Add("cf");
-            }
-        }
-
-        foreach (var method in methods)
-        {
-            if (method == "cf")
-            {
-                try
-                {
-                    await bridgeService.CfProxyFallback(
-                        stream, scope, relayInit, dc, isMedia,
-                        cfg.CfProxyDomain,
-                        cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor,
-                        cancellationToken);
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "[{Scope}] CF proxy failed for DC{Dc}", scope, dc);
-                }
-            }
-            if (method == "tcp" && fallbackDst is not null)
-            {
-                logger.LogInformation("[{Scope}] DC{Dc} -> TCP fallback to {FallbackDst}:443", scope, dc, fallbackDst);
-                try
-                {
-                    await bridgeService.TcpFallbackReencrypt(
-                        stream, fallbackDst, 443, relayInit, scope,
-                        cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor,
-                        cancellationToken);
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "[{Scope}] TCP fallback failed to {FallbackDst}", scope, fallbackDst);
-                }
-            }
-        }
-
-        logger.LogWarning("[{Scope}] DC{Dc} no fallback available", scope, dc);
     }
 }

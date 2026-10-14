@@ -1,87 +1,47 @@
 #nullable enable
 
-using System.Net.Sockets;
 using TgWsProxy.Application.Logic.Helpers;
 
 namespace TgWsProxy.Application.Abstractions;
 
+/// <summary>
+/// Мост между клиентским TCP-потоком и Telegram (WS, CF proxy, CF worker, H2 или прямой TCP).
+/// </summary>
 public interface ITcpBridgeService
 {
     /// <summary>
-    /// Запускает двусторонний мост между клиентским TCP-потоком и WebSocket.
+    /// Двусторонний мост с ре-шифрованием: клиентский шифротекст расшифровывается ключом клиента
+    /// и заново шифруется ключом Telegram перед отправкой в WS; обратное направление — зеркально.
     /// </summary>
-    /// <param name="client">Поток клиента.</param>
-    /// <param name="ws">Активное WebSocket-соединение.</param>
-    /// <param name="scope">Идентификатор скоупа для логирования.</param>
-    /// <param name="init">
-    /// Необязательный init MTProto (≥64 байт): включает разбиение апстрима на отдельные WS-кадры
-    /// при нескольких сообщениях в одном TCP read.
-    /// </param>
-    Task BridgeWs(NetworkStream client, IRawWebSocket ws, string scope, byte[]? init, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Запускает двусторонний мост с ре-шифрованием между клиентским TCP и WebSocket. Клиент
-    /// ciphertext → decrypt(clt_key) → encrypt(tg_key) → WS WS data → decrypt(tg_key) →
-    /// encrypt(clt_key) → client TCP
-    /// </summary>
+    /// <param name="client">Клиентский TCP-поток.</param>
+    /// <param name="ws">Активное WS-соединение с Telegram.</param>
+    /// <param name="scope">Идентификатор сессии для логов.</param>
+    /// <param name="ctx">Набор AES-CTR потоков сессии.</param>
+    /// <param name="dc">Номер дата-центра (для логов).</param>
+    /// <param name="isMedia">Признак media-трафика (для логов).</param>
+    /// <param name="splitter">Разборщик MTProto-пакетов либо <see langword="null"/>.</param>
+    /// <param name="cancellationToken">Токен отмены сессии.</param>
     Task BridgeWsReencrypt(
-        NetworkStream client,
+        Stream client,
         IRawWebSocket ws,
         string scope,
-        byte[] init,
-        IncrementalCipher cltDecryptor,
-        IncrementalCipher cltEncryptor,
-        IncrementalCipher tgEncryptor,
-        IncrementalCipher tgDecryptor,
-        CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Переключает сессию на прямой TCP-маршрут с предварительной отправкой init-пакета.
-    /// </summary>
-    /// <param name="client">Поток клиента.</param>
-    /// <param name="dst">Целевой адрес удаленного сервера.</param>
-    /// <param name="port">Целевой порт удаленного сервера.</param>
-    /// <param name="init">Инициализационный пакет для немедленной отправки на удаленную сторону.</param>
-    /// <param name="scope">Идентификатор скоупа для логирования.</param>
-    Task TcpFallback(NetworkStream client, string dst, int port, byte[] init, string scope, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Переключает сессию на TCP fallback с ре-шифрованием.
-    /// </summary>
-    Task TcpFallbackReencrypt(
-        NetworkStream client,
-        string dst,
-        int port,
-        byte[] relayInit,
-        string scope,
-        IncrementalCipher cltDecryptor,
-        IncrementalCipher cltEncryptor,
-        IncrementalCipher tgEncryptor,
-        IncrementalCipher tgDecryptor,
-        CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Запускает прозрачный TCP-прокси без подмены инициализационных данных.
-    /// </summary>
-    /// <param name="client">Поток клиента.</param>
-    /// <param name="dst">Целевой адрес удаленного сервера.</param>
-    /// <param name="port">Целевой порт удаленного сервера.</param>
-    /// <param name="scope">Идентификатор скоупа для логирования.</param>
-    Task TcpPassthrough(NetworkStream client, string dst, int port, string scope, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// CF Proxy fallback с ре-шифрованием.
-    /// </summary>
-    Task CfProxyFallback(
-        NetworkStream client,
-        string scope,
-        byte[] relayInit,
+        CryptoCtx ctx,
         int dc,
         bool isMedia,
-        string cfProxyDomain,
-        IncrementalCipher cltDecryptor,
-        IncrementalCipher cltEncryptor,
-        IncrementalCipher tgEncryptor,
-        IncrementalCipher tgDecryptor,
+        MsgSplitter? splitter,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Перебирает доступные методы fallback в порядке upstream: CF worker → CF proxy (H2 для media)
+    /// → прямой TCP. Возвращает <see langword="true"/>, если один из методов сработал.
+    /// </summary>
+    /// <param name="request">Параметры fallback-запроса.</param>
+    /// <param name="cancellationToken">Токен отмены сессии.</param>
+    /// <returns><see langword="true"/>, если сессия была обслужена fallback-маршрутом.</returns>
+    Task<bool> DoFallback(FallbackRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Сбрасывает состояние TCP-бэкоффа (вызывается при старте прокси, аналог <c>reset_tcp_backoff</c>).
+    /// </summary>
+    void ResetTcpBackoff();
 }

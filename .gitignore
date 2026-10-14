@@ -367,4 +367,10 @@ FodyWeavers.xsd
 **/.vs/
 *.vsidx
 DocumentLayout.json
+
+# Локальные материалы сверки с upstream (Python-эталон Flowseal/tg-ws-proxy).
+# Держим их на диске как источник для портирования, но не коммитим и не
+# отправляем в контекст сборки Docker.
+.upstream-reference/
+tg_ws_proxy.py
 DocumentLayout.backup.json
