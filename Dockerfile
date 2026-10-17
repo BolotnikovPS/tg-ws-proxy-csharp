@@ -34,5 +34,37 @@ RUN case "$TARGETARCH" in \
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
+
+# curl нужен только для HEALTHCHECK: в aspnet-образе его нет (F-6.5).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app/publish .
+
+# Скрипт лежит рядом с compose-файлами; контекст сборки — корень репозитория (F-6.5).
+COPY DockerCompose/docker/healthcheck.sh /usr/local/bin/healthcheck.sh
+RUN chmod +x /usr/local/bin/healthcheck.sh
+
+# Каталог конфигурации — том, доступный непривилегированному пользователю на запись (F-6.1, F-6.3).
+# Права важны: сохранение конфигурации из UI пишет временный файл рядом и переименовывает его.
+RUN mkdir -p /app/config && chown -R app:app /app/config
+
+# Путь к конфигурации читается приложением из TGWS_CONFIG, если не задан --config (F-6.1).
+ENV TGWS_CONFIG=/app/config/config.json \
+    DOTNET_NOLOGO=1 \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1
+
+VOLUME ["/app/config"]
+
+# 1443 — прокси, 8081 — Web API и информационная панель (F-6.4).
+EXPOSE 1443
+EXPOSE 8081
+
+# Непривилегированный пользователь из базового образа (F-6.3).
+USER $APP_UID
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["/usr/local/bin/healthcheck.sh"]
+
 ENTRYPOINT ["dotnet", "TgWsProxy.dll"]

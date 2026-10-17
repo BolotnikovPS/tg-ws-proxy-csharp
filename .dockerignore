@@ -8,6 +8,10 @@
 README.md
 LICENSE
 
+# Конфигурация не запекается в образ: она живёт в томе /app/config (F-6.2).
+config.json
+config/
+
 # Эталонные исходники upstream на Python: в образе не нужны.
 .upstream-reference
 tg_ws_proxy.py

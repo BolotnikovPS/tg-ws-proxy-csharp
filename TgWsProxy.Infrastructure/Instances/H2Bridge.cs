@@ -1,9 +1,10 @@
 #nullable enable
 
 using System.Buffers.Binary;
+using System.Net;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
-using TgWsProxy.Application.Logic.Helpers;
+using TgWsProxy.Infrastructure.Wire;
 using TgWsProxy.Domain.Exceptions;
 
 namespace TgWsProxy.Infrastructure.Instances;
@@ -13,7 +14,7 @@ namespace TgWsProxy.Infrastructure.Instances;
 /// (порт upstream <c>bridge_h2</c> из <c>proxy/cf_h2.py</c>): читает MTProto-пакеты
 /// из клиентского потока, отправляет их в канал и возвращает ответы обратно.
 /// </summary>
-internal sealed class H2Bridge(IProxyStats stats, ILogger<H2Bridge> logger)
+internal sealed class H2Bridge(IProxyStats stats, IPeerStatsRegistry peerStats, ILogger<H2Bridge> logger)
 {
     /// <summary>
     /// Гоняет трафик между клиентом и каналом, пока не завершится любая из сторон.
@@ -23,6 +24,8 @@ internal sealed class H2Bridge(IProxyStats stats, ILogger<H2Bridge> logger)
     /// <param name="crypto">Криптоконтекст сессии.</param>
     /// <param name="protoTag">4 байта proto tag текущей сессии.</param>
     /// <param name="scope">Метка сессии для логов.</param>
+    /// <param name="peer">Адрес клиента без порта для статистики по IP (может быть <see langword="null"/>).</param>
+    /// <param name="tokenId">Идентификатор токена доступа сессии (может быть <see langword="null"/>, F-9.2).</param>
     /// <param name="cancellationToken">Токен отмены.</param>
     public async Task BridgeAsync(
         Stream client,
@@ -30,13 +33,15 @@ internal sealed class H2Bridge(IProxyStats stats, ILogger<H2Bridge> logger)
         CryptoCtx crypto,
         byte[] protoTag,
         string scope,
+        IPAddress? peer,
+        string? tokenId,
         CancellationToken cancellationToken)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var token = linked.Token;
 
-        var upload = UploadAsync(client, channel, crypto, protoTag, token);
-        var download = DownloadAsync(client, channel, crypto, protoTag, token);
+        var upload = UploadAsync(client, channel, crypto, protoTag, peer, tokenId, token);
+        var download = DownloadAsync(client, channel, crypto, protoTag, peer, tokenId, token);
         var recover = channel.RecoverAsync(token);
 
         var completed = await Task.WhenAny(upload, download, recover).ConfigureAwait(false);
@@ -60,6 +65,7 @@ internal sealed class H2Bridge(IProxyStats stats, ILogger<H2Bridge> logger)
                 await WriteNativeAsync(client, crypto, H2PacketCodec.EncodeReply(code, protoTag), token)
                     .ConfigureAwait(false);
                 stats.AddBytesDown(code.Length);
+                peerStats.AddBytesDown(peer, tokenId, code.Length);
             }
             catch (NativeDeliveryException ex)
             {
@@ -77,6 +83,8 @@ internal sealed class H2Bridge(IProxyStats stats, ILogger<H2Bridge> logger)
         ICfH2Channel channel,
         CryptoCtx crypto,
         byte[] protoTag,
+        IPAddress? peer,
+        string? tokenId,
         CancellationToken cancellationToken)
     {
         while (true)
@@ -102,6 +110,8 @@ internal sealed class H2Bridge(IProxyStats stats, ILogger<H2Bridge> logger)
             }
 
             await channel.SendAsync(body, quick, cancellationToken).ConfigureAwait(false);
+            // Глобальный счётчик учитывается внутри канала; per-IP — здесь, где известен адрес клиента.
+            peerStats.AddBytesUp(peer, tokenId, body.Length);
         }
     }
 
@@ -110,6 +120,8 @@ internal sealed class H2Bridge(IProxyStats stats, ILogger<H2Bridge> logger)
         ICfH2Channel channel,
         CryptoCtx crypto,
         byte[] protoTag,
+        IPAddress? peer,
+        string? tokenId,
         CancellationToken cancellationToken)
     {
         while (true)
@@ -134,6 +146,7 @@ internal sealed class H2Bridge(IProxyStats stats, ILogger<H2Bridge> logger)
             }
 
             stats.AddBytesDown(body.Length);
+            peerStats.AddBytesDown(peer, tokenId, body.Length);
             channel.MarkProgress();
         }
     }

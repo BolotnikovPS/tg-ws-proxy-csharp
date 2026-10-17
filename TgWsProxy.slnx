@@ -6,10 +6,14 @@
     <File Path="README.md" />
   </Folder>
   <Folder Name="/Элементы решения/DockerCompose/">
+    <File Path="DockerCompose/config.docker.json" />
     <File Path="DockerCompose/docker-compose.dns.yml" />
     <File Path="DockerCompose/docker-compose.host.yml" />
     <File Path="DockerCompose/docker-compose.mtu.yml" />
     <File Path="DockerCompose/docker-compose.yml" />
+  </Folder>
+  <Folder Name="/Элементы решения/DockerCompose/docker/">
+    <File Path="DockerCompose/docker/healthcheck.sh" />
   </Folder>
   <Project Path="TgWsProxy.Application/TgWsProxy.Application.csproj" Id="3ca59396-74c6-439e-bc65-d1ba628fb457" />
   <Project Path="TgWsProxy.Domain/TgWsProxy.Domain.csproj" Id="a3c83dec-8069-4030-8077-d4059562615a" />

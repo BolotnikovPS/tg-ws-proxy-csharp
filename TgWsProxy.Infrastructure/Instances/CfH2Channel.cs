@@ -4,7 +4,7 @@ using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
-using TgWsProxy.Application.Logic.Helpers;
+using TgWsProxy.Infrastructure.Wire;
 using TgWsProxy.Domain.Exceptions;
 
 namespace TgWsProxy.Infrastructure.Instances;

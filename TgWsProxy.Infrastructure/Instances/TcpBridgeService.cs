@@ -6,7 +6,7 @@ using System.Net;
 using System.Net.Sockets;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Application.Logic.Helpers;
+using TgWsProxy.Infrastructure.Wire;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Exceptions;
 
@@ -20,6 +20,7 @@ internal sealed class TcpBridgeService(
     Config config,
     ILogger<TcpBridgeService> logger,
     IProxyStats stats,
+    IPeerStatsRegistry peerStats,
     IRawWebSocketFactory wsFactory,
     ICfWorkerPool cfWorkerPool,
     ICfDomainBalancer balancer,
@@ -52,6 +53,8 @@ internal sealed class TcpBridgeService(
         int dc,
         bool isMedia,
         MsgSplitter? splitter,
+        IPAddress? peer,
+        string? tokenId,
         CancellationToken cancellationToken)
     {
         var mediaTag = isMedia ? " media" : "";
@@ -82,6 +85,7 @@ internal sealed class TcpBridgeService(
                     }
 
                     stats.AddBytesUp(n);
+                    peerStats.AddBytesUp(peer, tokenId, n);
                     var parts = TransformUpstream(ctx, splitter, cipherBuf, plainBuf, n);
                     if (parts.Count == 0)
                     {
@@ -127,6 +131,7 @@ internal sealed class TcpBridgeService(
                     }
 
                     stats.AddBytesDown(data.Length);
+                    peerStats.AddBytesDown(peer, tokenId, data.Length);
                     // Расшифровка и повторное шифрование на месте в уже выделенном буфере кадра.
                     ctx.TgDecryptor.UpdateInPlace(data);
                     ctx.CltEncryptor.UpdateInPlace(data);
@@ -248,6 +253,8 @@ internal sealed class TcpBridgeService(
                             request.Crypto,
                             request.ProtoTag,
                             request.Scope,
+                            request.Peer,
+                            request.TokenId,
                             cancellationToken)
                         .ConfigureAwait(false);
                 }
@@ -334,7 +341,7 @@ internal sealed class TcpBridgeService(
             // upstream передаёт splitter=None для worker-маршрута.
             await BridgeWsReencrypt(
                 request.Client, ws, request.Scope, request.Crypto,
-                request.Dc, request.IsMedia, null, cancellationToken).ConfigureAwait(false);
+                request.Dc, request.IsMedia, null, request.Peer, request.TokenId, cancellationToken).ConfigureAwait(false);
             return true;
         }
         finally
@@ -395,7 +402,8 @@ internal sealed class TcpBridgeService(
             await ws.Send(request.RelayInit, cancellationToken).ConfigureAwait(false);
             await BridgeWsReencrypt(
                 request.Client, ws, request.Scope, request.Crypto,
-                request.Dc, request.IsMedia, request.Splitter, cancellationToken).ConfigureAwait(false);
+                request.Dc, request.IsMedia, request.Splitter, request.Peer, request.TokenId,
+                cancellationToken).ConfigureAwait(false);
             return true;
         }
         finally
@@ -468,7 +476,8 @@ internal sealed class TcpBridgeService(
             stats.IncConnectionsTcpFallback();
             await using var rs = new NetworkStream(remote, ownsSocket: true);
             await rs.WriteAsync(request.RelayInit, cancellationToken).ConfigureAwait(false);
-            await BridgeTcpReencryptAsync(request.Client, rs, request.Scope, request.Crypto, cancellationToken)
+            await BridgeTcpReencryptAsync(
+                request.Client, rs, request.Scope, request.Crypto, request.Peer, request.TokenId, cancellationToken)
                 .ConfigureAwait(false);
             return true;
         }
@@ -489,6 +498,8 @@ internal sealed class TcpBridgeService(
         NetworkStream remote,
         string scope,
         CryptoCtx ctx,
+        IPAddress? peer,
+        string? tokenId,
         CancellationToken cancellationToken)
     {
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -509,6 +520,7 @@ internal sealed class TcpBridgeService(
                     }
 
                     stats.AddBytesUp(n);
+                    peerStats.AddBytesUp(peer, tokenId, n);
                     // Порядок как в upstream: plain = clt_dec(chunk); chunk = tg_enc(plain).
                     // Оба преобразования — XOR keystream, поэтому идут без аллокаций.
                     ctx.CltDecryptor.UpdateInto(cipherBuf.AsSpan(0, n), plainBuf.AsSpan(0, n));
@@ -542,6 +554,7 @@ internal sealed class TcpBridgeService(
                     }
 
                     stats.AddBytesDown(n);
+                    peerStats.AddBytesDown(peer, tokenId, n);
                     ctx.TgDecryptor.UpdateInPlace(buf.AsSpan(0, n));
                     ctx.CltEncryptor.UpdateInPlace(buf.AsSpan(0, n));
                     await client.WriteAsync(buf.AsMemory(0, n), ct).ConfigureAwait(false);

@@ -1,0 +1,62 @@
+{
+  // Образец конфигурации для Docker Compose (копируется в ./config/config.json).
+  // Отличия от ../config.example.json: host и metricsHost слушают все интерфейсы —
+  // иначе проброшенные порты не доходят до приложения (F-6.4).
+  // Флаги в command: compose больше не передаёт (F-6.9), всё задаётся здесь
+  // или на странице панели.
+
+  "port": 1443,
+  "host": "0.0.0.0",
+
+  // Внешний адрес для ссылок t.me/proxy (F-8.8). В контейнере host служебный
+  // (0.0.0.0), поэтому без этого ключа ссылка не строится. Укажите домен или
+  // публичный IP хоста и опубликованный порт (TG_PORT, по умолчанию 1443):
+  // "proxy.example.com:1443". Меняется и на странице панели — применяется сразу.
+  "publicHost": "",
+  "dcIp": ["2:149.154.167.220", "4:149.154.167.220"],
+
+  // Пустой массив — при старте создаётся токен "default" (F-8.3).
+  // Дальше токены удобнее добавлять на странице панели.
+  "tokens": [],
+
+  "wsConnectTimeoutSeconds": 10,
+  "wsMaxFrameBytes": 16777216,
+  "socketBufferKb": 256,
+  "wsPoolSize": 4,
+
+  "maxConnections": 0,
+  "rateLimitPerIp": 0,
+  "rateLimitWindowSeconds": 60,
+  "allowIp": [],
+  "denyIp": [],
+
+  "metricsPort": 8081,
+  "metricsHost": "0.0.0.0",
+  // Порт панели опубликован наружу — задайте токен, иначе /api/* открыт всем.
+  "webApiToken": "",
+  "enableSwagger": true,
+
+  "enablePerIpStats": true,
+  "perIpStatsTtlSeconds": 1800,
+  "perIpStatsMaxPeers": 100000,
+  "prometheusTopPeers": 200,
+
+  "timeseriesWindowSeconds": 900,
+  "timeseriesStepSeconds": 5,
+
+  "verbose": false,
+  "logPath": "",
+  "logMaxMegabytes": 5,
+  "logRetainedFileCount": 1,
+
+  "cfProxyEnabled": true,
+  "cfProxyH2Media": true,
+  "cfProxyDomains": [],
+  "cfProxyWorkerDomains": [],
+
+  "disableSecure": false,
+  "fakeTlsDomain": "",
+  "proxyProtocol": false,
+  "forceTestDc": false,
+  "allowInvalidCertificates": false
+}

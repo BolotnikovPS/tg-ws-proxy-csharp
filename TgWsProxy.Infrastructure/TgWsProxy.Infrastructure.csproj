@@ -4,6 +4,10 @@
 		<InternalsVisibleTo Include="TgWsProxy.Test" />
 	</ItemGroup>
 
+	<ItemGroup>
+	  <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+	</ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\TgWsProxy.Application\TgWsProxy.Application.csproj" />
   </ItemGroup>
