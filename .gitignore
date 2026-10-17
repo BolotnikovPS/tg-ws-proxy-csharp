@@ -374,3 +374,9 @@ DocumentLayout.json
 .upstream-reference/
 tg_ws_proxy.py
 DocumentLayout.backup.json
+
+# Рабочая конфигурация с реальными токенами доступа: остаётся только на диске.
+# Образцы для репозитория — config.example.json и DockerCompose/config.docker.json.
+TgWsProxy/config.json
+TgWsProxy/config.*.json
+!TgWsProxy/config.example.json

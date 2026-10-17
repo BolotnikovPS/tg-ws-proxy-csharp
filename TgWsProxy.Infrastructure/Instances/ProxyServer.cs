@@ -1,3 +1,5 @@
+#nullable enable
+
 using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Sockets;
@@ -5,7 +7,7 @@ using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
-using TgWsProxy.Domain.Abstractions;
+using TgWsProxy.Infrastructure.Session;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -14,6 +16,10 @@ internal sealed class ProxyServer(
     Dictionary<int, string> dcOpt,
     IClientSessionHandler sessionHandler,
     PeerAccessControl accessControl,
+    ConnectionLimiter connectionLimiter,
+    PeerRateLimiter peerRateLimiter,
+    IPeerStatsRegistry peerStats,
+    IActiveSessionRegistry activeSessions,
     IProxyStats stats,
     ILogger<ProxyServer> logger) : IProxyServer
 {
@@ -23,38 +29,122 @@ internal sealed class ProxyServer(
     /// <summary>Пауза перед пересозданием слушателя (порт upstream <c>LISTENER_RESTART_DELAY</c>).</summary>
     private const int ListenerRestartDelayMs = 1000;
 
+    /// <summary>Синхронизация запросов перепривязки (F-7.6: одновременно не более одного).</summary>
+    private readonly object _rebindSync = new();
+
     private long _connectionSeq;
+
+    /// <summary>
+    /// Взводится, пока слушающий сокет открыт и цикл приёма работает; читается /healthz
+    /// без блокировок, поэтому достаточно <c>volatile</c>.
+    /// </summary>
+    private volatile bool _listening;
+
+    /// <summary>Адрес, на который нужно перепривязаться после остановки приёма.</summary>
+    private IPEndPoint? _requestedEndpoint;
+
+    /// <summary>Запрос перепривязки взведён и ещё не обработан циклом.</summary>
+    private bool _rebindPending;
+
+    /// <summary>Сигнал о результате привязки нового адреса (значение — <see cref="SocketException"/>).</summary>
+    private TaskCompletionSource<object?>? _rebindSignal;
+
+    /// <summary>Токен текущей генерации цикла приёма: отменяется при перепривязке.</summary>
+    private CancellationTokenSource? _acceptCts;
+
+    /// <summary>Завершается, когда текущая генерация цикла приёма фактически остановлена.</summary>
+    private TaskCompletionSource<bool>? _acceptExited;
+
+    public bool IsListening => _listening;
 
     public async Task Run(CancellationToken cancellationToken)
     {
         await LogLinks();
 
-        var ipEndPoint = new IPEndPoint(IPAddress.Parse(cfg.Host), cfg.Port);
+        var endpoint = new IPEndPoint(IPAddress.Parse(cfg.Host), cfg.Port);
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            bool rebindPending;
+            IPEndPoint? requested;
+            lock (_rebindSync)
+            {
+                rebindPending = _rebindPending;
+                requested = _requestedEndpoint;
+            }
+
+            // Пока привязка не подтверждена, работаем на прежнем адресе: откат не требует
+            // отдельной ветки — достаточно не фиксировать новый endpoint.
+            var bindTarget = rebindPending && requested is not null ? requested : endpoint;
+
             Socket listener;
             try
             {
-                listener = CreateListener(ipEndPoint);
+                listener = CreateListener(bindTarget);
             }
             catch (SocketException ex)
             {
-                logger.LogError(ex, "Failed to restart server");
+                _listening = false;
+
+                if (rebindPending)
+                {
+                    // Новый адрес занят: сообщаем контроллеру, продолжаем на прежней привязке.
+                    CompleteRebind(ex);
+                    try
+                    {
+                        await Task.Delay(ListenerRestartDelayMs, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+
+                    continue;
+                }
+
+                logger.LogError(ex, "Failed to bind listener on {Endpoint}", bindTarget);
                 return;
             }
 
-            bool restart;
+            if (rebindPending)
+            {
+                endpoint = bindTarget;
+                CompleteRebind(null);
+                logger.LogInformation("Listener bound to {Endpoint}", bindTarget);
+            }
+
+            using var acceptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var exited = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _acceptCts = acceptCts;
+            _acceptExited = exited;
+
+            bool died;
             try
             {
-                restart = await AcceptLoop(listener, cancellationToken);
+                _listening = true;
+                died = await AcceptLoop(listener, acceptCts.Token);
             }
             finally
             {
+                _listening = false;
+                _acceptCts = null;
+                _acceptExited = null;
                 listener.Dispose();
+                exited.TrySetResult(true);
             }
 
-            if (!restart)
+            // Перепривязка запрошена во время работы: цикл не завершается, а идёт на новый адрес.
+            lock (_rebindSync)
+            {
+                rebindPending = _rebindPending;
+            }
+
+            if (rebindPending)
+            {
+                continue;
+            }
+
+            if (!died)
             {
                 return;
             }
@@ -68,6 +158,94 @@ internal sealed class ProxyServer(
             {
                 return;
             }
+        }
+    }
+
+    public async Task RebindAsync(
+        IPEndPoint endpoint,
+        Func<CancellationToken, Task>? betweenStopAndBind,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+
+        var acceptCts = _acceptCts;
+        var exited = _acceptExited;
+        if (acceptCts is null || exited is null)
+        {
+            throw new InvalidOperationException("The listener is not running.");
+        }
+
+        TaskCompletionSource<object?> signal;
+        lock (_rebindSync)
+        {
+            if (_rebindPending)
+            {
+                throw new InvalidOperationException("A listener rebind is already pending.");
+            }
+
+            signal = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _rebindSignal = signal;
+            _requestedEndpoint = endpoint;
+            _rebindPending = true;
+        }
+
+        try
+        {
+            // (2) Останавливаем accept-loop и watchdog и ждём фактического выхода.
+            try
+            {
+                acceptCts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Генерация уже завершилась сама.
+            }
+
+            await exited.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+            // (3)-(4) Контроллер останавливает пулы и разрывает активные сессии.
+            if (betweenStopAndBind is not null)
+            {
+                await betweenStopAndBind(cancellationToken).ConfigureAwait(false);
+            }
+
+            // (5) Ждём результата привязки нового адреса.
+            await signal.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Привязка не состоялась или операция прервана: снимаем запрос, чтобы цикл
+            // остался на прежнем адресе и не перепривязался «втихую» позже.
+            lock (_rebindSync)
+            {
+                _rebindPending = false;
+                _requestedEndpoint = null;
+                _rebindSignal = null;
+            }
+
+            throw;
+        }
+    }
+
+    /// <summary>Сообщает ожидающему результат привязки и снимает флаг перепривязки.</summary>
+    private void CompleteRebind(SocketException? error)
+    {
+        TaskCompletionSource<object?>? signal;
+        lock (_rebindSync)
+        {
+            _rebindPending = false;
+            _requestedEndpoint = null;
+            signal = _rebindSignal;
+            _rebindSignal = null;
+        }
+
+        if (error is null)
+        {
+            signal?.TrySetResult(null);
+        }
+        else
+        {
+            signal?.TrySetException(error);
         }
     }
 
@@ -152,20 +330,105 @@ internal sealed class ProxyServer(
                 var connectionId = Interlocked.Increment(ref _connectionSeq).ToString("D6");
                 var peer = client.RemoteEndPoint?.ToString() ?? "?";
                 var scope = $"{peer}|{connectionId}";
-                var context = new ClientContext(scope, peer, connectionId);
+
+                // Адрес пира без порта — ключ учёта статистики по IP (нормализуется в реестре).
+                var peerAddress = (client.RemoteEndPoint as IPEndPoint)?.Address;
+                var context = new ClientContext(scope, peer, connectionId, peerAddress);
 
                 // ACL проверяется до рукопожатия по реальному IP пира (PROXY protocol не подделывает адрес).
                 if (client.RemoteEndPoint is IPEndPoint remote && !accessControl.IsAllowed(remote.Address))
                 {
                     stats.IncConnectionsTotal();
                     stats.IncConnectionsBlocked();
+                    peerStats.RecordBlocked(remote.Address);
                     logger.LogWarning("[{Scope}] connection rejected by IP ACL", scope);
                     client.Dispose();
                     continue;
                 }
 
+                // Ограничители тоже работают до рукопожатия: отклонённые соединения не тратят
+                // время на чтение init и не занимают слот активной сессии.
+                var slotAcquired = false;
+                if (client.RemoteEndPoint is IPEndPoint limitedPeer)
+                {
+                    if (connectionLimiter.IsEnabled)
+                    {
+                        if (!connectionLimiter.TryAcquire())
+                        {
+                            stats.IncConnectionsTotal();
+                            stats.IncConnectionsLimited();
+                            peerStats.RecordLimited(limitedPeer.Address);
+                            logger.LogWarning(
+                                "[{Scope}] connection rejected by max-connections limit ({Active}/{Limit})",
+                                scope,
+                                connectionLimiter.Active,
+                                connectionLimiter.Limit);
+                            client.Dispose();
+                            continue;
+                        }
+
+                        slotAcquired = true;
+                    }
+
+                    if (peerRateLimiter.IsEnabled && !peerRateLimiter.TryAcquire(limitedPeer.Address))
+                    {
+                        stats.IncConnectionsTotal();
+                        stats.IncConnectionsRateLimited();
+                        peerStats.RecordRateLimited(limitedPeer.Address);
+                        if (slotAcquired)
+                        {
+                            connectionLimiter.Release();
+                            slotAcquired = false;
+                        }
+
+                        logger.LogWarning(
+                            "[{Scope}] connection rejected by per-IP rate limit ({Limit}/{Window}s)",
+                            scope,
+                            peerRateLimiter.Limit,
+                            peerRateLimiter.WindowSeconds);
+                        client.Dispose();
+                        continue;
+                    }
+                }
+
+                var slotHeld = slotAcquired;
+
+                // Учёт per-IP открывается только для принятой сессии и закрывается в её finally,
+                // чтобы active-счётчик не «протекал» на отклонённых соединениях.
+                if (peerAddress is { } acceptedPeer)
+                {
+                    peerStats.ConnectionOpened(acceptedPeer);
+                }
+
+                // F-7.4: сессия попадает в реестр живых сессий, чтобы перезапуск слушателя
+                // и отзыв токена могли её разорвать и посчитать.
+                var lease = activeSessions.Register(client, scope);
+
                 BackgroundTaskRunner.RunDetachedSafe(
-                    async ct => await sessionHandler.Handle(client, context, ct),
+                    async ct =>
+                    {
+                        try
+                        {
+                            await sessionHandler.Handle(client, context, lease, ct);
+                        }
+                        finally
+                        {
+                            // F-9.1: сессия закрывается в той же паре (IP, токен), в которой
+                            // её учёл BindToken после успешного handshake.
+                            var boundTokenId = lease.TokenId;
+                            lease.Dispose();
+
+                            if (peerAddress is { } closedPeer)
+                            {
+                                peerStats.ConnectionClosed(closedPeer, boundTokenId);
+                            }
+
+                            if (slotHeld)
+                            {
+                                connectionLimiter.Release();
+                            }
+                        }
+                    },
                     logger,
                     $"[{scope}] client session",
                     cancellationToken);
@@ -236,25 +499,38 @@ internal sealed class ProxyServer(
 
     /// <summary>
     /// Пишет в лог параметры запуска и готовые ссылки подключения для Telegram
-    /// (порт upstream блока логирования в <c>_run</c>).
+    /// (порт upstream блока логирования в <c>_run</c>). Ссылки печатаются для каждого
+    /// включённого токена (F-8.7), сам секрет в лог не попадает — только маска (N-8).
     /// </summary>
-    private Task LogLinks()
+    internal Task LogLinks()
     {
         var linkHost = GetLinkHost(cfg.Host);
         var ftls = cfg.FakeTlsDomain;
-
-        var ddLink = $"tg://proxy?server={linkHost}&port={cfg.Port}&secret=dd{cfg.Secret}";
-        var eeLink = "";
+        var domainHex = "";
         if (!string.IsNullOrWhiteSpace(ftls))
         {
-            var domainHex = Convert.ToHexString(System.Text.Encoding.ASCII.GetBytes(ftls)).ToLowerInvariant();
-            eeLink = $"tg://proxy?server={linkHost}&port={cfg.Port}&secret=ee{cfg.Secret}{domainHex}";
+            domainHex = Convert.ToHexString(System.Text.Encoding.ASCII.GetBytes(ftls)).ToLowerInvariant();
         }
 
         logger.LogInformation("{Sep}", new string('=', 60));
         logger.LogInformation("  Telegram MTProto WS Bridge Proxy");
         logger.LogInformation("  Listening on   {Host}:{Port}", cfg.Host, cfg.Port);
-        logger.LogInformation("  Secret:        {Secret}", cfg.Secret);
+
+        var enabled = cfg.Tokens.Where(static t => t.Enabled).ToList();
+        logger.LogInformation("  Tokens:        {Enabled} enabled of {Total}", enabled.Count, cfg.Tokens.Count);
+
+        foreach (var token in enabled)
+        {
+            var ddLink = $"tg://proxy?server={linkHost}&port={cfg.Port}&secret=dd{token.Secret}";
+            logger.LogInformation("  [{Name}] secret={Masked}", token.Name, SecretMask.Mask(token.Secret));
+            logger.LogInformation("  [{Name}] dd: {Link}", token.Name, ddLink);
+            if (domainHex.Length > 0)
+            {
+                var eeLink = $"tg://proxy?server={linkHost}&port={cfg.Port}&secret=ee{token.Secret}{domainHex}";
+                logger.LogInformation("  [{Name}] ee: {Link}", token.Name, eeLink);
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(ftls))
         {
             logger.LogInformation("  Fake TLS:      {FakeTls}", ftls);
@@ -287,9 +563,22 @@ internal sealed class ProxyServer(
             logger.LogInformation("  No secure:     enabled (port 80 for CF proxy/worker)");
         }
 
+        if (connectionLimiter.IsEnabled)
+        {
+            logger.LogInformation("  Max conns:     {Limit}", connectionLimiter.Limit);
+        }
+
+        if (peerRateLimiter.IsEnabled)
+        {
+            logger.LogInformation("  Rate limit:    {Limit} per {Window}s per IP", peerRateLimiter.Limit, peerRateLimiter.WindowSeconds);
+        }
+
         logger.LogInformation("{Sep}", new string('=', 60));
-        logger.LogInformation("  Connect:");
-        logger.LogInformation("    {Link}", string.IsNullOrWhiteSpace(ftls) ? ddLink : eeLink);
+        logger.LogInformation(
+            "  Connect:       {Hint}",
+            enabled.Count == 0
+                ? "no enabled tokens - handshake is impossible until a token is added"
+                : $"use the link of the token issued to the device ({enabled.Count} available)");
         logger.LogInformation("{Sep}", new string('=', 60));
 
         return Task.CompletedTask;

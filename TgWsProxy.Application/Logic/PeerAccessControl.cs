@@ -11,14 +11,29 @@ namespace TgWsProxy.Application.Logic;
 /// </summary>
 public sealed class PeerAccessControl(Config config)
 {
-    private readonly IPNetwork[] _allow = ParseAll(config.AllowIp);
-    private readonly IPNetwork[] _deny = ParseAll(config.DenyIp);
+    private volatile IPNetwork[] _allow = ParseAll(config.AllowIp);
+    private volatile IPNetwork[] _deny = ParseAll(config.DenyIp);
 
     /// <summary>Число записей в allow-списке.</summary>
     public int AllowCount => _allow.Length;
 
     /// <summary>Число записей в deny-списке.</summary>
     public int DenyCount => _deny.Length;
+
+    /// <summary>
+    /// Пересобирает списки доступа на лету (F-2.11: <c>allowIp</c> и <c>denyIp</c>
+    /// применяются без рестарта). Уже принятые сессии не затрагиваются.
+    /// </summary>
+    /// <param name="allowIp">Новый allow-список.</param>
+    /// <param name="denyIp">Новый deny-список.</param>
+    public void Update(IEnumerable<string> allowIp, IEnumerable<string> denyIp)
+    {
+        ArgumentNullException.ThrowIfNull(allowIp);
+        ArgumentNullException.ThrowIfNull(denyIp);
+
+        _allow = ParseAll(allowIp);
+        _deny = ParseAll(denyIp);
+    }
 
     /// <summary>Разбирает одиночную запись вида IP или CIDR (например <c>192.168.1.5</c> или <c>10.0.0.0/8</c>).</summary>
     public static bool TryParseEntry(string entry, out IPNetwork network)

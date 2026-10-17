@@ -2,9 +2,9 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Application.Logic.FakeTls;
-using TgWsProxy.Application.Logic.Models;
 using TgWsProxy.Domain;
+using TgWsProxy.Infrastructure.FakeTls;
+using TgWsProxy.Infrastructure.MtProto;
 
 namespace TgWsProxy.Test;
 
@@ -296,7 +296,22 @@ public class FakeTlsTests
         Assert.Equal(payload, buffer);
     }
 
-    private static ClientInitReader CreateReader(Config config) => new(config, NullLogger<ClientInitReader>.Instance);
+    /// <summary>
+    /// Создаёт читатель init с одним тестовым токеном: с редакции 3 Fake TLS проверяет
+    /// ClientHello по секретам списка токенов, а не по единственному секрету (F-8.4).
+    /// </summary>
+    private static ClientInitReader CreateReader(Config config)
+    {
+        config.Tokens.Add(new ProxyToken
+        {
+            Id = "test",
+            Name = "test",
+            Secret = Convert.ToHexString(Secret).ToLowerInvariant(),
+            Enabled = true,
+        });
+
+        return new(config, new ProxyTokenRegistry(config), NullLogger<ClientInitReader>.Instance);
+    }
 
     [Fact]
     public async Task ReadAsync_ReturnsPlainInit_WhenNoMaskingConfigured()
@@ -306,7 +321,7 @@ public class FakeTlsTests
         Random.Shared.NextBytes(init);
         var stream = new MemoryStream(init);
 
-        var result = await CreateReader(config).ReadAsync(stream, "1.2.3.4:5", Secret, CancellationToken.None);
+        var result = await CreateReader(config).ReadAsync(stream, "1.2.3.4:5", CancellationToken.None);
 
         Assert.Equal(ClientInitStatus.Ok, result.Status);
         Assert.Equal(init, result.Init);
@@ -319,7 +334,7 @@ public class FakeTlsTests
         var config = new Config();
         var stream = new MemoryStream([]);
 
-        var result = await CreateReader(config).ReadAsync(stream, "scope", Secret, CancellationToken.None);
+        var result = await CreateReader(config).ReadAsync(stream, "scope", CancellationToken.None);
 
         Assert.Equal(ClientInitStatus.Closed, result.Status);
     }
@@ -330,7 +345,7 @@ public class FakeTlsTests
         var config = new Config { FakeTlsDomain = "example.com" };
         var stream = new MemoryStream([0x05, 0x01, 0x02, 0x03]);
 
-        var result = await CreateReader(config).ReadAsync(stream, "scope", Secret, CancellationToken.None);
+        var result = await CreateReader(config).ReadAsync(stream, "scope", CancellationToken.None);
 
         Assert.Equal(ClientInitStatus.HttpRedirect, result.Status);
         Assert.Equal(new byte[] { 0x05 }, result.FirstBytes);
@@ -345,7 +360,7 @@ public class FakeTlsTests
         clientHello[20] ^= 0xFF;
         var stream = new MemoryStream(clientHello);
 
-        var result = await CreateReader(config).ReadAsync(stream, "scope", Secret, CancellationToken.None);
+        var result = await CreateReader(config).ReadAsync(stream, "scope", CancellationToken.None);
 
         Assert.Equal(ClientInitStatus.Masking, result.Status);
         Assert.Equal(clientHello, result.FirstBytes);
@@ -365,7 +380,7 @@ public class FakeTlsTests
         // Дуплексный поток: ответный ServerHello не должен перезаписывать уже отправленные клиентом данные.
         var stream = new DuplexStream(incoming.ToArray());
 
-        var result = await CreateReader(config).ReadAsync(stream, "scope", Secret, CancellationToken.None);
+        var result = await CreateReader(config).ReadAsync(stream, "scope", CancellationToken.None);
 
         Assert.Equal(ClientInitStatus.Ok, result.Status);
         Assert.Equal(init, result.Init);
@@ -387,7 +402,7 @@ public class FakeTlsTests
         await stream.WriteAsync(init);
         stream.Position = 0;
 
-        var result = await CreateReader(config).ReadAsync(stream, "raw-scope", Secret, CancellationToken.None);
+        var result = await CreateReader(config).ReadAsync(stream, "raw-scope", CancellationToken.None);
 
         Assert.Equal(ClientInitStatus.Ok, result.Status);
         Assert.Equal("203.0.113.7:51234", result.Label);
@@ -406,7 +421,7 @@ public class FakeTlsTests
         await stream.WriteAsync(init);
         stream.Position = 0;
 
-        var result = await CreateReader(config).ReadAsync(stream, "raw-scope", Secret, CancellationToken.None);
+        var result = await CreateReader(config).ReadAsync(stream, "raw-scope", CancellationToken.None);
 
         Assert.Equal(ClientInitStatus.Ok, result.Status);
         Assert.Equal("raw-scope", result.Label);

@@ -3,15 +3,24 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.13" />
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageVersion Include="Serilog.Extensions.Hosting" Version="10.0.0" />
     <PackageVersion Include="Serilog.Extensions.Logging.File" Version="3.0.0" />
     <PackageVersion Include="Serilog.Sinks.File" Version="7.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.5" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.5" />
-    <PackageVersion Include="coverlet.collector" Version="8.0.1" />
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.3.0" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.13" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.13" />
+    <PackageVersion Include="coverlet.collector" Version="10.1.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
-    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
+    <!-- F-3.1: /metrics отдаётся prometheus-net, рукописный PrometheusFormatter удалён. -->
+    <PackageVersion Include="prometheus-net.AspNetCore" Version="8.2.1" />
+    <!-- F-3.10: публикация результатов health checks в метрики prometheus. -->
+    <PackageVersion Include="prometheus-net.AspNetCore.HealthChecks" Version="8.2.1" />
+    <!-- F-3.9: формат ответа /healthz/ready (UIResponseWriter). -->
+    <PackageVersion Include="AspNetCore.HealthChecks.UI.Client" Version="9.0.0" />
+    <!-- F-1.11: Swagger UI и документ OpenAPI. -->
+    <PackageVersion Include="Swashbuckle.AspNetCore" Version="10.3.0" />
   </ItemGroup>
 </Project>

@@ -1,3 +1,5 @@
+using TgWsProxy.Domain;
+
 namespace TgWsProxy.Application.Abstractions;
 
 /// <summary>
@@ -76,6 +78,16 @@ public interface IProxyStats
     void IncConnectionsMasked();
 
     /// <summary>
+    /// Увеличивает счётчик подключений, отклонённых из-за превышения лимита --max-connections.
+    /// </summary>
+    void IncConnectionsLimited();
+
+    /// <summary>
+    /// Увеличивает счётчик подключений, отклонённых ограничителем частоты --rate-limit.
+    /// </summary>
+    void IncConnectionsRateLimited();
+
+    /// <summary>
     /// Увеличивает счетчик ошибок WebSocket.
     /// </summary>
     void IncWsErrors();
@@ -116,4 +128,10 @@ public interface IProxyStats
     /// Возвращает человекочитаемое сводное состояние счетчиков.
     /// </summary>
     string Summary();
+
+    /// <summary>
+    /// Снимает согласованный числовой снимок счётчиков для выдачи в систему мониторинга.
+    /// Расширение порта, в upstream отсутствует.
+    /// </summary>
+    StatsSnapshot Snapshot();
 }

@@ -6,9 +6,9 @@ using System.Buffers.Binary;
 using System.Net.Sockets;
 using System.Runtime.Intrinsics;
 using System.Security.Cryptography;
-using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain.Exceptions;
+using TgWsProxy.Infrastructure.IO;
 
 namespace TgWsProxy.Infrastructure.Instances;
 

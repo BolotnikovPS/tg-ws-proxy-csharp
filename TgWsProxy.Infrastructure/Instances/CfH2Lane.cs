@@ -9,7 +9,7 @@ using System.Security.Authentication;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Application.Logic.Helpers;
+using TgWsProxy.Infrastructure.Wire;
 using TgWsProxy.Domain.Exceptions;
 
 namespace TgWsProxy.Infrastructure.Instances;

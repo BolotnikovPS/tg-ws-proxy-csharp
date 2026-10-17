@@ -1,5 +1,6 @@
 using System.Globalization;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Application.Logic;
 
@@ -18,6 +19,8 @@ internal sealed class ProxyStats : IProxyStats
     private long connectionsBad;
     private long connectionsBlocked;
     private long connectionsMasked;
+    private long connectionsLimited;
+    private long connectionsRateLimited;
     private long wsErrors;
     private long bytesUp;
     private long bytesDown;
@@ -53,6 +56,10 @@ internal sealed class ProxyStats : IProxyStats
     public void IncConnectionsBlocked() => Interlocked.Increment(ref connectionsBlocked);
 
     public void IncConnectionsMasked() => Interlocked.Increment(ref connectionsMasked);
+
+    public void IncConnectionsLimited() => Interlocked.Increment(ref connectionsLimited);
+
+    public void IncConnectionsRateLimited() => Interlocked.Increment(ref connectionsRateLimited);
 
     public void IncWsErrors() => Interlocked.Increment(ref wsErrors);
 
@@ -92,12 +99,40 @@ internal sealed class ProxyStats : IProxyStats
                $"bad={Interlocked.Read(ref connectionsBad)} " +
                $"blocked={Interlocked.Read(ref connectionsBlocked)} " +
                $"masked={Interlocked.Read(ref connectionsMasked)} " +
+               $"limited={Interlocked.Read(ref connectionsLimited)} " +
+               $"rate_limited={Interlocked.Read(ref connectionsRateLimited)} " +
                $"err={Interlocked.Read(ref wsErrors)} " +
                $"pool={pool} " +
                $"cf_pool={cfPool} " +
                $"up={HumanBytes(Interlocked.Read(ref bytesUp))} " +
                $"down={HumanBytes(Interlocked.Read(ref bytesDown))}";
     }
+
+    public StatsSnapshot Snapshot() => new()
+    {
+        ConnectionsTotal = Interlocked.Read(ref connectionsTotal),
+        ConnectionsActive = Interlocked.Read(ref connectionsActive),
+        ConnectionsWs = Interlocked.Read(ref connectionsWs),
+        ConnectionsH2 = Interlocked.Read(ref connectionsH2),
+        H2TcpConnections = Interlocked.Read(ref h2TcpConnections),
+        H2Requests = Interlocked.Read(ref h2Requests),
+        H2Errors = Interlocked.Read(ref h2Errors),
+        ConnectionsTcpFallback = Interlocked.Read(ref connectionsTcpFallback),
+        ConnectionsCfProxy = Interlocked.Read(ref connectionsCfProxy),
+        ConnectionsFronting = Interlocked.Read(ref connectionsFronting),
+        ConnectionsBad = Interlocked.Read(ref connectionsBad),
+        ConnectionsBlocked = Interlocked.Read(ref connectionsBlocked),
+        ConnectionsMasked = Interlocked.Read(ref connectionsMasked),
+        ConnectionsLimited = Interlocked.Read(ref connectionsLimited),
+        ConnectionsRateLimited = Interlocked.Read(ref connectionsRateLimited),
+        WsErrors = Interlocked.Read(ref wsErrors),
+        BytesUp = Interlocked.Read(ref bytesUp),
+        BytesDown = Interlocked.Read(ref bytesDown),
+        PoolHits = Interlocked.Read(ref poolHits),
+        PoolMisses = Interlocked.Read(ref poolMisses),
+        CfPoolHits = Interlocked.Read(ref cfPoolHits),
+        CfPoolMisses = Interlocked.Read(ref cfPoolMisses),
+    };
 
     /// <summary>
     /// Приводит число байт к человекочитаемому виду (аналог upstream human_bytes).

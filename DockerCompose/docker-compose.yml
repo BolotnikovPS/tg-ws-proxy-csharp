@@ -1,51 +1,45 @@
 # Образ с Docker Hub: https://hub.docker.com/r/pboldev/tg-ws-proxy
 
-# TG_PORT — порт локального MTProto-сервера (по умолчанию 1443, как в upstream).
+# Конфигурация хранится в файле на хосте и переживает пересоздание контейнера (F-6.6, F-6.8).
+# Каталог ./config монтируется в /app/config; путь к файлу приложение берёт из TGWS_CONFIG.
+#
+# Подготовка каталога (UID 1654 — непривилегированный пользователь app в образе):
+#   mkdir -p config
+#   cp ../DockerCompose/config.docker.json config/config.json
+#   sudo chown -R 1654:1654 config
+#
+# Единственный источник настроек — config.json (F-6.9): флаги в command: не передаются,
+# правки делаются на странице панели или в самом файле. В контейнере host и metricsHost
+# должны быть "0.0.0.0", иначе прокси и панель недоступны извне (F-6.4) —
+# готовый образец лежит в DockerCompose/config.docker.json.
+#
+# TG_PORT — порт публикации локального MTProto-сервера (по умолчанию 1443, как в upstream).
+# TG_METRICS_PORT — порт публикации Web API и панели (по умолчанию 8081).
+# Порты внутри контейнера задаёт config.json ("port", "metricsPort"); при их изменении
+# поправьте правую часть в ports:.
 # При проблемах только в Docker см. README и оверлеи:
 #   docker-compose.mtu.yml | docker-compose.dns.yml | docker-compose.host.yml (Linux)
 
 services:
   tg-ws-proxy:
     container_name: tg-ws-proxy
-    image: pboldev/tg-ws-proxy:2.4
+    image: pboldev/tg-ws-proxy:3.0.0
     restart: unless-stopped
     ports:
-      - "${TG_PORT:-1443}:${TG_PORT:-1443}"
-    command:
-      - "--host"
-      - "${TG_HOST:-0.0.0.0}"
-      - "--port"
-      - "${TG_PORT:-1443}"
-      - "--dc-ip"
-      - "${TG_DC_IP_1:-2:149.154.167.220}"
-      - "--dc-ip"
-      - "${TG_DC_IP_2:-4:149.154.167.220}"
-      # Управление доступом по IP (несколько IP/подсетей через запятую; пусто — пускаем всех):
-      - "--allow-ip"
-      - "${TG_ALLOW_IP:-}"
-      # Блокировка по IP/подсети (deny приоритетнее allow; пусто — никого не блокируем):
-      - "--deny-ip"
-      - "${TG_DENY_IP:-}"
-      # Чтобы включить логирование в файл с ротацией:
-      # - "--log-file"
-      # - "/var/log/tg-ws-proxy/proxy.log"
-      #
-      # Подробный лог:
-      # - "--verbose"
-      #
-      # Свой MTProto-секрет (ровно 32 hex-символа); без него секрет генерируется при старте:
-      # - "--secret"
-      # - "f43b08aef31a50b7b92c17f07bb66b11"
-      #
-      # Свои Cloudflare-домены (можно несколько раз) и Worker-домены:
-      # - "--cfproxy-domain"
-      # - "example.com"
-      # - "--cfproxy-worker-domain"
-      # - "worker.example.workers.dev"
-      #
-      # Fake TLS (ee-secret) маскировка под указанный домен:
-      # - "--fake-tls-domain"
-      # - "www.microsoft.com"
-      #
-      # Отключить HTTP/2 мультиплексирование media через Cloudflare:
-      # - "--no-h2"
+      - "${TG_PORT:-1443}:1443"
+      # Web API и информационная панель. Публикуйте только вместе с webApiToken,
+      # иначе любой, кто дотянется до порта, сможет читать метрики и менять конфиг.
+      - "${TG_METRICS_PORT:-8081}:8081"
+    environment:
+      TGWS_CONFIG: /app/config/config.json
+    volumes:
+      # Bind-mount: файл конфигурации лежит на хосте и переживает down/up.
+      - ./config:/app/config
+      # Альтернатива — именованный том (раскомментируйте и уберите строку выше,
+      # если не нужен доступ к файлу с хоста):
+      # - tg-ws-proxy-config:/app/config
+    # HEALTHCHECK образа сам обращается к /healthz/ready на порту metricsPort (F-6.5),
+    # поэтому дополнительных переменных не требуется.
+
+# volumes:
+#   tg-ws-proxy-config:

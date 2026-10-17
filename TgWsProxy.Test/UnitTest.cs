@@ -1,23 +1,25 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Application.Logic.Helpers;
+using TgWsProxy.Infrastructure.Wire;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.Instances;
+using TgWsProxy.Infrastructure.MtProto;
 
 namespace TgWsProxy.Test;
 
 /// <summary>
-/// Тесты CLI/конфигурации, MTProto handshake, статистики и разборщика пакетов.
-/// Ожидаемые значения соответствуют upstream Flowseal/tg-ws-proxy v1.11.2.
+/// Тесты bootstrap-аргументов, умолчаний конфигурации, MTProto handshake, статистики
+/// и разборщика пакетов. Ожидаемые значения соответствуют upstream Flowseal/tg-ws-proxy v1.11.2.
 /// </summary>
 public class UnitTest
 {
     [Fact]
-    public void CliParser_Uses_Upstream_Defaults()
+    public void Config_Defaults_Match_Upstream_Values()
     {
-        var cfg = CliParser.Parse([]);
+        var cfg = new Config();
+        ConfigDefaults.Apply(cfg);
 
         Assert.Equal(1443, cfg.Port);
         Assert.Equal("127.0.0.1", cfg.Host);
@@ -27,165 +29,158 @@ public class UnitTest
         Assert.Equal(256, cfg.SocketBufferKb);
         Assert.True(cfg.CfProxyEnabled);
         Assert.True(cfg.CfProxyH2Media);
-        Assert.Equal(CliParser.DefaultDcIp, cfg.DcIp);
+        Assert.Equal(ConfigDefaults.DefaultDcIp, cfg.DcIp);
     }
 
     [Fact]
-    public void CliParser_Parses_Host_Port_And_Flags()
+    public void ConfigDefaults_Apply_Replaces_Existing_DcList()
     {
-        var cfg = CliParser.Parse([
-            "--host", "0.0.0.0",
-            "--port", "1081",
-            "--dc-ip", "2:149.154.167.220",
-            "--verbose"
-        ]);
+        // Повторное применение не должно накапливать записи: список перезаписывается целиком.
+        var cfg = new Config();
+        ConfigDefaults.Apply(cfg);
+        ConfigDefaults.Apply(cfg);
 
-        Assert.Equal("0.0.0.0", cfg.Host);
-        Assert.Equal(1081, cfg.Port);
-        Assert.True(cfg.Verbose);
-        Assert.Equal(["2:149.154.167.220"], cfg.DcIp);
+        Assert.Equal(ConfigDefaults.DefaultDcIp, cfg.DcIp);
     }
 
     [Fact]
-    public void CliParser_Bare_DcIp_Clears_List()
+    public void ConfigDefaults_ParseDcIpList_Builds_Map()
     {
-        var cfg = CliParser.Parse(["--dc-ip"]);
+        var map = ConfigDefaults.ParseDcIpList(["2:149.154.167.220", "4:149.154.167.220"]);
 
-        Assert.Empty(cfg.DcIp);
+        Assert.Equal("149.154.167.220", map[2]);
+        Assert.Equal("149.154.167.220", map[4]);
     }
 
     [Fact]
-    public void CliParser_Parses_AllowAndDenyIp()
+    public void ConfigDefaults_ParseDcIpList_Rejects_Malformed_Entry()
     {
-        var cfg = CliParser.Parse([
-            "--allow-ip", "10.0.0.0/8,192.168.1.5",
-            "--deny-ip", "10.255.255.255",
-            "--deny-ip", "10.0.0.1"
-        ]);
-
-        Assert.Equal(["10.0.0.0/8", "192.168.1.5"], cfg.AllowIp);
-        Assert.Equal(["10.255.255.255", "10.0.0.1"], cfg.DenyIp);
+        Assert.Throws<ArgumentException>(() => ConfigDefaults.ParseDcIpList(["149.154.167.220"]));
+        Assert.Throws<ArgumentException>(() => ConfigDefaults.ParseDcIpList(["2:not-an-ip"]));
+        Assert.Throws<ArgumentException>(() => ConfigDefaults.ParseDcIpList(["x:1.2.3.4"]));
     }
 
     [Fact]
-    public void CliParser_Dedups_IpList()
+    public void BootstrapOptions_Defaults_To_No_ConfigPath()
     {
-        var cfg = CliParser.Parse([
-            "--allow-ip", "10.0.0.0/8",
-            "--allow-ip", "10.0.0.0/8",
-            "--deny-ip", "192.168.1.1;192.168.1.1"
-        ]);
+        var options = BootstrapOptions.Parse([]);
 
-        Assert.Equal(["10.0.0.0/8"], cfg.AllowIp);
-        Assert.Equal(["192.168.1.1"], cfg.DenyIp);
+        Assert.Null(options.ConfigPath);
+        Assert.False(options.ShowHelp);
+        Assert.False(options.ShowVersion);
+    }
+
+    [Theory]
+    [InlineData(new[] { "--config", "a.json" }, "a.json")]
+    [InlineData(new[] { "--config=a.json" }, "a.json")]
+    public void BootstrapOptions_Parses_Config_Both_Forms(string[] args, string expected)
+    {
+        Assert.Equal(expected, BootstrapOptions.Parse(args).ConfigPath);
     }
 
     [Fact]
-    public void ConfigValidator_Rejects_InvalidIpAcl()
+    public void BootstrapOptions_Last_Config_Wins()
     {
-        var allow = new Config();
-        allow.AllowIp.Add("not-an-ip");
-        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(allow));
+        var options = BootstrapOptions.Parse(["--config", "a.json", "--config=b.json"]);
 
-        var deny = new Config();
-        deny.DenyIp.Add("10.0.0.0/33");
-        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(deny));
+        Assert.Equal("b.json", options.ConfigPath);
+    }
+
+    [Fact]
+    public void BootstrapOptions_Rejects_Missing_Config_Path()
+    {
+        Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--config"]));
+        Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--config="]));
+        Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--config", "   "]));
     }
 
     [Theory]
     [InlineData("-h")]
     [InlineData("--help")]
-    public void CliParser_Help_Flags_Are_Recognized(string flag)
+    public void BootstrapOptions_Help_Flags_Are_Recognized(string flag)
     {
-        Assert.True(CliParser.TryHandleInfo([flag], "2.3", out var output));
-        Assert.Contains("usage: TgWsProxy", output);
-        Assert.Contains("--proxy-protocol", output);
+        Assert.True(BootstrapOptions.Parse([flag]).ShowHelp);
     }
 
     [Fact]
-    public void CliParser_Version_Flag_Prints_Version()
+    public void BootstrapOptions_Version_Flag_Is_Recognized()
+        => Assert.True(BootstrapOptions.Parse(["--version"]).ShowVersion);
+
+    [Fact]
+    public void BootstrapOptions_Help_Text_Documents_Remaining_Options()
     {
-        Assert.True(CliParser.TryHandleInfo(["--version"], "2.3", out var output));
-        Assert.Equal("tg-ws-proxy 2.3", output);
+        // Справка обязана перечислять всё, что парсер ещё понимает.
+        Assert.Contains("--config", BootstrapOptions.HelpText);
+        Assert.Contains("--help", BootstrapOptions.HelpText);
+        Assert.Contains("--version", BootstrapOptions.HelpText);
     }
 
     [Fact]
-    public void CliParser_Info_Flags_Not_Present_For_Regular_Args()
+    public void BootstrapOptions_Help_Text_Does_Not_Advertise_Removed_Flags()
     {
-        Assert.False(CliParser.TryHandleInfo(["--port", "1443"], "2.3", out var output));
-        Assert.Empty(output);
-    }
-
-    [Fact]
-    public void CliParser_Help_Text_Documents_All_Supported_Flags()
-    {
-        // Справка должна перечислять каждый параметр, который реально понимает парсер.
-        string[] expected =
+        // Конфигурация переехала в config.json (F-1.10): прежние флаги не рекламируются.
+        string[] removed =
         [
             "--port", "--host", "--secret", "--dc-ip", "--cfproxy-domain",
-            "--cfproxy-worker-domain", "--no-cfproxy", "--no-h2", "--no-secure",
-            "--fake-tls-domain", "--force-test-dc", "--proxy-protocol", "--verbose",
-            "--log-file", "--log-max-mb", "--log-backups", "--buf-kb", "--pool-size",
-            "--ws-timeout", "--ws-max-frame-bytes", "--allow-invalid-certs"
+            "--no-cfproxy", "--no-h2", "--no-secure", "--proxy-protocol",
+            "--metrics-port", "--metrics-host", "--verbose"
         ];
 
-        foreach (var flag in expected)
+        foreach (var flag in removed)
         {
-            Assert.Contains(flag, CliParser.HelpText);
+            Assert.DoesNotContain(flag, BootstrapOptions.HelpText);
         }
     }
 
-    [Fact]
-    public void CliParser_Repeated_DcIp_Is_Accumulated()
+    [Theory]
+    [InlineData("--port", "port")]
+    [InlineData("--secret", "tokens")]
+    [InlineData("--dc-ip", "dcIp")]
+    [InlineData("--metrics-port", "metricsPort")]
+    [InlineData("--verbose", "verbose")]
+    public void BootstrapOptions_Legacy_Flag_Error_Points_To_Json_Key(string flag, string jsonKey)
     {
-        var cfg = CliParser.Parse([
-            "--dc-ip", "2:149.154.167.220",
-            "--dc-ip", "4:149.154.167.220"
-        ]);
+        // Подсказка «флаг → ключ config.json» избавляет от догадок при миграции с 2.x.
+        var exception = Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse([flag, "1"]));
 
-        Assert.Equal(2, cfg.DcIp.Count);
+        Assert.Contains(jsonKey, exception.Message);
+        Assert.Contains("config.json", exception.Message);
     }
 
     [Fact]
-    public void CliParser_Rejects_Removed_Upstream_Flags()
+    public void BootstrapOptions_Legacy_Flag_With_Value_Form_Is_Hinted()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--port=1443"]));
+
+        Assert.Contains("port", exception.Message);
+    }
+
+    [Fact]
+    public void BootstrapOptions_Rejects_Unknown_Argument()
+    {
+        var exception = Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--unknown", "x"]));
+
+        Assert.Contains("--unknown", exception.Message);
+    }
+
+    [Fact]
+    public void BootstrapOptions_Rejects_Removed_Upstream_Flags()
     {
         // --auth и --cfproxy-priority отсутствуют в upstream и удалены из порта.
-        Assert.Throws<ArgumentException>(() => CliParser.Parse(["--auth", "u:p"]));
-        Assert.Throws<ArgumentException>(() => CliParser.Parse(["--cfproxy-priority", "cf"]));
+        Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--auth", "u:p"]));
+        Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--cfproxy-priority", "cf"]));
     }
 
     [Fact]
-    public void CliParser_Throws_OnUnknownArg() => Assert.Throws<ArgumentException>(() => CliParser.Parse(["--unknown", "x"]));
-
-    [Fact]
-    public void CliParser_Parses_CfProxyDomains_With_Splitting_And_Dedupe()
+    public void ConfigValidator_Rejects_InvalidIpAcl()
     {
-        var cfg = CliParser.Parse([
-            "--cfproxy-domain", "a.example.com,b.example.com",
-            "--cfproxy-domain", "A.EXAMPLE.COM;c.example.com"
-        ]);
+        var allow = TestConfig.Create();
+        allow.AllowIp.Add("not-an-ip");
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(allow));
 
-        Assert.Equal(["a.example.com", "b.example.com", "c.example.com"], cfg.CfProxyDomains);
-    }
-
-    [Fact]
-    public void CliParser_Parses_Worker_Domains_And_Secure_Flags()
-    {
-        var cfg = CliParser.Parse([
-            "--cfproxy-worker-domain", "w.example.com",
-            "--no-secure",
-            "--no-h2",
-            "--proxy-protocol",
-            "--force-test-dc",
-            "--fake-tls-domain", "www.google.com"
-        ]);
-
-        Assert.Equal(["w.example.com"], cfg.CfProxyWorkerDomains);
-        Assert.True(cfg.DisableSecure);
-        Assert.False(cfg.CfProxyH2Media);
-        Assert.True(cfg.ProxyProtocol);
-        Assert.True(cfg.ForceTestDc);
-        Assert.Equal("www.google.com", cfg.FakeTlsDomain);
+        var deny = TestConfig.Create();
+        deny.DenyIp.Add("10.0.0.0/33");
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(deny));
     }
 
     [Fact]
@@ -199,48 +194,43 @@ public class UnitTest
     }
 
     [Fact]
-    public void CliParser_Keeps_Secret_As_Is()
-    {
-        var secret = new string('a', 32);
-        var cfg = CliParser.Parse(["--secret", secret]);
-
-        Assert.Equal(secret, cfg.Secret);
-    }
-
-    [Fact]
     public void ConfigValidator_Rejects_BadPort()
     {
-        var cfg = new Config { Port = 70000 };
+        var cfg = TestConfig.Create(c => c.Port = 70000);
         Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(cfg));
     }
 
     [Fact]
-    public void CliParser_Parses_WsTimeout()
+    public void ConfigValidator_Rejects_Disabled_Web_Port()
     {
-        var cfg = CliParser.Parse(["--ws-timeout", "60"]);
-        Assert.Equal(60, cfg.WsConnectTimeoutSeconds);
+        // F-1.4: веб-сервер — единственный интерфейс управления, отключить его нулём нельзя.
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.MetricsPort = 0)));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.MetricsPort = 70000)));
+        ConfigValidator.Validate(TestConfig.Create(c => c.MetricsPort = 1));
+        ConfigValidator.Validate(TestConfig.Create(c => c.MetricsPort = 65535));
+    }
+
+    [Fact]
+    public void ConfigValidator_Rejects_Empty_MetricsHost()
+    {
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.MetricsHost = "  ")));
     }
 
     [Fact]
     public void ConfigValidator_Rejects_WsTimeout_OutOfRange()
     {
-        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(new Config { WsConnectTimeoutSeconds = 0 }));
-        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(new Config { WsConnectTimeoutSeconds = 400 }));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.WsConnectTimeoutSeconds = 0)));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.WsConnectTimeoutSeconds = 400)));
     }
 
     [Fact]
-    public void CliParser_Parses_BufKb_PoolSize_LogRotation()
+    public void ConfigValidator_Rejects_Timeseries_Step_Above_Window()
     {
-        var cfg = CliParser.Parse([
-            "--buf-kb", "512",
-            "--pool-size", "2",
-            "--log-max-mb", "5",
-            "--log-backups", "3"
-        ]);
-        Assert.Equal(512, cfg.SocketBufferKb);
-        Assert.Equal(2, cfg.WsPoolSize);
-        Assert.Equal(5, cfg.LogMaxMegabytes);
-        Assert.Equal(3, cfg.LogRetainedFileCount);
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c =>
+        {
+            c.TimeseriesWindowSeconds = 60;
+            c.TimeseriesStepSeconds = 120;
+        })));
     }
 
     [Fact]
@@ -252,15 +242,95 @@ public class UnitTest
         => Assert.Equal(16 * 1024 * 1024, new Config().WsMaxFrameBytes);
 
     [Fact]
-    public void ConfigValidator_Rejects_NonHex_Secret()
+    public void Config_Default_Has_No_Tokens()
+        // Токены создаёт TokenBootstrap при старте (F-8.3): в самом домене их нет.
+        => Assert.Empty(new Config().Tokens);
+
+    [Fact]
+    public void ConfigValidator_Rejects_NonHex_TokenSecret()
     {
-        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(new Config { Secret = "not-a-hex-secret" }));
-        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(new Config { Secret = new string('a', 31) }));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c =>
+            c.Tokens[0].Secret = "not-a-hex-secret")));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c =>
+            c.Tokens[0].Secret = new string('a', 31))));
     }
 
     [Fact]
-    public void ConfigValidator_Accepts_Empty_Secret_For_Autogeneration()
-        => ConfigValidator.Validate(new Config { Secret = "" });
+    public void ConfigValidator_Requires_At_Least_One_Token()
+        => Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(new Config()));
+
+    [Fact]
+    public void ConfigValidator_Requires_At_Least_One_Enabled_Token()
+        => Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c =>
+            c.Tokens[0].Enabled = false)));
+
+    [Fact]
+    public void ConfigValidator_Rejects_Duplicate_TokenNames_And_Secrets()
+    {
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c =>
+            c.Tokens.Add(new ProxyToken
+            {
+                Id = "second",
+                Name = "DEFAULT",
+                Secret = "ffeeddccbbaa99887766554433221100",
+                Enabled = true,
+            }))));
+
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c =>
+            c.Tokens.Add(new ProxyToken
+            {
+                Id = "second",
+                Name = "second",
+                Secret = TestConfig.TokenSecret.ToUpperInvariant(),
+                Enabled = true,
+            }))));
+    }
+
+    [Fact]
+    public void ConfigValidator_Rejects_More_Than_Max_Tokens()
+        => Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c =>
+        {
+            for (var i = 0; i <= ConfigValidator.MaxTokens; i++)
+            {
+                c.Tokens.Add(new ProxyToken
+                {
+                    Id = "token-" + i,
+                    Name = "token-" + i,
+                    Secret = i.ToString("x8").PadLeft(32, '0'),
+                    Enabled = true,
+                });
+            }
+        })));
+
+    [Fact]
+    public void Config_Default_Limits_Are_Disabled()
+    {
+        var cfg = new Config();
+
+        Assert.Equal(0, cfg.MaxConnections);
+        Assert.Equal(0, cfg.RateLimitPerIp);
+        Assert.Equal(60, cfg.RateLimitWindowSeconds);
+    }
+
+    [Fact]
+    public void ConfigValidator_Rejects_Limit_OutOfRange()
+    {
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.MaxConnections = -1)));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.MaxConnections = 1_000_001)));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.RateLimitPerIp = -1)));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.RateLimitPerIp = 1_000_001)));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.RateLimitWindowSeconds = 0)));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.RateLimitWindowSeconds = 86_401)));
+    }
+
+    [Fact]
+    public void ConfigValidator_Accepts_Boundary_Limits()
+        => ConfigValidator.Validate(TestConfig.Create(c =>
+        {
+            c.MaxConnections = 1_000_000;
+            c.RateLimitPerIp = 1;
+            c.RateLimitWindowSeconds = 86_400;
+        }));
 
     [Fact]
     public void MtProtoInspector_ReturnsNull_OnGarbage()
@@ -343,6 +413,8 @@ public class UnitTest
         stats.IncConnectionsBad();
         stats.IncConnectionsBlocked();
         stats.IncConnectionsMasked();
+        stats.IncConnectionsLimited();
+        stats.IncConnectionsRateLimited();
         stats.IncWsErrors();
         stats.IncPoolHit();
         stats.IncPoolMiss();
@@ -362,6 +434,8 @@ public class UnitTest
         Assert.Contains("bad=1", summary);
         Assert.Contains("blocked=1", summary);
         Assert.Contains("masked=1", summary);
+        Assert.Contains("limited=1", summary);
+        Assert.Contains("rate_limited=1", summary);
         Assert.Contains("err=1", summary);
         Assert.Contains("pool=1/2", summary);
         Assert.Contains("cf_pool=1/2", summary);
