@@ -25,6 +25,12 @@ public sealed class ConfigDto
 
     public string? Host { get; set; }
 
+    /// <summary>
+    /// Внешний адрес для ссылок <c>t.me/proxy</c>: <c>host</c>, <c>host:port</c> или
+    /// <c>[IPv6]:port</c>. Пусто — используется <see cref="Host"/>. Горячий ключ.
+    /// </summary>
+    public string? PublicHost { get; set; }
+
     public List<string>? DcIp { get; set; }
 
     public List<string>? AllowIp { get; set; }

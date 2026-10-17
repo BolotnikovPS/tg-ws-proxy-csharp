@@ -6,6 +6,15 @@ public sealed class Config
     public string Host { get; set; } = "127.0.0.1";
 
     /// <summary>
+    /// Внешний адрес прокси для ссылок <c>https://t.me/proxy</c> (F-8.8). Нужен, когда
+    /// <see cref="Host"/> — служебный адрес: в контейнере это <c>0.0.0.0</c>, снаружи такой
+    /// адрес недостижим, и ссылку не из чего собрать. Допускается форма <c>host</c>,
+    /// <c>host:port</c> и <c>[IPv6]:port</c>. Пусто — берётся <see cref="Host"/> и
+    /// <see cref="Port"/>. На привязку слушателя не влияет.
+    /// </summary>
+    public string PublicHost { get; set; } = "";
+
+    /// <summary>
     /// Целевые IP для DC в формате DC:IP. Пусто — используются дефолты upstream
     /// (2:149.154.167.220, 4:149.154.167.220). Явное указание --dc-ip без значения очищает список,
     /// что полностью отключает WS-пул.
@@ -211,4 +220,21 @@ public sealed class Config
     /// HTTP/2 доступен только при включённом CF fallback, secure-соединениях и без test DC.
     /// </summary>
     public bool H2Enabled => CfProxyH2Media && CfProxyEnabled && !DisableSecure && !ForceTestDc;
+
+    /// <summary>
+    /// Точка доступа для ссылок <c>t.me/proxy</c>: <see cref="PublicHost"/>, если он задан,
+    /// иначе <see cref="Host"/>. <c>null</c> — внешний адрес не определён: служебный
+    /// <see cref="Host"/> (<c>0.0.0.0</c>, <c>::</c>) без явного <see cref="PublicHost"/>
+    /// либо некорректный <see cref="PublicHost"/> (валидатор такой конфиг не пропустит).
+    /// </summary>
+    public PublicEndpoint? ResolvePublicEndpoint()
+    {
+        var configured = PublicHost?.Trim() ?? "";
+        if (configured.Length > 0)
+        {
+            return PublicEndpoint.TryParse(configured, Port, out var endpoint) ? endpoint : null;
+        }
+
+        return PublicEndpoint.TryParse(Host, Port, out var fallback) ? fallback : null;
+    }
 }

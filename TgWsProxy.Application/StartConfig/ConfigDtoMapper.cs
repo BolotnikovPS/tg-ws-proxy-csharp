@@ -22,6 +22,7 @@ public static class ConfigDtoMapper
 
         if (dto.Port is { } port) target.Port = port;
         if (dto.Host is { } host) target.Host = host;
+        if (dto.PublicHost is { } publicHost) target.PublicHost = publicHost.Trim();
         if (dto.Verbose is { } verbose) target.Verbose = verbose;
         if (dto.LogPath is { } logPath) target.LogPath = logPath;
         if (dto.AllowInvalidCertificates is { } allowInvalid) target.AllowInvalidCertificates = allowInvalid;
@@ -72,6 +73,7 @@ public static class ConfigDtoMapper
         {
             Port = config.Port,
             Host = config.Host,
+            PublicHost = config.PublicHost,
             DcIp = [.. config.DcIp],
             AllowIp = [.. config.AllowIp],
             DenyIp = [.. config.DenyIp],

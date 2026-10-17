@@ -368,6 +368,40 @@ public sealed class WebApiEndpointsTests
         Assert.Equal(TestConfig.TokenSecret, dto.GetProperty("secret").GetString());
     }
 
+    // publicHost перекрывает служебный host: ссылка строится по внешнему адресу.
+    [Fact]
+    public async Task ApiTokens_Link_Uses_PublicHost_Over_Wildcard_Host()
+    {
+        var config = TestConfig.Create(c =>
+        {
+            c.Host = "0.0.0.0";
+            c.PublicHost = "proxy.example.com";
+        });
+
+        await using var app = await StartAppAsync(listening: true, config);
+
+        var dto = await app.Client.GetFromJsonAsync<JsonElement>("/api/tokens/default/link");
+
+        Assert.Equal(
+            $"https://t.me/proxy?server=proxy.example.com&port=1443&secret=dd{TestConfig.TokenSecret}",
+            dto.GetProperty("link").GetString());
+    }
+
+    // Порт из publicHost перекрывает порт слушателя — так публикуется нестандартный порт хоста.
+    [Fact]
+    public async Task ApiTokens_Link_Honours_Port_From_PublicHost()
+    {
+        var config = TestConfig.Create(c => c.PublicHost = "proxy.example.com:2443");
+
+        await using var app = await StartAppAsync(listening: true, config);
+
+        var dto = await app.Client.GetFromJsonAsync<JsonElement>("/api/tokens/default/link");
+
+        Assert.Equal(
+            $"https://t.me/proxy?server=proxy.example.com&port=2443&secret=dd{TestConfig.TokenSecret}",
+            dto.GetProperty("link").GetString());
+    }
+
     [Fact]
     public async Task ApiTokens_Link_Unknown_Id_Returns_404()
     {

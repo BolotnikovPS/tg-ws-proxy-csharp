@@ -24,6 +24,8 @@ public static class ConfigValidator
             throw new ArgumentException("host cannot be empty");
         }
 
+        ValidatePublicHost(config.PublicHost);
+
         if (config.WsConnectTimeoutSeconds is < 1 or > 300)
         {
             throw new ArgumentException("wsConnectTimeoutSeconds must be in range 1..300");
@@ -226,6 +228,41 @@ public static class ConfigValidator
         if (enabled == 0)
         {
             throw new ArgumentException("at least one token must be enabled");
+        }
+    }
+
+    /// <summary>
+    /// <c>publicHost</c> — внешний адрес для ссылок <c>t.me/proxy</c>. Пусто разрешено:
+    /// тогда берётся <c>host</c>. Служебные адреса запрещены — по ним ссылка нерабочая.
+    /// </summary>
+    private static void ValidatePublicHost(string value)
+    {
+        var text = value?.Trim() ?? "";
+        if (text.Length == 0)
+        {
+            return;
+        }
+
+        if (text.Length > 255)
+        {
+            throw new ArgumentException("publicHost must be 255 characters or fewer");
+        }
+
+        if (text.Any(char.IsWhiteSpace))
+        {
+            throw new ArgumentException("publicHost must not contain whitespace");
+        }
+
+        if (PublicEndpoint.IsWildcard(text))
+        {
+            throw new ArgumentException(
+                "publicHost must be the external address clients connect to, not a wildcard (0.0.0.0, ::)");
+        }
+
+        if (!PublicEndpoint.TryParse(text, 1443, out _))
+        {
+            throw new ArgumentException(
+                "publicHost must be a host, host:port or [IPv6]:port with a port in range 1..65535");
         }
     }
 }

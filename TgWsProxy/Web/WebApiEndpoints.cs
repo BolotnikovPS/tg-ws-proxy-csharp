@@ -705,23 +705,23 @@ internal static class WebApiEndpoints
     /// <summary>
     /// Собирает ссылку <c>https://t.me/proxy</c> для подключения клиента Telegram (F-8.8).
     /// Секрет передаётся в формате fake-TLS (<c>dd</c> + 32 hex), который ожидает клиент.
-    /// Для служебных адресов (<c>0.0.0.0</c>, <c>::</c>) ссылка не строится: снаружи такой
-    /// адрес недостижим, и панель предлагает указать реальный <c>host</c> в <c>config.json</c>.
+    /// Адрес берётся из <c>publicHost</c> — внешней точки доступа, — иначе из <c>host</c>.
+    /// Для служебных адресов (<c>0.0.0.0</c>, <c>::</c>) без явного <c>publicHost</c> ссылка
+    /// не строится: снаружи такой адрес недостижим, и панель предлагает задать внешний адрес.
     /// </summary>
-    /// <param name="cfg">Живая конфигурация: источник <c>host</c> и <c>port</c> слушателя.</param>
+    /// <param name="cfg">Живая конфигурация: источник <c>publicHost</c>/<c>host</c> и <c>port</c>.</param>
     /// <param name="token">Токен, для которого строится ссылка.</param>
-    /// <returns>Готовая ссылка или <see langword="null"/>, если адрес служебный.</returns>
+    /// <returns>Готовая ссылка или <see langword="null"/>, если внешний адрес не определён.</returns>
     private static string? BuildTelegramLink(Config cfg, ProxyToken token)
     {
-        var host = cfg.Host;
-        if (string.IsNullOrWhiteSpace(host) || host is "0.0.0.0" or "::" or "[::]")
+        if (cfg.ResolvePublicEndpoint() is not { } endpoint)
         {
             return null;
         }
 
         return string.Create(
             CultureInfo.InvariantCulture,
-            $"https://t.me/proxy?server={host}&port={cfg.Port}&secret=dd{token.Secret}");
+            $"https://t.me/proxy?server={endpoint.Host}&port={endpoint.Port}&secret=dd{token.Secret}");
     }
 
     /// <summary>

@@ -6,6 +6,7 @@
     <File Path="README.md" />
   </Folder>
   <Folder Name="/Элементы решения/DockerCompose/">
+    <File Path="DockerCompose/config.docker.json" />
     <File Path="DockerCompose/docker-compose.dns.yml" />
     <File Path="DockerCompose/docker-compose.host.yml" />
     <File Path="DockerCompose/docker-compose.mtu.yml" />

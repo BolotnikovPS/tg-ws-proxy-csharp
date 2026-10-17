@@ -95,6 +95,23 @@ public sealed class ConfigUpdateServiceTests : IDisposable
     }
 
     /// <summary>
+    /// publicHost — «горячий» ключ: ссылка t.me/proxy собирается при каждом запросе,
+    /// поэтому смена внешнего адреса не трогает слушатель (F-8.8).
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_PublicHost_AppliesWithoutRestart()
+    {
+        var result = await _service.ApplyAsync(
+            new ConfigDto { PublicHost = "proxy.example.com:1443" },
+            CancellationToken.None);
+
+        Assert.False(result.ListenerRestarted);
+        Assert.Equal(new[] { "publicHost" }, result.HotReloaded);
+        Assert.Equal("proxy.example.com:1443", _config.PublicHost);
+        Assert.False(_listener.WasCalled);
+    }
+
+    /// <summary>
     /// Смена параметров временного ряда — «горячий» ключ: буфер пересоздаётся без перезапуска (F-2.11).
     /// </summary>
     [Fact]

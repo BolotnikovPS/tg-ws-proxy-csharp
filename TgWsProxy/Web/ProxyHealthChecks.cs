@@ -62,7 +62,9 @@ public sealed class ConfigHealthCheck(Config config, ConfigRuntime runtime) : IH
                 "configuration is invalid", exception));
         }
 
-        var path = runtime.Path;
+        // Путь может быть относительным (--config config.json): GetDirectoryName вернул бы
+        // пустую строку, и проверка ложно сообщала бы об отсутствии каталога.
+        var path = Path.GetFullPath(runtime.Path);
         if (File.Exists(path))
         {
             try

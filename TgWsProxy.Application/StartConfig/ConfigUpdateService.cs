@@ -43,6 +43,7 @@ public sealed class ConfigUpdateService(
         "denyIp",
         // Токен читается middleware на каждом запросе, поэтому смена действует сразу.
         "webApiToken",
+        "publicHost",
         "enablePerIpStats",
         "perIpStatsTtlSeconds",
         "perIpStatsMaxPeers",
@@ -322,6 +323,12 @@ public sealed class ConfigUpdateService(
                 case "webApiToken":
                     // Middleware читает Config.WebApiToken на каждом запросе (F-3.8).
                     config.WebApiToken = candidate.WebApiToken;
+                    break;
+
+                case "publicHost":
+                    // Ссылка t.me/proxy собирается при каждом запросе /api/tokens/{id}/link,
+                    // поэтому внешний адрес применяется без перезапуска.
+                    config.PublicHost = candidate.PublicHost;
                     break;
 
                 case "enablePerIpStats":
