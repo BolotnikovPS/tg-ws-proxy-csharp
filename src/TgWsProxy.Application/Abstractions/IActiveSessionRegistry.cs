@@ -22,6 +22,15 @@ public interface IActiveSessionRegistry
     ISessionLease Register(Socket client, string scope);
 
     /// <summary>
+    /// Регистрирует сессию без сокета (например, WEB proxy поверх WebSocket): разрыв выполняется
+    /// вызовом <paramref name="abort"/>. Нужен для того же перезапуска слушателя и отзыва токена
+    /// (F-8.7), что и сокетные сессии, но без <see cref="Socket"/>.
+    /// </summary>
+    /// <param name="abort">Действие, разрывающее сессию (например, отмена токена отмены).</param>
+    /// <param name="scope">Метка сессии для журнала (<c>peer|connectionId</c>).</param>
+    ISessionLease Register(Action abort, string scope);
+
+    /// <summary>
     /// Разрывает все активные сессии. Возвращает число разорванных соединений.
     /// </summary>
     int CloseAll();

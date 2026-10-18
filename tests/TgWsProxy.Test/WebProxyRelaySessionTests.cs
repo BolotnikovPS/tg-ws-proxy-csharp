@@ -19,7 +19,7 @@ public class WebProxyRelaySessionTests
     private const string V2Capability = "p2QMopLb7q1wi3Cu4Zr8qHlNtrhwKwPFjH5CjZU9yOc"; // basePath "/proxy"
 
     private static WebProxyRelaySession CreateSession(Config cfg, params ProxyTokenEntry[] tokens)
-        => new(cfg, null!, null!, new FakeTokenRegistry(tokens), null!, null!, null!);
+        => new(cfg, null!, null!, new FakeTokenRegistry(tokens), null!, null!, null!, null!);
 
     private static ProxyTokenEntry Token(string id, byte[] secret)
         => new(id, $"token-{id}", Convert.ToHexString(secret).ToLowerInvariant(), secret, true, DateTimeOffset.UtcNow, null);

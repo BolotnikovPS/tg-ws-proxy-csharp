@@ -7,8 +7,9 @@ namespace TgWsProxy.Infrastructure.Session;
 
 /// <summary>
 /// Реестр живых сессий (F-7.4). Сессии хранятся в <see cref="ConcurrentDictionary{TKey,TValue}"/>,
-/// а разрыв выполняется закрытием клиентского сокета: обработчик сессии в этот момент ждёт
-/// данных в <c>ReceiveAsync</c> и выходит по исключению сам, без отдельного механизма отмены.
+/// а разрыв выполняется закрытием клиентского сокета либо вызовом действия отмены (WEB proxy
+/// поверх WebSocket): обработчик сессии в этот момент ждёт данных в <c>ReceiveAsync</c> и выходит
+/// по исключению сам, без отдельного механизма отмены.
 /// </summary>
 public sealed class ActiveSessionRegistry(ILogger<ActiveSessionRegistry> logger) : IActiveSessionRegistry
 {
@@ -22,9 +23,16 @@ public sealed class ActiveSessionRegistry(ILogger<ActiveSessionRegistry> logger)
     public ISessionLease Register(Socket client, string scope)
     {
         ArgumentNullException.ThrowIfNull(client);
+        return Register(() => AbortSocket(client), scope);
+    }
+
+    /// <inheritdoc />
+    public ISessionLease Register(Action abort, string scope)
+    {
+        ArgumentNullException.ThrowIfNull(abort);
 
         var id = Interlocked.Increment(ref _seq);
-        var entry = new SessionEntry(client, scope);
+        var entry = new SessionEntry(abort, scope);
         _sessions[id] = entry;
         return new SessionLease(this, id, entry);
     }
@@ -58,7 +66,7 @@ public sealed class ActiveSessionRegistry(ILogger<ActiveSessionRegistry> logger)
 
     /// <summary>
     /// Разрывает подходящие сессии. Сначала запись удаляется из словаря (чтобы счётчик
-    /// не «протекал» при повторном вызове), затем закрывается сокет.
+    /// не «протекал» при повторном вызове), затем вызывается действие разрыва.
     /// </summary>
     private int CloseWhere(string? tokenId)
     {
@@ -98,9 +106,22 @@ public sealed class ActiveSessionRegistry(ILogger<ActiveSessionRegistry> logger)
     {
         try
         {
+            entry.AbortAction();
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException)
+        {
+            // Гонка между штатным завершением (освобождением CTS) и принудительным разрывом:
+            // действие уже не может выполниться, что эквивалентно уже разорванной сессии.
+        }
+    }
+
+    private static void AbortSocket(Socket client)
+    {
+        try
+        {
             // Shutdown переводит сокет в состояние, при котором ожидающее чтение завершается
             // сразу, а не после таймаута.
-            entry.Client.Shutdown(SocketShutdown.Both);
+            client.Shutdown(SocketShutdown.Both);
         }
         catch (Exception ex) when (ex is SocketException or ObjectDisposedException or InvalidOperationException)
         {
@@ -109,7 +130,7 @@ public sealed class ActiveSessionRegistry(ILogger<ActiveSessionRegistry> logger)
 
         try
         {
-            entry.Client.Dispose();
+            client.Dispose();
         }
         catch (Exception ex) when (ex is SocketException or ObjectDisposedException)
         {
@@ -117,9 +138,10 @@ public sealed class ActiveSessionRegistry(ILogger<ActiveSessionRegistry> logger)
         }
     }
 
-    private sealed class SessionEntry(Socket client, string scope)
+    private sealed class SessionEntry(Action abortAction, string scope)
     {
-        public Socket Client { get; } = client;
+        /// <summary>Действие, разрывающее сессию (закрытие сокета либо отмена relay-потока).</summary>
+        public Action AbortAction { get; } = abortAction;
 
         public string Scope { get; } = scope;
 

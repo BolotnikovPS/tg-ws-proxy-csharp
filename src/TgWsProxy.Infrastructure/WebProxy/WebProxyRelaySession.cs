@@ -19,6 +19,7 @@ internal sealed class WebProxyRelaySession(
     IProxyTokenRegistry tokens,
     IProxyStats stats,
     IPeerStatsRegistry peerStats,
+    IActiveSessionRegistry sessions,
     ILogger<WebProxyRelaySession> logger) : IWebProxyRelaySession
 {
     /// <inheritdoc />
@@ -58,6 +59,14 @@ internal sealed class WebProxyRelaySession(
     {
         stats.IncConnectionsTotal();
         stats.IncConnectionsActive();
+
+        // F-W.21: поток регистрируется в реестре живых сессий, чтобы отзыв токена (F-8.7)
+        // или перезапуск слушателя разрывал его так же, как сокетные TCP-сессии. Разрыв
+        // выполняется отменой связанного токена отмены, на котором спит relay-цикл.
+        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var lease = sessions.Register(sessionCts.Cancel, scope);
+        lease.AssignToken(token.Id);
+
         try
         {
             if (peer is not null)
@@ -77,13 +86,13 @@ internal sealed class WebProxyRelaySession(
 
             while (true)
             {
-                var frame = await transport.ReceiveAsync(ct).ConfigureAwait(false);
+                var frame = await transport.ReceiveAsync(sessionCts.Token).ConfigureAwait(false);
                 if (frame is null)
                 {
                     break;
                 }
 
-                await multiplexer.HandleInboundFrameAsync(frame.Value, ct).ConfigureAwait(false);
+                await multiplexer.HandleInboundFrameAsync(frame.Value, sessionCts.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
