@@ -196,15 +196,14 @@ function info(msg) {
 }
 
 // ---- HTTP (node:https; rejectUnauthorized:false для --insecure) ----
-function httpsRequest({ method, path, headers = {}, body = null, timeoutMs }) {
+function httpsRequest({ host, port, insecure, method, path, headers = {}, body = null, timeoutMs }) {
   return new Promise((resolve, reject) => {
     const req = https.request({
-      host: args.host,
-      port: args.port,
+      host,
+      port,
       method,
       path,
-      servername: args.host,
-      rejectUnauthorized: !args.insecure,
+      rejectUnauthorized: !insecure,
       headers: {
         ...headers,
         ...(body && body.length ? { 'Content-Length': body.length } : {}),
@@ -265,6 +264,9 @@ async function main() {
 
   // ---- Фаза 1: bridge-страница → bootstrap ----
   const pageRes = await httpsRequest({
+    host: args.host,
+    port: args.port,
+    insecure: args.insecure,
     method: 'GET',
     path: `${bridgePath}?bridge=${encodeURIComponent(capability)}`,
     timeoutMs: reqTimeout,
@@ -281,6 +283,9 @@ async function main() {
   // ---- Фаза 2: POST /session (HELLO) → WELCOME ----
   const hello = buildFrame(FT.Hello, 0, Buffer.from([0x01]));
   const sessionRes = await httpsRequest({
+    host: args.host,
+    port: args.port,
+    insecure: args.insecure,
     method: 'POST',
     path: sessionPath,
     headers: {
@@ -314,6 +319,9 @@ async function main() {
     buildFrame(FT.Data, 1, init),
   ]);
   const upRes = await httpsRequest({
+    host: args.host,
+    port: args.port,
+    insecure: args.insecure,
     method: 'POST',
     path: upPath,
     headers: {
@@ -332,6 +340,9 @@ async function main() {
   // ---- Фаза 4: POST /down (long-poll) ----
   if (!args.full) {
     const downRes = await httpsRequest({
+      host: args.host,
+      port: args.port,
+      insecure: args.insecure,
       method: 'POST',
       path: downPath,
       headers: {
@@ -362,6 +373,9 @@ async function main() {
       let downRes;
       try {
         downRes = await httpsRequest({
+          host: args.host,
+          port: args.port,
+          insecure: args.insecure,
           method: 'POST',
           path: downPath,
           headers: {
@@ -390,22 +404,25 @@ async function main() {
     if (!sawRelayInit) {
       info('relay_init (Data stream 1) не получен: Telegram DC недоступен из этой сети (нужен VPS/VPN)');
       info('транспорт, авторизация и flow-control при этом работают (см. WINDOW-кадры выше)');
-      await closeSession(sessionToken, sessionPath);
+      await closeSession(args, sessionToken, sessionPath);
       process.exit(3);
     }
     ok('relay_init получен: bridge → HMAC → obfs2 → MTProto bridge → relay_init');
   }
 
   // ---- Фаза 5: DELETE /session → 204 ----
-  await closeSession(sessionToken, sessionPath);
+  await closeSession(args, sessionToken, sessionPath);
   ok('сессия закрыта (DELETE /session → 204)');
 
   console.log('\nСмоук-тест пройден: capability-HMAC → bootstrap → HELLO/WELCOME → relay-поток → flow-control → закрытие.');
   process.exit(0);
 }
 
-async function closeSession(sessionToken, sessionPath) {
+async function closeSession(args, sessionToken, sessionPath) {
   const res = await httpsRequest({
+    host: args.host,
+    port: args.port,
+    insecure: args.insecure,
     method: 'DELETE',
     path: sessionPath,
     headers: {
