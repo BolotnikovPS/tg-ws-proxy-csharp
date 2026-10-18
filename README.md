@@ -11,7 +11,7 @@
 **Локально, из исходников** (нужен .NET 11 SDK):
 
 ```bash
-dotnet run --project TgWsProxy -- --config config.example.json
+dotnet run --project src/TgWsProxy -- --config config.example.json
 ```
 
 Без `--config` берётся `./config.json` из текущего каталога; если файла нет — стартуют значения по умолчанию (`127.0.0.1:1443`, панель на `127.0.0.1:8081`).
@@ -104,7 +104,7 @@ MTProto-трафик каждого соединения перешифровы�
 
 ## Веб-панель
 
-Одна страница по адресу `http://<metricsHost>:<metricsPort>/` (по умолчанию `http://127.0.0.1:8081/`). Статика лежит в [`TgWsProxy/wwwroot/`](TgWsProxy/wwwroot/): [`index.html`](TgWsProxy/wwwroot/index.html), [`app.js`](TgWsProxy/wwwroot/app.js), [`site.css`](TgWsProxy/wwwroot/site.css) — без CDN, npm и сборщика, отдаётся тем же ASP.NET Core хостом, что и API.
+Одна страница по адресу `http://<metricsHost>:<metricsPort>/` (по умолчанию `http://127.0.0.1:8081/`). Статика лежит в [`src/TgWsProxy/wwwroot/`](src/TgWsProxy/wwwroot/): [`index.html`](src/TgWsProxy/wwwroot/index.html), [`app.js`](src/TgWsProxy/wwwroot/app.js), [`site.css`](src/TgWsProxy/wwwroot/site.css) — без CDN, npm и сборщика, отдаётся тем же ASP.NET Core хостом, что и API.
 
 ### Что на странице
 
@@ -210,6 +210,7 @@ dotnet TgWsProxy.dll --config /etc/tg-ws-proxy/config.json
 | Ключ | По умолчанию | Описание |
 |---|---|---|
 | `publicHost` | пусто | Внешний адрес для ссылок `t.me/proxy`: `host`, `host:port`, `[IPv6]:port`. Пусто — берутся `host` и `port`. Нужен, когда `host` служебный (`0.0.0.0` в контейнере) или прокси за NAT. |
+| `webProxyPublicHost` | пусто | Внешний домен для bridge-ссылки WEB proxy (если bridge за reverse-proxy). Пусто — используется `webProxyHost`. |
 | `webApiToken` | пусто | Bearer-токен для `/api/*`. Пусто — аутентификации нет (допустимо только на loopback). |
 | `tokens` | `[]` → создаётся `default` | Токены доступа прокси, 1…64: `{id, name, secret (32 hex), enabled, createdAt, lastUsedAt}`. |
 | `maxConnections` | `0` | Максимум одновременных сессий; `0` — без лимита. |
@@ -256,6 +257,30 @@ dotnet TgWsProxy.dll --config /etc/tg-ws-proxy/config.json
 | `verbose` | `false` | Подробное логирование (`Debug`). Уровень фиксируется при сборке логгера. |
 | `logPath` | пусто | Файл лога с ротацией; пусто — только консоль. |
 | `logMaxMegabytes` / `logRetainedFileCount` | `5` / `1` | Лимит размера файла и число архивов. |
+
+### WEB proxy (browser-relay bridge)
+
+Опциональный bridge для WEB proxy из Telegram Desktop (dev-ветка): браузер подключается к серверу по WebSocket поверх HTTPS и ретранслирует MTProto в Telegram DC. Включается `webProxyEnabled`; по умолчанию выключен и порт не занимает.
+
+| Ключ | По умолчанию | Категория | Описание |
+|---|---|---|---|
+| `webProxyEnabled` | `false` | только старт | Включить bridge-листенер. |
+| `webProxyHost` | `0.0.0.0` | только старт | Адрес привязки bridge. |
+| `webProxyPort` | `443` | только старт | Порт bridge (должен отличаться от `port` и `metricsPort`). |
+| `webProxyBasePath` | пусто | только старт | Путь сайта (`""` → корень, иначе `/v1`). |
+| `webProxyPublicHost` | пусто | горячо | Внешний домен для bridge-ссылки. |
+| `webProxyCertPath` | пусто | только старт | PFX/сертификат для TLS (обязателен при `webProxyEnabled`). |
+| `webProxyCertPassword` | пусто | только старт | Пароль PFX (в GET API маскируется). |
+
+Bridge слушает `https://webProxyHost:webProxyPort` с путём `webProxyBasePath`: корень отдаёт статическую страницу, `…/transport` — WebSocket-релей с авторизацией `?bridge=<capability>` (HMAC-SHA256 секрета токена). Все ключи, кроме `webProxyPublicHost`, применяются только перезапуском процесса.
+
+Проверить bridge без клиента можно смоук-скриптом `tools/web-proxy-smoke.mjs` (Node.js ≥ 22, без зависимостей) — он эмулирует bridge-клиента: авторизация `?bridge=`, `Hello→Welcome`, `Ping→Pong` и полный `Open → Data(obfuscated2 init) → relay_init`:
+
+```bash
+node tools/web-proxy-smoke.mjs --host bridge.example.com --secret <32hex> [--port 443] [--base-path /v1] [--insecure]
+```
+
+`--insecure` отключает проверку TLS для самоподписанного тестового сертификата.
 
 ### Как применяются изменения
 

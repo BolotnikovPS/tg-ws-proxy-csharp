@@ -1,4 +1,16 @@
 <Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TgWsProxy/TgWsProxy.csproj" />
+    <Project Path="src/TgWsProxy.Application/TgWsProxy.Application.csproj" Id="3ca59396-74c6-439e-bc65-d1ba628fb457" />
+    <Project Path="src/TgWsProxy.Domain/TgWsProxy.Domain.csproj" Id="a3c83dec-8069-4030-8077-d4059562615a" />
+    <Project Path="src/TgWsProxy.Infrastructure/TgWsProxy.Infrastructure.csproj" Id="cdf0cfeb-cc5e-47f3-96dc-bf06d1cb184d" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TgWsProxy.Test/TgWsProxy.Test.csproj" />
+  </Folder>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/TgWsProxy.Benchmarks/TgWsProxy.Benchmarks.csproj" />
+  </Folder>
   <Folder Name="/Элементы решения/">
     <File Path="Directory.Build.props" />
     <File Path="Directory.Packages.props" />
@@ -15,10 +27,4 @@
   <Folder Name="/Элементы решения/DockerCompose/docker/">
     <File Path="DockerCompose/docker/healthcheck.sh" />
   </Folder>
-  <Project Path="TgWsProxy.Application/TgWsProxy.Application.csproj" Id="3ca59396-74c6-439e-bc65-d1ba628fb457" />
-  <Project Path="TgWsProxy.Domain/TgWsProxy.Domain.csproj" Id="a3c83dec-8069-4030-8077-d4059562615a" />
-  <Project Path="TgWsProxy.Infrastructure/TgWsProxy.Infrastructure.csproj" Id="cdf0cfeb-cc5e-47f3-96dc-bf06d1cb184d" />
-  <Project Path="TgWsProxy.Benchmarks/TgWsProxy.Benchmarks.csproj" />
-  <Project Path="TgWsProxy.Test/TgWsProxy.Test.csproj" />
-  <Project Path="TgWsProxy/TgWsProxy.csproj" />
 </Solution>

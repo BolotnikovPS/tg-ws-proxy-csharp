@@ -1,0 +1,10 @@
+{
+  "name": "tg-ws-proxy-tools",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Smoke-test tooling for the Telegram WEB proxy (browser-relay) bridge.",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

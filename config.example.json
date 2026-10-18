@@ -82,5 +82,18 @@
   "fakeTlsDomain": "",
   "proxyProtocol": false,
   "forceTestDc": false,
-  "allowInvalidCertificates": false
+  "allowInvalidCertificates": false,
+
+  // WEB proxy (browser-relay bridge) — опциональный мост для браузерных клиентов
+  // Telegram Desktop (dev-ветка). По умолчанию выключен и порт не занимает.
+  // Bridge слушает HTTPS на webProxyHost:webProxyPort; корень отдаёт статическую
+  // страницу, …/transport — WebSocket-релей. Все ключи, кроме webProxyPublicHost
+  // («горячо»), — «только старт».
+  "webProxyEnabled": false,
+  "webProxyHost": "0.0.0.0",
+  "webProxyPort": 443,
+  "webProxyBasePath": "",
+  "webProxyPublicHost": "",
+  "webProxyCertPath": "",
+  "webProxyCertPassword": ""
 }
