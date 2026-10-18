@@ -1,5 +1,3 @@
-#nullable enable
-
 using System.Collections.Concurrent;
 using System.Net;
 using TgWsProxy.Application.Abstractions;
@@ -264,9 +262,14 @@ public sealed class PeerStatsRegistry : IPeerStatsRegistry
         var nowWall = _wallClock();
         var result = new List<PeerStatsSnapshot>(_counters.Count);
 
+        // Имена токенов разрешаются один раз на снимок, а не на каждую пару (P0-1):
+        // линейный Find по массиву токенов на сотни тысяч пар давал миллионы сравнений
+        // строк на каждый сбор метрик.
+        var tokenNames = BuildTokenNames();
+
         foreach (var (key, counter) in _counters)
         {
-            var snapshot = ToSnapshot(key, counter, nowMono, nowWall);
+            var snapshot = ToSnapshot(key, counter, nowMono, nowWall, tokenNames);
 
             // После BindToken запись (peer, null) остаётся в словаре с нулевыми счётчиками
             // (F-9.1): счётчики переехали в пару с токеном. Такая запись не несёт информации
@@ -298,7 +301,8 @@ public sealed class PeerStatsRegistry : IPeerStatsRegistry
         PeerKey key,
         PeerCounter counter,
         double nowMono,
-        DateTimeOffset nowWall)
+        DateTimeOffset nowWall,
+        Dictionary<string, string>? tokenNames)
     {
         var lastSeenMono = Interlocked.CompareExchange(ref counter.LastSeenMono, 0, 0);
         var firstSeenMono = Interlocked.CompareExchange(ref counter.FirstSeenMono, 0, 0);
@@ -311,7 +315,7 @@ public sealed class PeerStatsRegistry : IPeerStatsRegistry
         return new PeerStatsSnapshot(
             key.Ip.ToString(),
             key.TokenId,
-            ResolveTokenName(key.TokenId),
+            ResolveTokenName(key.TokenId, tokenNames),
             Interlocked.Read(ref counter.Active),
             Interlocked.Read(ref counter.Total),
             Interlocked.Read(ref counter.Blocked),
@@ -326,15 +330,38 @@ public sealed class PeerStatsRegistry : IPeerStatsRegistry
             lastSeen);
     }
 
-    /// <summary>Имя токена для отображения; <see langword="null"/> для записей без токена и удалённых токенов.</summary>
-    private string? ResolveTokenName(string? tokenId)
+    /// <summary>Строит карту <c>id → имя</c> один раз на снимок (P0-1).</summary>
+    private Dictionary<string, string>? BuildTokenNames()
     {
-        if (string.IsNullOrEmpty(tokenId) || _tokens is null)
+        if (_tokens is null)
         {
             return null;
         }
 
-        return _tokens.Find(tokenId)?.Name;
+        var tokens = _tokens.All;
+        if (tokens.Count == 0)
+        {
+            return null;
+        }
+
+        var names = new Dictionary<string, string>(tokens.Count, StringComparer.Ordinal);
+        foreach (var token in tokens)
+        {
+            names[token.Id] = token.Name;
+        }
+
+        return names;
+    }
+
+    /// <summary>Имя токена для отображения; <see langword="null"/> для записей без токена и удалённых токенов.</summary>
+    private static string? ResolveTokenName(string? tokenId, Dictionary<string, string>? tokenNames)
+    {
+        if (string.IsNullOrEmpty(tokenId) || tokenNames is null)
+        {
+            return null;
+        }
+
+        return tokenNames.TryGetValue(tokenId, out var name) ? name : null;
     }
 
     private bool TryGet(

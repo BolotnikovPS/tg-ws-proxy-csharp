@@ -1,14 +1,12 @@
-#nullable enable
-
-using Microsoft.Extensions.Logging;
 using System.Buffers;
 using System.Net;
 using System.Net.Sockets;
+using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Wire;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Exceptions;
+using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -589,7 +587,7 @@ internal sealed class TcpBridgeService(
     /// <param name="plainBuffer">Буфер под расшифрованные данные (нужен разборщику для границ пакетов).</param>
     /// <param name="length">Количество валидных байт в буферах.</param>
     /// <returns>Пакеты для отправки в WS.</returns>
-    internal static List<byte[]> TransformUpstream(
+    internal static List<ReadOnlyMemory<byte>> TransformUpstream(
         CryptoCtx ctx,
         MsgSplitter? splitter,
         byte[] buffer,
@@ -605,7 +603,12 @@ internal sealed class TcpBridgeService(
         ctx.CltDecryptor.UpdateInto(cipher, plain);
         ctx.TgEncryptor.UpdateInto(plain, cipher);
 
-        return splitter?.Split(cipher, plain) ?? [cipher.ToArray()];
+        // Без разборщика (CF worker) отдаём фрагмент целиком как срез буфера вызывающей
+        // стороны. Копия не нужна: Send/SendBatch дожидаются записи в transport, а
+        // маскирование копирует payload в арендованный кадр (не трогает источник); cipherBuf
+        // перезаписывается только на следующей итерации (после await Send) либо возвращается
+        // в пул в finally.
+        return splitter?.Split(cipher, plain) ?? [buffer.AsMemory(0, length)];
     }
 
     /// <summary>

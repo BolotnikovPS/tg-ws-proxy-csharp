@@ -1,5 +1,3 @@
-#nullable enable
-
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
@@ -13,6 +11,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Application.Logic;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.Metrics;
@@ -232,12 +231,12 @@ internal static class WebApiEndpoints
         // offset — смещение, limit — размер страницы (50 по умолчанию, 500 максимум),
         // q — префиксный фильтр по адресу, group — разрез (pair по умолчанию, ip, token),
         // token — фильтр по идентификатору токена.
-        app.MapGet("/api/per-ip", (IPeerStatsRegistry peerStats, int? offset, int? limit, string? q, string? group, string? token) =>
+        app.MapGet("/api/per-ip", (IPeerStatsRegistry peerStats, PeerStatsSnapshotCache snapshotCache, int? offset, int? limit, string? q, string? group, string? token) =>
         {
             var pageOffset = Math.Max(0, offset ?? 0);
             var pageLimit = Math.Clamp(limit ?? DefaultPerIpLimit, 1, MaxPerIpLimit);
 
-            IEnumerable<PeerStatsSnapshot> filtered = peerStats.Snapshot();
+            IEnumerable<PeerStatsSnapshot> filtered = snapshotCache.Get();
             if (!string.IsNullOrWhiteSpace(q))
             {
                 var needle = q.Trim();
@@ -272,10 +271,10 @@ internal static class WebApiEndpoints
         .Produces<PerIpPageDto>(StatusCodes.Status200OK);
 
         // F-9.5: агрегаты по токену целиком, без разреза по адресам — для блока «Токены доступа».
-        app.MapGet("/api/metrics/by-token", (IPeerStatsRegistry peerStats, IProxyTokenRegistry tokens) =>
+        app.MapGet("/api/metrics/by-token", (PeerStatsSnapshotCache snapshotCache, IProxyTokenRegistry tokens) =>
         {
             var aggregated = PeerStatsAggregator
-                .Aggregate(peerStats.Snapshot(), "token")
+                .Aggregate(snapshotCache.Get(), "token")
                 .ToDictionary(peer => peer.TokenId ?? "", StringComparer.Ordinal);
 
             var items = tokens.All

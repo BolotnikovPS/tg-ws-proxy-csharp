@@ -1,7 +1,5 @@
-#nullable enable
-
-using Microsoft.Extensions.Logging.Abstractions;
 using System.Net.Sockets;
+using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Infrastructure.Instances;
 
 namespace TgWsProxy.Test;
@@ -63,7 +61,7 @@ public class RawWebSocketFrameTests
     public async Task SendBatch_AboveCoalescingThreshold_StillWritesValidFrames()
     {
         var (ws, stream) = CreateSocket();
-        var parts = new List<byte[]>
+        var parts = new List<ReadOnlyMemory<byte>>
         {
             Pattern(120_000, seed: 1),
             Pattern(120_000, seed: 2),
@@ -76,7 +74,7 @@ public class RawWebSocketFrameTests
         Assert.Equal(3, frames.Count);
         for (var i = 0; i < parts.Count; i++)
         {
-            Assert.Equal(parts[i], frames[i]);
+            Assert.Equal(parts[i].ToArray(), frames[i]);
         }
     }
 
@@ -85,7 +83,7 @@ public class RawWebSocketFrameTests
     {
         var (ws, stream) = CreateSocket();
 
-        await ws.SendBatch([[], Pattern(10, seed: 7)], cts);
+        await ws.SendBatch([ReadOnlyMemory<byte>.Empty, Pattern(10, seed: 7)], cts);
 
         var frames = ParseFrames(stream.ToArray());
         Assert.Equal(2, frames.Count);

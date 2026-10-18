@@ -18,7 +18,7 @@ public class MsgSplitterTests
         var parts = splitter.Split(frame, frame);
 
         Assert.Single(parts);
-        Assert.Equal(frame, parts[0]);
+        Assert.Equal(frame, parts[0].ToArray());
     }
 
     [Fact]
@@ -32,8 +32,8 @@ public class MsgSplitterTests
         var parts = splitter.Split(buffer, buffer);
 
         Assert.Equal(2, parts.Count);
-        Assert.Equal(first, parts[0]);
-        Assert.Equal(second, parts[1]);
+        Assert.Equal(first, parts[0].ToArray());
+        Assert.Equal(second, parts[1].ToArray());
     }
 
     [Fact]
@@ -50,7 +50,7 @@ public class MsgSplitterTests
         var parts = splitter.Split(tail, tail);
 
         Assert.Single(parts);
-        Assert.Equal(frame, parts[0]);
+        Assert.Equal(frame, parts[0].ToArray());
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public class MsgSplitterTests
         var parts = splitter.Split(frame, frame);
 
         Assert.Single(parts);
-        Assert.Equal(frame, parts[0]);
+        Assert.Equal(frame, parts[0].ToArray());
     }
 
     [Fact]
@@ -75,7 +75,7 @@ public class MsgSplitterTests
         var parts = splitter.Split(frame, frame);
 
         Assert.Single(parts);
-        Assert.Equal(frame, parts[0]);
+        Assert.Equal(frame, parts[0].ToArray());
     }
 
     [Fact]
@@ -89,8 +89,8 @@ public class MsgSplitterTests
         var parts = splitter.Split(buffer, buffer);
 
         Assert.Equal(2, parts.Count);
-        Assert.Equal(first, parts[0]);
-        Assert.Equal(second, parts[1]);
+        Assert.Equal(first, parts[0].ToArray());
+        Assert.Equal(second, parts[1].ToArray());
     }
 
     [Fact]
@@ -104,7 +104,7 @@ public class MsgSplitterTests
         var parts = splitter.Split(frame.AsSpan(6).ToArray(), frame.AsSpan(6).ToArray());
 
         Assert.Single(parts);
-        Assert.Equal(frame, parts[0]);
+        Assert.Equal(frame, parts[0].ToArray());
     }
 
     [Fact]
@@ -116,7 +116,7 @@ public class MsgSplitterTests
         var parts = splitter.Split(frame, frame);
 
         Assert.Single(parts);
-        Assert.Equal(frame, parts[0]);
+        Assert.Equal(frame, parts[0].ToArray());
     }
 
     [Fact]
@@ -129,7 +129,7 @@ public class MsgSplitterTests
         var parts = splitter.Split(buffer, buffer);
 
         Assert.Single(parts);
-        Assert.Equal(buffer, parts[0]);
+        Assert.Equal(buffer, parts[0].ToArray());
         Assert.True(splitter.Disabled);
     }
 
@@ -143,7 +143,7 @@ public class MsgSplitterTests
         var parts = splitter.Split(chunk, chunk);
 
         Assert.Single(parts);
-        Assert.Equal(chunk, parts[0]);
+        Assert.Equal(chunk, parts[0].ToArray());
     }
 
     [Fact]
@@ -158,7 +158,7 @@ public class MsgSplitterTests
         var tail = splitter.Flush();
 
         Assert.Single(tail);
-        Assert.Equal(head, tail[0]);
+        Assert.Equal(head, tail[0].ToArray());
         // После flush буфер пуст.
         Assert.Empty(splitter.Flush());
     }
@@ -173,7 +173,7 @@ public class MsgSplitterTests
         var parts = splitter.Split(cipher, plain);
 
         Assert.Single(parts);
-        Assert.Equal(cipher, parts[0]);
+        Assert.Equal(cipher, parts[0].ToArray());
     }
 
     private static byte[] BuildAbridgedMessage(int payloadLen)

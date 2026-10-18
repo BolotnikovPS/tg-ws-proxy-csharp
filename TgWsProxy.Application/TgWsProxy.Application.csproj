@@ -1,7 +1,8 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<ItemGroup>
 		<InternalsVisibleTo Include="TgWsProxy.Test" />
+		<InternalsVisibleTo Include="TgWsProxy.Benchmarks" />
 	</ItemGroup>
 
   <ItemGroup>

@@ -1,19 +1,17 @@
-#nullable enable
-
-using Microsoft.Extensions.Logging;
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
+using Microsoft.Extensions.Logging;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Instances;
-using TgWsProxy.Infrastructure.Wire;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.FakeTls;
+using TgWsProxy.Infrastructure.Instances;
 using TgWsProxy.Infrastructure.IO;
 using TgWsProxy.Infrastructure.MtProto;
+using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Infrastructure.Session;
 
@@ -64,7 +62,7 @@ internal sealed class ClientSessionHandler(
             client.SendBufferSize = sockBuf;
             await using var stream = new NetworkStream(client);
 
-            logger.LogInformation("[{Scope}] client connected {Peer}", context.Scope, context.Peer);
+            logger.LogDebug("[{Scope}] client connected {Peer}", context.Scope, context.Peer);
 
             // Init читается без секрета: Fake TLS и PROXY protocol разбираются до рукопожатия,
             // а выбор токена происходит ниже, на этапе проверки secret (F-8.4).
@@ -229,7 +227,7 @@ internal sealed class ClientSessionHandler(
                 sessionDown = countingStream.BytesWritten;
             }
 
-            logger.LogInformation(
+            logger.LogDebug(
                 "[{Scope}] session ended peer={Peer} token={Token} dc={Dc} media={Media} route={Route} up={Up}B down={Down}B duration={Duration:F1}s",
                 context.Scope,
                 context.Peer,

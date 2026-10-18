@@ -1,5 +1,3 @@
-#nullable enable
-
 using TgWsProxy.Domain;
 
 namespace TgWsProxy.Application.Logic;

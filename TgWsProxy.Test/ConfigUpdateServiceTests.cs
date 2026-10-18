@@ -1,5 +1,3 @@
-#nullable enable
-
 using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;

@@ -1,6 +1,3 @@
-#nullable enable
-
-using Microsoft.Extensions.Logging;
 using System.Buffers;
 using System.Net;
 using System.Net.Security;
@@ -8,6 +5,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.Logging;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;

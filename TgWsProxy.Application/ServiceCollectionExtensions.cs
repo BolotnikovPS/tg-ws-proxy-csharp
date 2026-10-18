@@ -13,6 +13,7 @@ public static class ServiceCollectionExtensions
             .AddSingleton<ConnectionLimiter>()
             .AddSingleton<PeerRateLimiter>()
             .AddSingleton<IPeerStatsRegistry, PeerStatsRegistry>()
+            .AddSingleton<PeerStatsSnapshotCache>()
             // Реестр токенов строится по живой конфигурации (F-8.4): её единственный экземпляр
             // регистрируется хостом как singleton, поэтому реестр видит и горячие правки.
             .AddSingleton<IProxyTokenRegistry>(sp => new ProxyTokenRegistry(sp.GetRequiredService<Config>()));

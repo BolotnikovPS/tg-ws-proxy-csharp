@@ -1,5 +1,3 @@
-#nullable enable
-
 using TgWsProxy.Infrastructure.Instances;
 
 namespace TgWsProxy.Test;

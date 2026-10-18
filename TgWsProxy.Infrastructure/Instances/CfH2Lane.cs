@@ -1,5 +1,3 @@
-#nullable enable
-
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Net;
@@ -9,8 +7,8 @@ using System.Security.Authentication;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Wire;
 using TgWsProxy.Domain.Exceptions;
+using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Infrastructure.Instances;
 

@@ -1,7 +1,7 @@
-#nullable enable
 using System.Diagnostics;
 using Prometheus;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
 
 namespace TgWsProxy.Web;
@@ -61,6 +61,7 @@ public sealed class ProxyMetrics
     private readonly Dictionary<string, Counter> counters = new(StringComparer.Ordinal);
     private readonly IProxyStats stats;
     private readonly IPeerStatsRegistry peerStats;
+    private readonly PeerStatsSnapshotCache snapshotCache;
     private readonly Config config;
     private readonly Stopwatch uptime = Stopwatch.StartNew();
 
@@ -82,11 +83,13 @@ public sealed class ProxyMetrics
     /// </summary>
     /// <param name="stats">Глобальные счётчики прокси.</param>
     /// <param name="peerStats">Реестр статистики по парам (IP, токен).</param>
+    /// <param name="snapshotCache">Кэш снимка реестра «IP, токен» (P0-2).</param>
     /// <param name="config">Действующая конфигурация (влияет на состав серий).</param>
-    public ProxyMetrics(IProxyStats stats, IPeerStatsRegistry peerStats, Config config)
+    public ProxyMetrics(IProxyStats stats, IPeerStatsRegistry peerStats, PeerStatsSnapshotCache snapshotCache, Config config)
     {
         this.stats = stats;
         this.peerStats = peerStats;
+        this.snapshotCache = snapshotCache;
         this.config = config;
         factory = Metrics.WithCustomRegistry(registry);
 
@@ -202,10 +205,7 @@ public sealed class ProxyMetrics
 
         if (config.EnablePerIpStats && limit > 0)
         {
-            var peers = peerStats.Snapshot()
-                .OrderByDescending(static peer => peer.BytesUp + peer.BytesDown)
-                .ThenBy(static peer => peer.Ip, StringComparer.Ordinal)
-                .Take(limit);
+            var peers = TopPeers(snapshotCache.Get(), limit);
 
             foreach (var peer in peers)
             {
@@ -234,6 +234,62 @@ public sealed class ProxyMetrics
         exportedPeers.Clear();
         exportedPeers.UnionWith(current);
     }
+
+    /// <summary>
+    /// Отбирает top-N пар по трафику без полной сортировки: ограниченная куча даёт
+    /// <c>O(n log k)</c> вместо <c>O(n log n)</c> (P0-1). Результат упорядочен по
+    /// убыванию трафика, затем по возрастанию IP (как прежняя
+    /// <c>OrderByDescending(...).ThenBy(...)</c>).
+    /// </summary>
+    private static List<PeerStatsSnapshot> TopPeers(IReadOnlyList<PeerStatsSnapshot> peers, int limit)
+    {
+        if (peers.Count <= limit)
+        {
+            return [.. peers];
+        }
+
+        // Мин-куча: первым выходит «худший» (меньше трафика, при равенстве — больший IP),
+        // поэтому вершина всегда худшая из top-N и вытесняется новым элементом.
+        var queue = new PriorityQueue<PeerStatsSnapshot, (long TotalBytes, string Ip)>(
+            Comparer<(long TotalBytes, string Ip)>.Create(static (a, b) =>
+            {
+                var byBytes = a.TotalBytes.CompareTo(b.TotalBytes);
+                if (byBytes != 0)
+                {
+                    return byBytes;
+                }
+
+                return string.CompareOrdinal(b.Ip, a.Ip);
+            }));
+
+        foreach (var peer in peers)
+        {
+            var priority = (peer.TotalBytes, peer.Ip);
+            if (queue.Count < limit)
+            {
+                queue.Enqueue(peer, priority);
+            }
+            else if (queue.TryPeek(out _, out var worst) && IsBetter(peer, worst))
+            {
+                queue.Dequeue();
+                queue.Enqueue(peer, priority);
+            }
+        }
+
+        var result = new List<PeerStatsSnapshot>(queue.Count);
+        while (queue.TryDequeue(out var peer, out _))
+        {
+            result.Add(peer);
+        }
+
+        result.Reverse();
+        return result;
+    }
+
+    private static bool IsBetter(PeerStatsSnapshot candidate, (long TotalBytes, string Ip) worst) =>
+        candidate.TotalBytes > worst.TotalBytes
+        || (candidate.TotalBytes == worst.TotalBytes
+            && string.CompareOrdinal(candidate.Ip, worst.Ip) < 0);
 
     private void SetCounter(string name, long value) => counters[name].IncTo(value);
 

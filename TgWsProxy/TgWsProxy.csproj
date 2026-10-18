@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-	<Version>3.0.1</Version>
+	<Version>3.0.2</Version>
     <RootNamespace>TgWsProxy</RootNamespace>
 	<DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
 	<RuntimeIdentifiers>linux-x64;linux-arm64</RuntimeIdentifiers>
@@ -17,6 +17,7 @@
 		<PackageReference Include="Serilog.Extensions.Hosting" />
 		<PackageReference Include="Serilog.Extensions.Logging.File" />
 		<PackageReference Include="Serilog.Sinks.File" />
+		<PackageReference Include="Serilog.Sinks.Async" />
 		<PackageReference Include="prometheus-net.AspNetCore" />
 		<PackageReference Include="prometheus-net.AspNetCore.HealthChecks" />
 		<PackageReference Include="AspNetCore.HealthChecks.UI.Client" />

@@ -1,8 +1,6 @@
-#nullable enable
-
-using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Sockets;
+using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 
 namespace TgWsProxy.Infrastructure.FakeTls;

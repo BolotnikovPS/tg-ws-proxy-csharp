@@ -1,6 +1,6 @@
 # Требования: Web API + HTML-панель как единственный режим работы
 
-**Проект:** `tg-ws-proxy-csharp` (порт Flowseal/tg-ws-proxy на C#/.NET 8)
+**Проект:** `tg-ws-proxy-csharp` (порт Flowseal/tg-ws-proxy на C#/.NET 11)
 **Статус документа:** черновик требований, редакция 3 — web-only + мультитокены
 **Область:** `TgWsProxy` (host), `TgWsProxy.Application`, `TgWsProxy.Domain`, `Dockerfile`, `DockerCompose`, `README.md`
 
@@ -211,7 +211,7 @@
 | **N-2** | Память реестра ограничена `perIpStatsMaxPeers`; при выключенном `enablePerIpStats` — ноль. |
 | **N-3** | HTTP-запрос обслуживается без удержания блокировок горячего пути дольше копирования снимка. |
 | **N-4** | Разрешённые новые зависимости: `Swashbuckle.AspNetCore`, `AspNetCore.HealthChecks.UI.Client`, `prometheus-net.AspNetCore.HealthChecks` (транзитивно — `prometheus-net`), `Microsoft.Extensions.Diagnostics.HealthChecks`. Регистрируются в `Directory.Packages.props` (центральное управление версиями). Сборщики JS/CSS не вводятся. |
-| **N-5** | Целевая платформа — .NET 8, RID `linux-x64`/`linux-arm64`; `TgWsProxy.csproj` — `Microsoft.NET.Sdk.Web`. |
+| **N-5** | Целевая платформа — .NET 11, RID `linux-x64`/`linux-arm64`; `TgWsProxy.csproj` — `Microsoft.NET.Sdk.Web`. |
 | **N-6** | Ломающее изменение — мажорная версия **3.0.0**: удаление конфигурационных CLI-флагов, консольного режима и ключа `secret`; смена имён метрик Prometheus (`_total`). В `README.md` — раздел миграции 2.x → 3.0. |
 | **N-7** | Тестируемость: реестр статистики, реестр сессий, CRUD токенов, выбор токена при handshake, загрузчик/сохранятель конфига, валидация, эндпоинты, перезапуск слушателя и откат, health checks — покрываются xUnit-тестами. |
 | **N-8** | Секреты токенов и `webApiToken` не попадают в журнал, в метки Prometheus, в спецификацию OpenAPI и в ответы GET API. |
@@ -589,7 +589,7 @@ tgws_peer_bytes_up_total{ip="203.0.113.7",token="iPhone Pavel"} 10485760
 4. `docker-compose.yml`: убрать конфигурационные флаги из `command:`, оставить `TGWS_CONFIG`.
 5. `config.example.json`: `tokens`, `enableSwagger`, `prometheusTopPeers`; `secret` удалён.
 6. `README.md`: миграция 2.x → 3.0 (флаги → ключи, `secret` → `tokens`, имена метрик), удаление описания консольного режима.
-7. Версия — `3.0.1`.
+7. Версия — `3.0.2`.
 
 **Проверка:** `docker compose up` → панель доступна, токены управляются из UI, конфиг переживает пересоздание.
 

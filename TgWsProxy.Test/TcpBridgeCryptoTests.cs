@@ -1,6 +1,6 @@
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Wire;
 using TgWsProxy.Infrastructure.Instances;
+using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Test;
 
@@ -44,11 +44,11 @@ public class TcpBridgeCryptoTests
         Assert.Equal(plaintext, plainBuffer);
 
         // В Telegram уходит tg_enc(plaintext): расшифровка тем же потоком возвращает исходные данные.
-        Assert.Equal(plaintext, Encrypt(TgEncKey, TgEncIv, sent));
+        Assert.Equal(plaintext, Encrypt(TgEncKey, TgEncIv, sent.ToArray()));
 
         // Регрессия: повторное шифрование клиентского шифротекста даёт другой (неверный) результат.
         var doubleEncrypted = Encrypt(TgEncKey, TgEncIv, clientCipher);
-        Assert.NotEqual(doubleEncrypted, sent);
+        Assert.NotEqual(doubleEncrypted, sent.ToArray());
     }
 
     [Fact]
@@ -70,8 +70,8 @@ public class TcpBridgeCryptoTests
 
         // Каждый WS-пакет — tg_enc соответствующего MTProto-пакета. Поток tg_enc
         // непрерывен, поэтому второй пакет расшифровывается со сдвигом на длину первого.
-        Assert.Equal(first, Encrypt(TgEncKey, TgEncIv, parts[0], skip: 0));
-        Assert.Equal(second, Encrypt(TgEncKey, TgEncIv, parts[1], skip: first.Length));
+        Assert.Equal(first, Encrypt(TgEncKey, TgEncIv, parts[0].ToArray(), skip: 0));
+        Assert.Equal(second, Encrypt(TgEncKey, TgEncIv, parts[1].ToArray(), skip: first.Length));
     }
 
     [Fact]
@@ -109,7 +109,7 @@ public class TcpBridgeCryptoTests
         var parts = TcpBridgeService.TransformUpstream(ctx, splitter: null, buffer, plainBuffer, clientCipher.Length);
 
         var sent = Assert.Single(parts);
-        Assert.Equal(plaintext, Encrypt(TgEncKey, TgEncIv, sent));
+        Assert.Equal(plaintext, Encrypt(TgEncKey, TgEncIv, sent.ToArray()));
     }
 
     private static CryptoCtx CreateCtx() => new(

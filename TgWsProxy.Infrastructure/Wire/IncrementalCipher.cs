@@ -1,5 +1,3 @@
-#nullable enable
-
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Security.Cryptography;

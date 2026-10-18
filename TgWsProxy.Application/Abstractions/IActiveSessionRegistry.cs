@@ -1,5 +1,3 @@
-#nullable enable
-
 using System.Net.Sockets;
 
 namespace TgWsProxy.Application.Abstractions;

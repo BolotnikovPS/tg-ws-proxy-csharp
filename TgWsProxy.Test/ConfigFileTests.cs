@@ -1,5 +1,3 @@
-#nullable enable
-
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 

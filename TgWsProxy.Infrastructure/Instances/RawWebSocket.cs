@@ -1,11 +1,9 @@
-#nullable enable
-
-using Microsoft.Extensions.Logging;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Net.Sockets;
 using System.Runtime.Intrinsics;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain.Exceptions;
 using TgWsProxy.Infrastructure.IO;
@@ -22,6 +20,15 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
     private const int MaxCoalescedBatchBytes = 256 * 1024;
 
     private bool _closed;
+
+    /// <summary>
+    /// Переиспользуемый буфер для чтения коротких заголовков WS-фрейма (2 байта
+    /// заголовка, 2/8 байт расширенной длины, 4 байта маски). Устраняет по одной
+    /// аллокации массива на каждое из этих чтений в горячем пути <see cref="ReadFrame"/>.
+    /// Экземпляр <see cref="RawWebSocket"/> обрабатывается строго последовательно
+    /// (один читающий таск на соединение), поэтому общий буфер безопасен.
+    /// </summary>
+    private readonly byte[] _hdr = new byte[8];
 
     /// <summary>
     /// Сборщик фрагментированных WS-сообщений. Держится в поле, чтобы продолжения
@@ -62,7 +69,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
         }
     }
 
-    public async Task Send(byte[] data, CancellationToken cancellationToken)
+    public async Task Send(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
     {
         if (_closed)
         {
@@ -80,7 +87,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
         }
     }
 
-    public async Task SendBatch(IReadOnlyList<byte[]> parts, CancellationToken cancellationToken)
+    public async Task SendBatch(IReadOnlyList<ReadOnlyMemory<byte>> parts, CancellationToken cancellationToken)
     {
         if (_closed)
         {
@@ -171,7 +178,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
 
             _closed = true;
             _assembler.Reset();
-            try { await WriteMaskedFrame(0x8, [], cancellationToken); } catch { }
+            try { await WriteMaskedFrame(0x8, ReadOnlyMemory<byte>.Empty, cancellationToken); } catch { }
             try { await transport.DisposeAsync(); } catch { }
             try { client.Close(); } catch { }
         }
@@ -187,12 +194,12 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
     /// <returns>Кортеж из opcode и payload прочитанного фрейма.</returns>
     private async Task<(bool Fin, byte Opcode, byte[] Payload)> ReadFrame(CancellationToken cancellationToken)
     {
-        var hdr = await transport.ReadExact(2, cancellationToken);
-        var fin = (hdr[0] & 0x80) != 0;
-        var rsv = hdr[0] & 0x70;
-        var opcode = (byte)(hdr[0] & 0x0F);
-        var masked = (hdr[1] & 0x80) != 0;
-        var len = (ulong)(hdr[1] & 0x7F);
+        await transport.ReadExact(_hdr.AsMemory(0, 2), cancellationToken);
+        var fin = (_hdr[0] & 0x80) != 0;
+        var rsv = _hdr[0] & 0x70;
+        var opcode = (byte)(_hdr[0] & 0x0F);
+        var masked = (_hdr[1] & 0x80) != 0;
+        var len = (ulong)(_hdr[1] & 0x7F);
         if (rsv != 0)
         {
             throw new IOException($"Unsupported WS RSV bits: 0x{rsv:X}");
@@ -200,11 +207,13 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
 
         if (len == 126)
         {
-            len = BinaryPrimitives.ReadUInt16BigEndian(await transport.ReadExact(2, cancellationToken));
+            await transport.ReadExact(_hdr.AsMemory(0, 2), cancellationToken);
+            len = BinaryPrimitives.ReadUInt16BigEndian(_hdr.AsSpan(0, 2));
         }
         else if (len == 127)
         {
-            len = BinaryPrimitives.ReadUInt64BigEndian(await transport.ReadExact(8, cancellationToken));
+            await transport.ReadExact(_hdr.AsMemory(0, 8), cancellationToken);
+            len = BinaryPrimitives.ReadUInt64BigEndian(_hdr.AsSpan(0, 8));
         }
 
         if (len > (ulong)wsMaxFrameBytes)
@@ -213,11 +222,11 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
             throw new WsFrameTooLargeException(len, wsMaxFrameBytes);
         }
 
-        var mask = masked ? await transport.ReadExact(4, cancellationToken) : null;
         var payload = await transport.ReadExact(checked((int)len), cancellationToken);
-        if (mask is not null)
+        if (masked)
         {
-            XorMask(payload, mask);
+            await transport.ReadExact(_hdr.AsMemory(0, 4), cancellationToken);
+            XorMask(payload, _hdr.AsSpan(0, 4));
         }
 
         return (fin, opcode, payload);
@@ -229,7 +238,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
     /// буфер writer'а и делает один drain. Для больших пачек используется
     /// покадровая отправка, чтобы не арендовать крупный буфер.
     /// </summary>
-    private async Task WriteBatch(IReadOnlyList<byte[]> parts, CancellationToken cancellationToken)
+    private async Task WriteBatch(IReadOnlyList<ReadOnlyMemory<byte>> parts, CancellationToken cancellationToken)
     {
         long total = 0;
         foreach (var part in parts)
@@ -253,7 +262,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
             var offset = 0;
             foreach (var part in parts)
             {
-                offset = WriteFrame(buffer, offset, 0x2, part);
+                offset = WriteFrame(buffer, offset, 0x2, part.Span);
             }
 
             await transport.WriteAsync(buffer.AsMemory(0, offset), cancellationToken);
@@ -264,14 +273,14 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
         }
     }
 
-    private async Task WriteMaskedFrame(byte opcode, byte[] payload, CancellationToken cancellationToken)
+    private async Task WriteMaskedFrame(byte opcode, ReadOnlyMemory<byte> payload, CancellationToken cancellationToken)
     {
         // Proxy acts as WS client towards Telegram -> must mask.
         var frameLen = FrameLength(payload.Length);
         var rented = ArrayPool<byte>.Shared.Rent(frameLen);
         try
         {
-            WriteFrame(rented, 0, opcode, payload);
+            WriteFrame(rented, 0, opcode, payload.Span);
             await transport.WriteAsync(rented.AsMemory(0, frameLen), cancellationToken);
         }
         finally
@@ -298,7 +307,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
     /// <param name="opcode">Опкод кадра.</param>
     /// <param name="payload">Незамаскированный payload.</param>
     /// <returns>Смещение сразу за записанным кадром.</returns>
-    private static int WriteFrame(byte[] buffer, int offset, byte opcode, byte[] payload)
+    private static int WriteFrame(byte[] buffer, int offset, byte opcode, ReadOnlySpan<byte> payload)
     {
         var len = payload.Length;
         var extLenBytes = ExtLenBytes(len);
@@ -340,7 +349,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
     /// <param name="maskOffset">Смещение, с которого пишется маска.</param>
     /// <param name="payload">Незамаскированный payload.</param>
     /// <returns>Смещение сразу за записанным payload.</returns>
-    private static int WriteMaskedPayload(byte[] frame, int maskOffset, byte[] payload)
+    private static int WriteMaskedPayload(byte[] frame, int maskOffset, ReadOnlySpan<byte> payload)
     {
         var mask = frame.AsSpan(maskOffset, 4);
         RandomNumberGenerator.Fill(mask);
@@ -354,17 +363,10 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
         // Копируем payload и маскируем на месте: memcpy + векторизованный XOR
         // заметно быстрее побайтового цикла с вычислением i % 4.
         var dataOffset = maskOffset + 4;
-        Buffer.BlockCopy(payload, 0, frame, dataOffset, length);
+        payload.CopyTo(frame.AsSpan(dataOffset, length));
         XorMask(frame.AsSpan(dataOffset, length), mask);
         return dataOffset + length;
     }
-
-    /// <summary>
-    /// Применяет XOR-маску к буферу данных по циклическому ключу длиной 4 байта.
-    /// </summary>
-    /// <param name="data">Буфер данных для модификации.</param>
-    /// <param name="mask">4-байтовая маска WebSocket.</param>
-    private static void XorMask(byte[] data, byte[] mask) => XorMask(data.AsSpan(), mask);
 
     /// <summary>
     /// Применяет XOR-маску к спану: основной цикл векторизован по 16 байт,

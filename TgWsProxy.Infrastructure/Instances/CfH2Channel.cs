@@ -1,11 +1,9 @@
-#nullable enable
-
 using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
-using TgWsProxy.Infrastructure.Wire;
 using TgWsProxy.Domain.Exceptions;
+using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
