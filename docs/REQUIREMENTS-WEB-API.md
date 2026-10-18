@@ -589,7 +589,7 @@ tgws_peer_bytes_up_total{ip="203.0.113.7",token="iPhone Pavel"} 10485760
 4. `docker-compose.yml`: убрать конфигурационные флаги из `command:`, оставить `TGWS_CONFIG`.
 5. `config.example.json`: `tokens`, `enableSwagger`, `prometheusTopPeers`; `secret` удалён.
 6. `README.md`: миграция 2.x → 3.0 (флаги → ключи, `secret` → `tokens`, имена метрик), удаление описания консольного режима.
-7. Версия — `3.0.1`.
+7. Версия — `3.0.2-beta1`.
 
 **Проверка:** `docker compose up` → панель доступна, токены управляются из UI, конфиг переживает пересоздание.
 

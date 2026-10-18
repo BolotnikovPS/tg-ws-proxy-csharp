@@ -64,7 +64,7 @@ internal sealed class ClientSessionHandler(
             client.SendBufferSize = sockBuf;
             await using var stream = new NetworkStream(client);
 
-            logger.LogInformation("[{Scope}] client connected {Peer}", context.Scope, context.Peer);
+            logger.LogDebug("[{Scope}] client connected {Peer}", context.Scope, context.Peer);
 
             // Init читается без секрета: Fake TLS и PROXY protocol разбираются до рукопожатия,
             // а выбор токена происходит ниже, на этапе проверки secret (F-8.4).
@@ -229,7 +229,7 @@ internal sealed class ClientSessionHandler(
                 sessionDown = countingStream.BytesWritten;
             }
 
-            logger.LogInformation(
+            logger.LogDebug(
                 "[{Scope}] session ended peer={Peer} token={Token} dc={Dc} media={Media} route={Route} up={Up}B down={Down}B duration={Duration:F1}s",
                 context.Scope,
                 context.Peer,

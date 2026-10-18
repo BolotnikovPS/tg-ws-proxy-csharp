@@ -252,17 +252,17 @@ static Serilog.ILogger BuildSerilogLogger(Config cfg, Serilog.Core.LoggingLevelS
         if (cfg.LogMaxMegabytes > 0)
         {
             var limitBytes = (long)Math.Max(32 * 1024, cfg.LogMaxMegabytes * 1024 * 1024);
-            loggerConfiguration.WriteTo.File(
+            loggerConfiguration.WriteTo.Async(a => a.File(
                 new CompactJsonFormatter(),
                 cfg.LogPath,
                 rollingInterval: RollingInterval.Infinite,
                 fileSizeLimitBytes: limitBytes,
                 rollOnFileSizeLimit: true,
-                retainedFileCountLimit: Math.Max(1, cfg.LogRetainedFileCount + 1));
+                retainedFileCountLimit: Math.Max(1, cfg.LogRetainedFileCount + 1)));
         }
         else
         {
-            loggerConfiguration.WriteTo.File(new CompactJsonFormatter(), cfg.LogPath, rollingInterval: RollingInterval.Hour);
+            loggerConfiguration.WriteTo.Async(a => a.File(new CompactJsonFormatter(), cfg.LogPath, rollingInterval: RollingInterval.Hour));
         }
     }
 

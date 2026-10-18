@@ -45,7 +45,14 @@ public sealed class MsgSplitter
     /// <param name="chunk">Шифротекст, прочитанный от клиента.</param>
     /// <param name="plain">Тот же фрагмент после расшифровки (для определения границ пакетов).</param>
     /// <returns>Список пакетов; пустой, если пакет ещё не собран целиком.</returns>
-    public List<byte[]> Split(ReadOnlySpan<byte> chunk, ReadOnlySpan<byte> plain)
+    /// <remarks>
+    /// Возвращаемые срезы указывают во внутренний буфер и действительны до следующего
+    /// вызова <see cref="Split"/> или <see cref="Flush"/>: вызывающая сторона обязана
+    /// отправить их синхронно (WS-отправка читает срез до первой приостановки await).
+    /// Компактизация буфера выполняется только в начале следующего вызова, поэтому
+    /// срезы не портятся внутри текущего вызова.
+    /// </remarks>
+    public List<ReadOnlyMemory<byte>> Split(ReadOnlySpan<byte> chunk, ReadOnlySpan<byte> plain)
     {
         if (chunk.Length == 0)
         {
@@ -54,15 +61,19 @@ public sealed class MsgSplitter
 
         if (_disabled)
         {
+            // Отключённый разбор: фрагмент приходит из арендованного пула вызывающей
+            // стороны и не переживает её кадр, поэтому копируем.
             return [chunk.ToArray()];
         }
 
+        // Предыдущие срезы уже отправлены — можно безопасно компактизировать.
+        CompactIfNeeded();
         EnsureCapacity(_len + chunk.Length);
         chunk.CopyTo(_cipher.AsSpan(_len));
         plain.CopyTo(_plain.AsSpan(_len));
         _len += chunk.Length;
 
-        var parts = new List<byte[]>();
+        var parts = new List<ReadOnlyMemory<byte>>();
         var offset = _start;
 
         while (offset < _len)
@@ -76,13 +87,13 @@ public sealed class MsgSplitter
             if (packetLen <= 0)
             {
                 // Некорректный поток: отдаём остаток целиком и отключаем разбор.
-                parts.Add(_cipher.AsSpan(offset, _len - offset).ToArray());
+                parts.Add(_cipher.AsMemory(offset, _len - offset));
                 offset = _len;
                 _disabled = true;
                 break;
             }
 
-            parts.Add(_cipher.AsSpan(offset, packetLen.Value).ToArray());
+            parts.Add(_cipher.AsMemory(offset, packetLen.Value));
             offset += packetLen.Value;
         }
 
@@ -94,7 +105,7 @@ public sealed class MsgSplitter
     /// Возвращает остаток буфера (вызывается при завершении соединения).
     /// </summary>
     /// <returns>Список из одного неполного пакета либо пустой список.</returns>
-    public List<byte[]> Flush()
+    public List<ReadOnlyMemory<byte>> Flush()
     {
         if (_len == _start)
         {
@@ -102,7 +113,7 @@ public sealed class MsgSplitter
             return [];
         }
 
-        var tail = _cipher.AsSpan(_start, _len - _start).ToArray();
+        var tail = _cipher.AsMemory(_start, _len - _start);
         Reset();
         return [tail];
     }
@@ -114,7 +125,9 @@ public sealed class MsgSplitter
     }
 
     /// <summary>
-    /// Учитывает разобранный префикс буфера, компактизируя его только при необходимости.
+    /// Учитывает разобранный префикс буфера, только сдвигая указатель.
+    /// Компактизация выполняется отдельно в <see cref="CompactIfNeeded"/> в начале
+    /// следующего вызова <see cref="Split"/>, чтобы не затирать уже возвращённые срезы.
     /// </summary>
     private void Consume(int offset)
     {
@@ -130,9 +143,15 @@ public sealed class MsgSplitter
         }
 
         _start = offset;
+    }
 
-        // Компактизация: сдвигаем остаток в начало, если префикс занимает заметную часть.
-        if (_start >= 4096 && _start * 2 >= _len)
+    /// <summary>
+    /// Сдвигает неразобранный остаток в начало, если потреблённый префикс занимает
+    /// заметную часть буфера. Вызывается только до добавления новых данных.
+    /// </summary>
+    private void CompactIfNeeded()
+    {
+        if (_start > 0 && _start >= 4096 && _start * 2 >= _len)
         {
             var remaining = _len - _start;
             Buffer.BlockCopy(_cipher, _start, _cipher, 0, remaining);
