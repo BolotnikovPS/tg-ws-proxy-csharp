@@ -50,71 +50,45 @@ internal sealed class WebProxyRelaySession(
     }
 
     /// <inheritdoc />
-    public async Task RunAsync(
-        IRelayTransport transport,
-        ProxyTokenEntry token,
-        IPAddress? peer,
-        string scope,
-        CancellationToken ct)
+    public WebProxyRelayLease OpenSession(ProxyTokenEntry token, IPAddress? peer, string scope)
     {
         stats.IncConnectionsTotal();
         stats.IncConnectionsActive();
 
-        // F-W.21: поток регистрируется в реестре живых сессий, чтобы отзыв токена (F-8.7)
-        // или перезапуск слушателя разрывал его так же, как сокетные TCP-сессии. Разрыв
-        // выполняется отменой связанного токена отмены, на котором спит relay-цикл.
-        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        using var lease = sessions.Register(sessionCts.Cancel, scope);
-        lease.AssignToken(token.Id);
+        // F-W.21: сессия регистрируется в реестре живых сессий, чтобы отзыв токена (F-8.7)
+        // или перезапуск слушателя разрывал её так же, как сокетные TCP-сессии. Разрыв
+        // выполняется отменой LifetimeToken, на который подписан менеджер сессий.
+        var sessionCts = new CancellationTokenSource();
+        var registryLease = sessions.Register(sessionCts.Cancel, scope);
+        registryLease.AssignToken(token.Id);
 
-        try
+        if (peer is not null)
         {
-            if (peer is not null)
+            // F-9.1: открытие учитывается без токена, затем переезжает в пару (IP, токен).
+            peerStats.ConnectionOpened(peer);
+            peerStats.BindToken(peer, token.Id);
+        }
+
+        tokens.Touch(token.Id);
+        logger.LogDebug("[{Scope}] web-proxy session opened token={Token}", scope, token.Name);
+
+        return new WebProxyRelayLease(
+            (stream, streamCt) => BridgeStreamAsync(stream, token, scope, peer, streamCt),
+            sessionCts.Token,
+            () =>
             {
-                // F-9.1: открытие учитывается без токена, затем переезжает в пару (IP, токен).
-                peerStats.ConnectionOpened(peer);
-                peerStats.BindToken(peer, token.Id);
-            }
-
-            tokens.Touch(token.Id);
-            logger.LogDebug("[{Scope}] web-proxy bridge connected token={Token}", scope, token.Name);
-
-            Func<RelayStream, CancellationToken, Task> startBridge = (stream, streamCt) =>
-                BridgeStreamAsync(stream, token, scope, peer, streamCt);
-
-            await using var multiplexer = new RelayMultiplexer(transport, startBridge);
-
-            while (true)
-            {
-                var frame = await transport.ReceiveAsync(sessionCts.Token).ConfigureAwait(false);
-                if (frame is null)
+                stats.DecConnectionsActive();
+                if (peer is not null)
                 {
-                    break;
+                    peerStats.ConnectionClosed(peer, token.Id);
                 }
 
-                await multiplexer.HandleInboundFrameAsync(frame.Value, sessionCts.Token).ConfigureAwait(false);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            logger.LogDebug("[{Scope}] web-proxy bridge canceled", scope);
-        }
-        catch (InvalidDataException ex)
-        {
-            logger.LogWarning("[{Scope}] web-proxy bridge protocol error: {Message}", scope, ex.Message);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "[{Scope}] web-proxy bridge failed", scope);
-        }
-        finally
-        {
-            stats.DecConnectionsActive();
-            if (peer is not null)
-            {
-                peerStats.ConnectionClosed(peer, token.Id);
-            }
-        }
+                // Идемпотентно: в пути реестра CTS уже отменён (это действие разрыва), в пути
+                // DELETE — отменяем, чтобы погасить подписку LifetimeToken. Dispose не вызываем,
+                // чтобы не разбирать CTS из собственного callback.
+                sessionCts.Cancel();
+                registryLease.Dispose();
+            });
     }
 
     /// <summary>

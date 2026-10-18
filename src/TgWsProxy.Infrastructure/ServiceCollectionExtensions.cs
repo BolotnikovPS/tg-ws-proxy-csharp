@@ -32,9 +32,10 @@ public static class ServiceCollectionExtensions
             .AddSingleton<IMtProtoInspector, MtProtoInspector>()
             // Ядро «после handshake» — общее для TCP-режима и web-proxy (DESIGN-WEB-PROXY §4.3).
             .AddSingleton<MtProtoBridgeEngine>()
-            // Relay-сессия WEB proxy: подбор токена по HMAC bridge-capability и relay-цикл
-            // поверх транспорта (Kestrel/WebSocket в хосте).
+            // Relay-сессия WEB proxy: подбор токена по HMAC bridge-capability и жизненный цикл
+            // сессии (статистика/реестр); менеджер сессий — bootstrap/session-токены и слоты.
             .AddSingleton<IWebProxyRelaySession, WebProxyRelaySession>()
+            .AddSingleton<WebProxySessionManager>()
             .AddSingleton<IClientSessionHandler, ClientSessionHandler>()
             .AddSingleton<IActiveSessionRegistry, ActiveSessionRegistry>()
             .AddSingleton(sp => new MetricsHistory(sp.GetRequiredService<Config>()))

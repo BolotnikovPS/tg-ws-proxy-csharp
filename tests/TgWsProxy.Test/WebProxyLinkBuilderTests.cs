@@ -4,8 +4,8 @@ using TgWsProxy.Infrastructure.WebProxy;
 namespace TgWsProxy.Test;
 
 /// <summary>
-/// Проверки сборки ссылок WEB proxy (browser-relay): внешний домен bridge, маркерный
-/// секрет <c>tg://proxy</c> и bridge-URL с HMAC capability (DESIGN-WEB-PROXY §2.2/§2.3).
+/// Проверки сборки ссылок WEB proxy (browser-relay): внешний домен bridge, секрет
+/// <c>tg://webproxy</c> и bridge-URL с HMAC capability (SPEC §2.2/§2.3).
 /// </summary>
 public sealed class WebProxyLinkBuilderTests
 {
@@ -54,10 +54,10 @@ public sealed class WebProxyLinkBuilderTests
     }
 
     [Fact]
-    public void BuildMarkerSecret_Root_Uses_Hex_With_70_Marker()
+    public void BuildMarkerSecret_Root_Returns_Plain_Secret()
     {
         Assert.Equal(
-            "70" + TestConfig.TokenSecret,
+            TestConfig.TokenSecret,
             WebProxyLinkBuilder.BuildMarkerSecret(TestConfig.TokenSecret, ""));
     }
 
@@ -84,12 +84,23 @@ public sealed class WebProxyLinkBuilderTests
     }
 
     [Fact]
-    public void BuildTgLink_Formats_With_443_And_Marker_Secret()
+    public void BuildTgLink_Formats_WebProxy_Scheme_Without_Port()
     {
         var config = WebProxyConfig("0.0.0.0", "bridge.example.com");
 
         Assert.Equal(
-            $"tg://proxy?server=bridge.example.com&port=443&secret=70{TestConfig.TokenSecret}",
+            $"tg://webproxy?server=bridge.example.com&secret={TestConfig.TokenSecret}",
+            WebProxyLinkBuilder.BuildTgLink(config, Token(config)));
+    }
+
+    [Fact]
+    public void BuildTgLink_BasePath_Encodes_Server_Slash()
+    {
+        var config = WebProxyConfig("0.0.0.0", "bridge.example.com", "v1");
+        var marker = WebProxyLinkBuilder.BuildMarkerSecret(TestConfig.TokenSecret, "v1");
+
+        Assert.Equal(
+            $"tg://webproxy?server=bridge.example.com%2Fv1&secret={marker}",
             WebProxyLinkBuilder.BuildTgLink(config, Token(config)));
     }
 
@@ -110,7 +121,7 @@ public sealed class WebProxyLinkBuilderTests
     {
         var config = WebProxyConfig("0.0.0.0", "bridge.example.com", "v1");
         var capability = BridgeCapabilityVerifier.ComputeCapability(
-            Convert.FromHexString(TestConfig.TokenSecret), "bridge.example.com", "/v1");
+            Convert.FromHexString(TestConfig.TokenSecret), "bridge.example.com", "v1");
 
         Assert.Equal(
             $"https://bridge.example.com/v1/?bridge={capability}",

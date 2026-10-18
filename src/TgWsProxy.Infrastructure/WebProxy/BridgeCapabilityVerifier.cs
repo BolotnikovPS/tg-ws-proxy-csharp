@@ -6,7 +6,7 @@ namespace TgWsProxy.Infrastructure.WebProxy;
 /// <summary>
 /// Проверка авторизации bridge-канала WEB proxy по параметру <c>?bridge=&lt;capability&gt;</c>.
 ///
-/// <c>capability = base64url(HMAC-SHA256(key = secret(16 байт), message = context))</c> без
+/// <c>capability = base64url(HMAC-SHA256(key = весь секрет (вкл. dd-байт), message = context))</c> без
 /// <c>=</c>-паддинга. Два контекста (точные строки, <c>\n</c> — перевод строки):
 /// <list type="bullet">
 /// <item><c>v1</c>: <c>tdesktop-web-proxy-bridge-v1\n&lt;host&gt;</c> — корневой путь;</item>
@@ -28,20 +28,17 @@ public static class BridgeCapabilityVerifier
     public const int CapabilityByteLength = 32;
 
     /// <summary>
-    /// Нормализует basePath к каноническому виду с ведущим слэшем: <c>""</c> для корня, иначе
-    /// <c>"/v1"</c>. Один источник истины и для маршрутов bridge, и для контекста HMAC v2.
+    /// Нормализует basePath к голому слагу без ведущего/хвостового <c>/</c>: <c>""</c> для корня,
+    /// иначе <c>"v1"</c>. Один источник истины и для маршрутов bridge, и для контекста HMAC v2.
     /// </summary>
     public static string NormalizeBasePath(string? basePath)
-    {
-        var trimmed = basePath?.Trim('/') ?? "";
-        return trimmed.Length == 0 ? "" : "/" + trimmed;
-    }
+        => basePath?.Trim().Trim('/') ?? "";
 
     /// <summary>
     /// Вычисляет capability для секрета и адреса bridge. Используется в тестах и при генерации
     /// ссылок; сервер в горячем пути применяет <see cref="Verify"/>.
     /// </summary>
-    /// <param name="secret">Секрет прокси (16 байт).</param>
+    /// <param name="secret">Секрет прокси целиком (16 байт, или 17 с dd-префиксом).</param>
     /// <param name="host">Домен bridge-сайта без пути.</param>
     /// <param name="basePath">Нормализованный путь (пусто — контекст v1).</param>
     public static string ComputeCapability(ReadOnlySpan<byte> secret, string host, string basePath)

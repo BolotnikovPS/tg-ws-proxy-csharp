@@ -10,13 +10,13 @@ namespace TgWsProxy.Test;
 /// </summary>
 public class WebProxyRelaySessionTests
 {
-    // Секрет 16 байт: 0x01..0x10 (совпадает с независимыми векторами BridgeCapabilityVerifierTests).
+    // Официальный вектор-секрет из tproxy-server PROTOCOL.md: 0x00..0x0f.
     private static readonly byte[] Secret =
-        [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10];
+        [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f];
 
-    // Векторы рассчитаны независимо (Node crypto): host = "example.com".
-    private const string V1Capability = "xk3aloth6KpS69vPUCgF9KKPSg0-E78k4UuWNZOVo40"; // basePath ""
-    private const string V2Capability = "p2QMopLb7q1wi3Cu4Zr8qHlNtrhwKwPFjH5CjZU9yOc"; // basePath "/proxy"
+    // Официальные векторы (tproxy-server PROTOCOL.md): host = "proxy.example.com".
+    private const string V1Capability = "MHLEY5PmW1GWqJkSrlmJpvJUiLhBH_QKy6yKg8a0JPk"; // basePath ""
+    private const string V2Capability = "hHz99Xs93EN1j91G9gpNepXwGNNt5YdAFkEVk_LlqdQ"; // basePath "dobry-cola-super-app"
 
     private static WebProxyRelaySession CreateSession(Config cfg, params ProxyTokenEntry[] tokens)
         => new(cfg, null!, null!, new FakeTokenRegistry(tokens), null!, null!, null!, null!);
@@ -31,7 +31,7 @@ public class WebProxyRelaySessionTests
     {
         var session = CreateSession(new Config(), Token("a", Secret));
 
-        Assert.Null(session.ResolveToken("example.com", capability));
+        Assert.Null(session.ResolveToken("proxy.example.com", capability));
     }
 
     [Fact]
@@ -39,7 +39,7 @@ public class WebProxyRelaySessionTests
     {
         var session = CreateSession(new Config(), Token("a", Secret));
 
-        var resolved = session.ResolveToken("example.com", V1Capability);
+        var resolved = session.ResolveToken("proxy.example.com", V1Capability);
 
         Assert.NotNull(resolved);
         Assert.Equal("a", resolved.Id);
@@ -48,11 +48,11 @@ public class WebProxyRelaySessionTests
     [Fact]
     public void ResolveToken_V2Context_MatchesBasePath()
     {
-        // basePath без ведущего слэша нормализуется в "/proxy" и даёт v2-контекст.
-        var cfg = new Config { WebProxyBasePath = "proxy" };
+        // Голый слаг basePath даёт v2-контекст "…\nproxy.example.com\ndobry-cola-super-app".
+        var cfg = new Config { WebProxyBasePath = "dobry-cola-super-app" };
         var session = CreateSession(cfg, Token("a", Secret));
 
-        var resolved = session.ResolveToken("example.com", V2Capability);
+        var resolved = session.ResolveToken("proxy.example.com", V2Capability);
 
         Assert.NotNull(resolved);
         Assert.Equal("a", resolved.Id);
@@ -65,7 +65,7 @@ public class WebProxyRelaySessionTests
             [0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00]);
         var session = CreateSession(new Config(), other);
 
-        Assert.Null(session.ResolveToken("example.com", V1Capability));
+        Assert.Null(session.ResolveToken("proxy.example.com", V1Capability));
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public class WebProxyRelaySessionTests
     {
         var session = CreateSession(new Config(), Token("empty", []), Token("match", Secret));
 
-        var resolved = session.ResolveToken("example.com", V1Capability);
+        var resolved = session.ResolveToken("proxy.example.com", V1Capability);
 
         Assert.NotNull(resolved);
         Assert.Equal("match", resolved.Id);

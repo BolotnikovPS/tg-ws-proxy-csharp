@@ -260,27 +260,27 @@ dotnet TgWsProxy.dll --config /etc/tg-ws-proxy/config.json
 
 ### WEB proxy (browser-relay bridge)
 
-Опциональный bridge для WEB proxy из Telegram Desktop (dev-ветка): браузер подключается к серверу по WebSocket поверх HTTPS и ретранслирует MTProto в Telegram DC. Включается `webProxyEnabled`; по умолчанию выключен и порт не занимает.
+Опциональный bridge для WEB proxy из Telegram Desktop: браузер подключается к серверу по HTTPS long-poll (носитель `POST /api/v1/{session,up,down}`) и ретранслирует MTProto в Telegram DC. Включается `webProxyEnabled`; по умолчанию выключен и порт не занимает.
 
 | Ключ | По умолчанию | Категория | Описание |
 |---|---|---|---|
 | `webProxyEnabled` | `false` | только старт | Включить bridge-листенер. |
 | `webProxyHost` | `0.0.0.0` | только старт | Адрес привязки bridge. |
 | `webProxyPort` | `443` | только старт | Порт bridge (должен отличаться от `port` и `metricsPort`). |
-| `webProxyBasePath` | пусто | только старт | Путь сайта (`""` → корень, иначе `/v1`). |
+| `webProxyBasePath` | пусто | только старт | Путь сайта — голый слаг (`""` → корень, иначе `slug`). |
 | `webProxyPublicHost` | пусто | горячо | Внешний домен для bridge-ссылки. |
 | `webProxyCertPath` | пусто | только старт | PFX/сертификат для TLS (обязателен при `webProxyEnabled`). |
 | `webProxyCertPassword` | пусто | только старт | Пароль PFX (в GET API маскируется). |
 
-Bridge слушает `https://webProxyHost:webProxyPort` с путём `webProxyBasePath`: корень отдаёт статическую страницу, `…/transport` — WebSocket-релей с авторизацией `?bridge=<capability>` (HMAC-SHA256 секрета токена). Все ключи, кроме `webProxyPublicHost`, применяются только перезапуском процесса.
+Bridge слушает `https://webProxyHost:webProxyPort` с путём `webProxyBasePath`: корень `GET /?bridge=<capability>` отдаёт динамическую bridge-страницу со встроенным JS-носителем и одноразовым bootstrap-токеном (авторизация по HMAC-SHA256 секрета токена), а `…/api/v1/{session,up,down}` — HTTPS long-poll carrier с заголовком `Authorization: Bearer <token>`. Все ключи, кроме `webProxyPublicHost`, применяются только перезапуском процесса.
 
-Проверить bridge без клиента можно смоук-скриптом `tools/web-proxy-smoke.mjs` (Node.js ≥ 22, без зависимостей) — он эмулирует bridge-клиента: авторизация `?bridge=`, `Hello→Welcome`, `Ping→Pong` и полный `Open → Data(obfuscated2 init) → relay_init`:
+Проверить bridge без клиента можно смоук-скриптом `tools/web-proxy-smoke.mjs` (Node.js ≥ 18, без зависимостей) — он эмулирует bridge-клиента поверх HTTPS long-poll: `GET /?bridge=…` (bootstrap), `POST /api/v1/session` (`HELLO→WELCOME`), `POST /api/v1/up` (`OPEN+DATA`) и `POST /api/v1/down` (long-poll с `WINDOW`-кредитом). Транспортный режим детерминирован и не требует доступа к Telegram DC:
 
 ```bash
-node tools/web-proxy-smoke.mjs --host bridge.example.com --secret <32hex> [--port 443] [--base-path /v1] [--insecure]
+node tools/web-proxy-smoke.mjs --host bridge.example.com --secret <32hex> [--port 443] [--base-path slug] [--insecure]
 ```
 
-`--insecure` отключает проверку TLS для самоподписанного тестового сертификата.
+`--full` отправляет настоящий obfuscated2 init и ждёт `relay_init` (нужна сеть с доступом к Telegram DC). `--insecure` отключает проверку TLS для самоподписанного тестового сертификата.
 
 ### Как применяются изменения
 

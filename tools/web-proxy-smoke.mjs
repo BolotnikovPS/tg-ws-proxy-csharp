@@ -2,35 +2,35 @@
 //
 // Смоук-тест WEB proxy (browser-relay) для tg-ws-proxy-csharp.
 //
-// Эмулирует bridge-клиента (то, что делает tdesktop в dev-ветке) без самого клиента:
-//   1. WSS → /transport?bridge=<capability>   (HMAC-SHA256 от секрета токена)
-//   2. Hello → ожидаем Welcome                (сессионное приветствие)
-//   3. Ping  → ожидаем Pong                   (keepalive / живость relay)
-//   4. Open(stream 1) + Data(64-байтный obfuscated2 init) → ожидаем Data(relay_init)
+// Эмулирует bridge-клиента поверх HTTPS long-poll носителя (SPEC §1/§2):
+//   1. GET  /?bridge=<capability>            → bridge-страница с bootstrap-токеном
+//   2. POST /api/v1/session  (HELLO)         → 200 + WELCOME + X-Session-Token
+//   3. POST /api/v1/up       (OPEN + DATA)   → 204 + X-Up-Ack (uplink)
+//   4. POST /api/v1/down     (long-poll)     → 200 + WINDOW-кредит (flow-control)
+//   5. DELETE /api/v1/session                → 204 (закрытие сессии)
 //
-// Фаза 4 проверяет полный путь: разбор relay-frame → HMAC-авторизация → чтение 64 байт
-// init → TryHandshake → MtProtoBridgeEngine → отправка relay_init обратно в поток.
+// Транспортный режим (по умолчанию) детерминирован и не требует доступа к Telegram DC:
+// в поток отправляется намеренно НЕвалидный obfuscated2 init, поэтому мост честно читает
+// 64 байта (клиент получает WINDOW-кредит), не проходит рукопожатие и закрывает поток
+// (CLOSE). Это проверяет capability-HMAC, bootstrap, HELLO/WELCOME, relay-поток,
+// flow-control и закрытие без сети до Telegram.
 //
-// Требования: Node.js >= 20 и пакет `ws` (выполни `npm install` в папке tools/).
-// Встроенный WebSocket (undici) не умеет отключать проверку самоподписанного
-// TLS-сертификата, поэтому для --insecure используется `ws` с rejectUnauthorized:false.
+// --full: отправить НАСТОЯЩИЙ obfuscated2 init и ждать relay_init (Data stream 1) —
+// требует сети с доступом к Telegram DC (VPS/VPN); иначе честно сообщает о блокировке.
+//
+// Требования: Node.js >= 18 (используется node:https, без внешних зависимостей).
 //
 // Пример:
 //   node tools/web-proxy-smoke.mjs \
-//     --host bridge.example.com \
+//     --host 127.0.0.1 \
 //     --secret 00112233445566778899aabbccddeeff \
-//     [--port 443] [--base-path /v1] [--dc 2] [--proto abridged] [--insecure] [--timeout 10]
+//     [--port 443] [--base-path slug] [--dc 2] [--proto abridged] [--insecure] [--timeout 10]
 //
-// --capability <base64url>: пропустить вычисление HMAC и подставить готовое значение
-//   (можно скопировать часть после "?bridge=" из bridge-URL панели).
+// --capability <base64url>: пропустить вычисление HMAC и подставить готовое значение.
 // --insecure: отключить проверку TLS-сертификата (для самоподписанного тестового серта).
 
 import crypto from 'node:crypto';
-
-async function loadWs() {
-  const mod = await import('ws');
-  return mod.default ?? mod.WebSocket;
-}
+import https from 'node:https';
 
 // ---- relay-frame протокол (DESIGN-WEB-PROXY §2.1) ----
 const FT = {
@@ -71,6 +71,17 @@ function parseFrame(buf, offset = 0) {
   return { type, streamId, length, payload, total: 8 + length };
 }
 
+function parseBatch(buf) {
+  const frames = [];
+  let off = 0;
+  while (off + FRAME_HEADER_SIZE <= buf.length) {
+    const f = parseFrame(buf, off);
+    frames.push(f);
+    off += f.total;
+  }
+  return frames;
+}
+
 const FRAME_NAMES = Object.fromEntries(
   Object.entries(FT).map(([name, code]) => [code, name]));
 
@@ -79,12 +90,10 @@ function base64url(buf) {
   return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+// Голый слаг (как BridgeCapabilityVerifier.NormalizeBasePath): trim + без ведущих/хвостовых '/'.
 function normalizeBasePath(raw) {
   if (!raw) return '';
-  let s = raw.trim();
-  if (s === '' || s === '/') return '';
-  if (!s.startsWith('/')) s = '/' + s;
-  s = s.replace(/\/+$/, '');
+  const s = raw.trim().replace(/^\/+/, '').replace(/\/+$/, '');
   return s;
 }
 
@@ -102,7 +111,6 @@ function buildObfs2Init(secretHex, dc, protoTag) {
   const init = crypto.randomBytes(64);
   init.writeUInt32BE(protoTag, 56); // proto tag: big-endian
   init.writeInt16LE(dc, 60);        // dc idx: signed LE16 (media — отрицательный)
-  // init[62:64] уже случайные
 
   const prekey = init.subarray(8, 40); // SkipLen=8, PreKeyLen=32
   const iv = init.subarray(40, 56);    // IvLen=16
@@ -110,9 +118,8 @@ function buildObfs2Init(secretHex, dc, protoTag) {
     .update(Buffer.concat([prekey, secret]))
     .digest();
 
-  // Сервер (MtProtoInspector.TryHandshake) генерирует 64-байтовый keystream
-  // (AES-256-CTR над 64 нулями) и читает хвост в смещении 56. Шифруем хвост
-  // теми же байтами keystream[56:64], а не первыми 8 байтами потока.
+  // Сервер генерирует 64-байтовый keystream (AES-256-CTR над 64 нулями) и читает хвост
+  // в смещении 56. Шифруем хвост теми же байтами keystream[56:64].
   const cipher = crypto.createCipheriv('aes-256-ctr', key, iv);
   const keystream = Buffer.concat([cipher.update(Buffer.alloc(64)), cipher.final()]);
   for (let i = 56; i < 64; i++) {
@@ -132,13 +139,13 @@ function usage() {
 
 Опции:
   --port <n>           порт bridge (по умолчанию 443)
-  --base-path <p>      basePath сайта ("" — корень; иначе "/v1")
+  --base-path <p>      basePath сайта — голый слаг ("" — корень; иначе "slug")
   --capability <s>     готовый HMAC capability (вместо вычисления)
   --dc <n>             DC для obfuscated2 init (по умолчанию 2)
   --proto <t>          abridged|intermediate|padded (по умолчанию abridged)
   --insecure           отключить проверку TLS (самоподписанный серт)
   --timeout <s>        таймаут ожидания ответа, сек (по умолчанию 10)
-  --no-full            пропустить фазу 4 (только Hello/Ping)
+  --full               полный путь: настоящий init и ожидание relay_init (нужен Telegram DC)
 `);
   process.exit(2);
 }
@@ -151,7 +158,7 @@ function parseArgs(argv) {
     proto: 'abridged',
     insecure: false,
     timeout: 10,
-    full: true,
+    full: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -166,7 +173,7 @@ function parseArgs(argv) {
       case '--proto': args.proto = next(); break;
       case '--insecure': args.insecure = true; break;
       case '--timeout': args.timeout = Number(next()); break;
-      case '--no-full': args.full = false; break;
+      case '--full': args.full = true; break;
       case '--help':
       case '-h': usage(); break;
       default: console.error(`Неизвестный аргумент: ${a}`); usage();
@@ -188,12 +195,46 @@ function info(msg) {
   console.log(`[..]   ${msg}`);
 }
 
+// ---- HTTP (node:https; rejectUnauthorized:false для --insecure) ----
+function httpsRequest({ method, path, headers = {}, body = null, timeoutMs }) {
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      host: args.host,
+      port: args.port,
+      method,
+      path,
+      servername: args.host,
+      rejectUnauthorized: !args.insecure,
+      headers: {
+        ...headers,
+        ...(body && body.length ? { 'Content-Length': body.length } : {}),
+      },
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({
+        status: res.statusCode,
+        headers: res.headers,
+        body: Buffer.concat(chunks),
+      }));
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => req.destroy(new Error(`таймаут ${timeoutMs}мс`)));
+    if (body && body.length) req.write(body);
+    req.end();
+  });
+}
+
+function logFrame(f) {
+  const name = FRAME_NAMES[f.type] ?? `0x${f.type.toString(16)}`;
+  const payload = f.payload.length ? f.payload.toString('hex') : '';
+  info(`<- ${name} stream=${f.streamId} len=${f.length}${payload ? ` payload=${payload}` : ''}`);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
-  if (args.insecure) {
-    info('TLS-верификация отключена (--insecure)');
-  }
+  if (args.insecure) info('TLS-верификация отключена (--insecure)');
   if (!args.host) fail('не задан --host');
   if (!args.secret) fail('не задан --secret');
 
@@ -207,137 +248,175 @@ async function main() {
 
   const basePath = normalizeBasePath(args.basePath);
   const capability = args.capability ?? computeCapability(secretHex, args.host, basePath);
-  const path = `${basePath}/transport`;
-  const url = `wss://${args.host}:${args.port}${path}?bridge=${encodeURIComponent(capability)}`;
+  const basePrefix = basePath ? `/${basePath}/` : '/';
+  const bridgePath = basePath ? `/${basePath}` : '/';
+  const sessionPath = `${basePrefix}api/v1/session`;
+  const upPath = `${basePrefix}api/v1/up`;
+  const downPath = `${basePrefix}api/v1/down`;
 
   info(`host      : ${args.host}`);
   info(`basePath  : ${basePath === '' ? '(root)' : basePath}`);
   info(`capability: ${capability}`);
-  info(`url       : ${url}`);
+  info(`bridge    : https://${args.host}:${args.port}${bridgePath}?bridge=${encodeURIComponent(capability)}`);
+  info(`carrier   : ${basePrefix}api/v1/{session,up,down}`);
   info(`DC        : ${args.dc} (${args.proto})`);
 
-  const WS = await loadWs().catch(() => null);
-  if (!WS) {
-    fail('не найден пакет "ws". Выполни в папке tools/:  npm install');
-  }
+  const reqTimeout = Math.max(args.timeout * 1000, 30000);
 
-  const ws = new WS(url, {
-    rejectUnauthorized: !args.insecure,
-    handshakeTimeout: (args.timeout + 5) * 1000,
+  // ---- Фаза 1: bridge-страница → bootstrap ----
+  const pageRes = await httpsRequest({
+    method: 'GET',
+    path: `${bridgePath}?bridge=${encodeURIComponent(capability)}`,
+    timeoutMs: reqTimeout,
   });
-  const received = [];
-  const listeners = [];
-
-  ws.onmessage = (ev) => {
-    const buf = Buffer.from(ev.data);
-    let off = 0;
-    while (off + FRAME_HEADER_SIZE <= buf.length) {
-      const f = parseFrame(buf, off);
-      off += f.total;
-      for (const l of [...listeners]) l(f);
-      received.push(f);
-    }
-  };
-
-  const closeError = { reason: null };
-  ws.onclose = (ev) => {
-    closeError.reason = new Error(`соединение закрыто (code=${ev.code}, reason=${ev.reason})`);
-    for (const l of [...listeners]) l(null); // разбудить ожидающих
-  };
-  ws.onerror = () => {
-    closeError.reason = new Error('ошибка WebSocket (TLS? см. --insecure)');
-    for (const l of [...listeners]) l(null);
-  };
-
-  function waitFor(predicate, timeoutMs, label) {
-    return new Promise((resolve, reject) => {
-      const idx = received.findIndex(predicate);
-      if (idx >= 0) {
-        const f = received[idx];
-        received.splice(idx, 1);
-        resolve(f);
-        return;
-      }
-      const timer = setTimeout(() => {
-        const i = listeners.indexOf(handler);
-        if (i >= 0) listeners.splice(i, 1);
-        reject(new Error(`таймаут ${timeoutMs}мс в ожидании ${label}${closeError.reason ? ` (${closeError.reason.message})` : ''}`));
-      }, timeoutMs);
-      function handler(f) {
-        if (f !== null && predicate(f)) {
-          clearTimeout(timer);
-          const i = listeners.indexOf(handler);
-          if (i >= 0) listeners.splice(i, 1);
-          resolve(f);
-        } else if (f === null) {
-          clearTimeout(timer);
-          const i = listeners.indexOf(handler);
-          if (i >= 0) listeners.splice(i, 1);
-          reject(closeError.reason ?? new Error('соединение закрыто'));
-        }
-      }
-      listeners.push(handler);
-    });
+  if (pageRes.status !== 200) {
+    fail(`bridge-страница вернула HTTP ${pageRes.status} (capability не подошёл ни одному токену?)`);
   }
+  const html = pageRes.body.toString('utf8');
+  const m = /bootstrap="([A-Za-z0-9_-]{43})"/.exec(html);
+  if (!m) fail('не удалось извлечь bootstrap-токен из bridge-страницы');
+  const bootstrap = m[1];
+  ok(`bridge-страница: bootstrap=${bootstrap}`);
 
-  await new Promise((resolve, reject) => {
-    ws.onopen = resolve;
-    ws.onerror = () => reject(new Error('не удалось открыть WebSocket (TLS? см. --insecure)'));
+  // ---- Фаза 2: POST /session (HELLO) → WELCOME ----
+  const hello = buildFrame(FT.Hello, 0, Buffer.from([0x01]));
+  const sessionRes = await httpsRequest({
+    method: 'POST',
+    path: sessionPath,
+    headers: {
+      Authorization: `Bearer ${bootstrap}`,
+      'Content-Type': 'application/octet-stream',
+    },
+    body: hello,
+    timeoutMs: reqTimeout,
   });
-  ok(`WebSocket открыт: ${path}`);
+  if (sessionRes.status !== 200) {
+    fail(`POST /session вернул HTTP ${sessionRes.status} (ожидался 200)`);
+  }
+  const sessionToken = sessionRes.headers['x-session-token'];
+  const downCursor = sessionRes.headers['x-down-cursor'] ?? '0';
+  if (!sessionToken) fail('ответ /session без X-Session-Token');
+  const welcomeFrames = parseBatch(sessionRes.body);
+  const welcome = welcomeFrames.find((f) => f.type === FT.Welcome);
+  if (!welcome) fail('ответ /session не содержит WELCOME-кадр');
+  ok(`session создана: token=${sessionToken}, WELCOME (stream=${welcome.streamId}), cursor=${downCursor}`);
 
-  // Фаза 2: Hello → Welcome
-  ws.send(buildFrame(FT.Hello, 0));
-  const welcome = await waitFor(
-    (f) => f.type === FT.Welcome,
-    args.timeout * 1000,
-    'Welcome');
-  ok(`Hello → Welcome (payload ${welcome.length} байт)`);
+  // ---- Фаза 3: POST /up (OPEN 1 + DATA 1) → 204 ----
+  // Транспортный режим: намеренно невалидный init (мост честно прочитает и закроет поток).
+  // --full: настоящий obfuscated2 init (рукопожатие проходит, мост идёт к Telegram DC).
+  const init = args.full
+    ? buildObfs2Init(secretHex, args.dc, PROTO_TAGS[args.proto])
+    : crypto.randomBytes(64); // невалидный init
+  info(`init (64 байта, ${args.full ? 'настоящий obfuscated2' : 'невалидный для транспортного теста'}): ${init.toString('hex')}`);
 
-  // Фаза 3: Ping → Pong
-  ws.send(buildFrame(FT.Ping, 0));
-  const pong = await waitFor(
-    (f) => f.type === FT.Pong,
-    args.timeout * 1000,
-    'Pong');
-  ok(`Ping → Pong (payload ${pong.length} байт)`);
+  const upBody = Buffer.concat([
+    buildFrame(FT.Open, 1),
+    buildFrame(FT.Data, 1, init),
+  ]);
+  const upRes = await httpsRequest({
+    method: 'POST',
+    path: upPath,
+    headers: {
+      Authorization: `Bearer ${sessionToken}`,
+      'Content-Type': 'application/octet-stream',
+      'X-Up-Seq': '1',
+    },
+    body: upBody,
+    timeoutMs: reqTimeout,
+  });
+  if (upRes.status !== 204 || upRes.headers['x-up-ack'] !== '1') {
+    fail(`POST /up вернул HTTP ${upRes.status} (ожидался 204 + X-Up-Ack: 1)`);
+  }
+  ok('uplink принят (204, X-Up-Ack: 1): OPEN(1) + DATA(1, 64B)');
 
+  // ---- Фаза 4: POST /down (long-poll) ----
   if (!args.full) {
-    info('--no-full: фаза 4 (MTProto handshake) пропущена');
-    ws.send(buildFrame(FT.Bye, 0));
-    ws.close(1000, 'smoke done');
-    console.log('\nСмоук-тест (transport) пройден: relay-frame + HMAC-авторизация работают.');
-    process.exit(0);
+    const downRes = await httpsRequest({
+      method: 'POST',
+      path: downPath,
+      headers: {
+        Authorization: `Bearer ${sessionToken}`,
+        'X-Down-Cursor': downCursor,
+        'Content-Length': '0',
+      },
+      timeoutMs: reqTimeout,
+    });
+    if (downRes.status !== 200) {
+      fail(`POST /down вернул HTTP ${downRes.status} (ожидался 200 с WINDOW-кредитом)`);
+    }
+    const frames = parseBatch(downRes.body);
+    frames.forEach(logFrame);
+    const window = frames.find((f) => f.type === FT.Window && f.streamId === 1);
+    const close = frames.find((f) => f.type === FT.Close && f.streamId === 1);
+    if (!window) fail('downlink не содержит WINDOW-кредит (flow-control не сработал)');
+    ok(`downlink: WINDOW-кредит (stream=1, credit=${window.payload.readUInt32BE(0)})`);
+    if (close) ok('downlink: CLOSE(1) — мост закрыл поток после невалидного init');
+    else info('CLOSE(1) не попал в первый батч (может прийти следующим long-poll)');
+  } else {
+    // --full: опрашиваем downlink до получения relay_init (Data stream 1) или таймаута.
+    const deadline = Date.now() + args.timeout * 1000;
+    let cursor = downCursor;
+    let sawRelayInit = false;
+    while (Date.now() < deadline) {
+      const pollTimeout = Math.min(30000, Math.max(2000, deadline - Date.now() + 500));
+      let downRes;
+      try {
+        downRes = await httpsRequest({
+          method: 'POST',
+          path: downPath,
+          headers: {
+            Authorization: `Bearer ${sessionToken}`,
+            'X-Down-Cursor': String(cursor),
+            'Content-Length': '0',
+          },
+          timeoutMs: pollTimeout,
+        });
+      } catch {
+        break; // long-poll оборван по таймауту — Telegram DC недоступен
+      }
+      if (downRes.status === 200) {
+        cursor = downRes.headers['x-down-cursor'] ?? cursor;
+        for (const f of parseBatch(downRes.body)) {
+          logFrame(f);
+          if (f.type === FT.Data && f.streamId === 1) { sawRelayInit = true; break; }
+        }
+        if (sawRelayInit) break;
+      } else if (downRes.status === 204) {
+        // пусто: сервер long-poll'нул 25с без данных — Telegram DC недоступен
+      } else {
+        break;
+      }
+    }
+    if (!sawRelayInit) {
+      info('relay_init (Data stream 1) не получен: Telegram DC недоступен из этой сети (нужен VPS/VPN)');
+      info('транспорт, авторизация и flow-control при этом работают (см. WINDOW-кадры выше)');
+      await closeSession(sessionToken, sessionPath);
+      process.exit(3);
+    }
+    ok('relay_init получен: bridge → HMAC → obfs2 → MTProto bridge → relay_init');
   }
 
-  // Фаза 4: Open(1) + Data(obfuscated2 init) → Data(relay_init)
-  const init = buildObfs2Init(secretHex, args.dc, PROTO_TAGS[args.proto]);
-  info(`obfs2 init (64 байта): ${init.toString('hex')}`);
+  // ---- Фаза 5: DELETE /session → 204 ----
+  await closeSession(sessionToken, sessionPath);
+  ok('сессия закрыта (DELETE /session → 204)');
 
-  ws.send(buildFrame(FT.Open, 1));
-  ws.send(buildFrame(FT.Data, 1, init));
-
-  try {
-    const relay = await waitFor(
-      (f) => f.type === FT.Data && f.streamId === 1,
-      args.timeout * 1000,
-      'relay_init (Data stream 1)');
-    ok(`relay_init получен (${relay.length} байт): ${relay.payload.toString('hex')}`);
-    console.log('\nСмоук-тест пройден: bridge → HMAC → obfs2 handshake → MTProto bridge → relay_init.');
-  } catch (e) {
-    ws.send(buildFrame(FT.Close, 1));
-    ws.send(buildFrame(FT.Bye, 0));
-    ws.close(1000, 'smoke done');
-    console.error(`\n[WARN] Фаза 4 не прошла: ${e.message}`);
-    console.error('Транспорт и авторизация работают (Hello/Ping ок), но relay_init не пришёл.');
-    console.error('Проверьте логи прокси: доступен ли Telegram DC (ws-пул / fallback), интернет, а также --dc и --secret.');
-    process.exit(3);
-  }
-
-  ws.send(buildFrame(FT.Close, 1));
-  ws.send(buildFrame(FT.Bye, 0));
-  ws.close(1000, 'smoke done');
+  console.log('\nСмоук-тест пройден: capability-HMAC → bootstrap → HELLO/WELCOME → relay-поток → flow-control → закрытие.');
   process.exit(0);
+}
+
+async function closeSession(sessionToken, sessionPath) {
+  const res = await httpsRequest({
+    method: 'DELETE',
+    path: sessionPath,
+    headers: {
+      Authorization: `Bearer ${sessionToken}`,
+      'Content-Length': '0',
+    },
+    timeoutMs: 30000,
+  });
+  if (res.status !== 204) {
+    info(`DELETE /session вернул HTTP ${res.status} (ожидался 204)`);
+  }
 }
 
 main().catch((e) => {

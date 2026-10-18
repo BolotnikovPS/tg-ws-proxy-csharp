@@ -271,19 +271,57 @@ public static class ConfigValidator
             }
         }
 
-        // HMAC v2-контекст включает basePath: ограничим длину и запретим пробелы (N-W.3).
+        // HMAC v2-контекст включает basePath: голый слаг без ведущего/хвостового '/', сегменты
+        // [A-Za-z0-9][A-Za-z0-9_-]*, без точек, ≤128 символов (N-W.3, BASE_PATH.md).
         var basePath = config.WebProxyBasePath?.Trim() ?? "";
         if (basePath.Length > MaxWebProxyBasePathLength)
         {
             throw new ArgumentException($"webProxyBasePath must be {MaxWebProxyBasePathLength} characters or fewer");
         }
 
-        if (basePath.Any(char.IsWhiteSpace))
+        if (basePath.Length > 0 && !IsValidWebProxyBasePath(basePath))
         {
-            throw new ArgumentException("webProxyBasePath must not contain whitespace");
+            throw new ArgumentException(
+                "webProxyBasePath must be a bare slug: segments of [A-Za-z0-9][A-Za-z0-9_-]*, no leading/trailing slash, no dots");
         }
 
         ValidateWebProxyPublicHost(config.WebProxyPublicHost);
+    }
+
+    /// <summary>
+    /// Голый слаг base-path: без ведущего/хвостового <c>/</c>, сегменты
+    /// <c>[A-Za-z0-9][A-Za-z0-9_-]*</c>, без точек (точка запрещена — dot-сегменты невозможны).
+    /// </summary>
+    private static bool IsValidWebProxyBasePath(string basePath)
+    {
+        if (basePath[0] == '/' || basePath[^1] == '/')
+        {
+            return false;
+        }
+
+        foreach (var segment in basePath.Split('/'))
+        {
+            if (segment.Length == 0)
+            {
+                return false;
+            }
+
+            if (!char.IsAsciiLetterOrDigit(segment[0]))
+            {
+                return false;
+            }
+
+            for (var i = 1; i < segment.Length; i++)
+            {
+                var c = segment[i];
+                if (!char.IsAsciiLetterOrDigit(c) && c != '_' && c != '-')
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

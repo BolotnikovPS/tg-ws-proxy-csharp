@@ -85,6 +85,9 @@ public static class RelayFrameCodec
     /// <summary>Маркер секрета ссылки WEB proxy (<c>kWebProxyLinkSecretMarker</c>).</summary>
     public const byte WebProxyLinkSecretMarker = 0x70;
 
+    /// <summary>Единственный допустимый payload кадра <see cref="RelayFrameType.Hello"/> — версия протокола 1.</summary>
+    public const byte HelloProtocolVersion = 0x01;
+
     /// <summary>Полный размер кадра с payload указанной длины.</summary>
     public static int FrameSize(int payloadLength) => FrameHeaderSize + payloadLength;
 

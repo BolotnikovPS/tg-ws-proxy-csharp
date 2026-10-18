@@ -1,15 +1,45 @@
 # Дизайн-документ: поддержка WEB proxy (browser-relay) в `tg-ws-proxy-csharp`
 
 **Проект:** `tg-ws-proxy-csharp` (порт Flowseal/tg-ws-proxy на C#/.NET, `net11.0`)
-**Статус документа:** черновик дизайна, редакция 1
+**Статус документа:** черновик дизайна, редакция 2 (коррекция под авторитетную спецификацию tproxy-server)
 **Область:** `TgWsProxy.Domain`, `TgWsProxy.Application`, `TgWsProxy.Infrastructure`, `TgWsProxy` (host), `config.json`, `README.md`
 **Зависит от:** `docs/REQUIREMENTS-WEB-API.md` (действующий контракт web-only режима и мультитокенов)
 
-> **Важное замечание о статусе фичи.** «WEB proxy» — свежая возможность Telegram Desktop, реализованная в
-> ветке `dev` и ещё **не вышедшая в стабильный релиз** (см. § 1.2). Публичной серверной спецификации нет:
-> контракт серверной стороны в этом документе **выведен из клиентского кода** tdesktop и помечен как
-> «выведено/предположение» там, где нет гарантии стабильности. Реализация должна быть изолирована за
-> отдельным интерфейсом, чтобы дрейф протокола не задевал существующий MTProto-прокси.
+> **Исправление статуса (редакция 2).** Фича WEB proxy уже в стабильном релизе Telegram Desktop
+> **7.3.1** (октябрь 2026): `ProxyData::Type::Web`, сериализуется кодом `4`. Существует эталонный сервер
+> [`telegramdesktop/tproxy-server`](https://github.com/telegramdesktop/tproxy-server) (Go), чьи
+> `PLAN.md` и `PROTOCOL.md` — **авторитетная серверная спецификация**. Редакция 1 выводила контракт
+> реверс-инжинирингом из клиентского кода и в ряде мест была неверна. Ниже — исправления и план.
+
+---
+
+## 0. Коррекция под авторитетную спецификацию (tproxy-server)
+
+### 0.1. Что было неверно в редакции 1
+
+| # | Пункт | Было (ред. 1) | Стало (tproxy-server) |
+|---|---|---|---|
+| 1 | Носитель | WebSocket `GET /transport` | HTTPS long-poll: `POST /api/v1/session`, `/api/v1/up`, `/api/v1/down`, `DELETE /api/v1/session`; WS — опциональный `GET /api/v1/ws` (subprotocol `tproxy-v1.<session-token>`) |
+| 2 | Ссылки | `tg://proxy` + `70`+hex | `tg://webproxy?server=<host[/path]>&secret=<secret>` и `https://t.me/webproxy`; корень — обычный секрет, path — `base64url(0x70‖secret)` без паддинга |
+| 3 | Ключ HMAC | 16 байт секрета | весь секрет, включая `dd`-префикс (v1 реализации: plain-секрет 16 байт) |
+| 4 | base path | с ведущим `/` | голый слаг без `/` (сегменты `[A-Za-z0-9][A-Za-z0-9_-]*`, ≤128 симв.) |
+| 5 | HELLO | без payload | payload `01` (версия v1) |
+| 6 | Bridge-страница | статическая заглушка | динамический HTML/JS (CSP + nonce, объект `TelegramWebProxy` / `MessageChannel`, nonce `tproxy-android-init`) |
+| 7 | Авторизация | `?bridge=` на WS | bootstrap-token (2 мин) → session-token (подписанный 32B); `X-Up-Seq`/`X-Up-Ack`, `X-Down-Cursor`, replay/идемпотентность |
+
+### 0.2. Что верно и переиспользуется
+
+Формат кадра `type:u8|stream_id:u24|length:u32|payload` (BE), типы `0x01…0x1f`, лимит payload 1 МиБ,
+окно 4 МиБ, `WINDOW` = u32 BE, HMAC-контексты `tdesktop-web-proxy-bridge-v1\n<host>` / `…-v2\n<host>\n<path>`.
+Фрейм-кодек, мультиплексор, flow-control и `MtProtoBridgeEngine` (роль «stock MTProxy» бэкенда) — без изменений.
+
+### 0.3. План исправления
+
+1. **M1 (примитивы):** capability/секрет/base-path/ссылки `tg://webproxy` + HELLO; тесты на официальные векторы.
+2. **M2 (carrier):** HTTPS long-poll `/api/v1/session|up|down|ws` + bootstrap/session-токены + seq/cursor.
+3. **M3 (bridge-страница):** динамический HTML/JS (порт из `tproxy-server/internal/bridge/page.go`).
+4. **M4 (проводка):** Kestrel-маршруты под base-path + интеграция с `MtProtoBridgeEngine`.
+5. **M5 (тесты/docs):** полный прогон, обновить README/docs.
 
 ---
 
@@ -174,9 +204,12 @@ Bridge URL **[выведено]**: `https://host/basePath/?bridge=<capability>`.
 
 ### 2.4. Что обязан реализовать сервер (сводный контракт)
 
-1. **HTTPS-статика** — отдать bridge-страницу и JS по `GET /` (или `GET /basePath/`).
-2. **WS-эндпоинт релея** — принять WebSocket-апгрейд на `/transport` (или `/basePath/transport`),
-   авторизовать по HMAC bridge-capability (§ 2.3).
+1. **Bridge-страница** — `GET /?bridge=<capability>` (или `GET /basePath/?bridge=…`) отдаёт динамическую
+   страницу со встроенным JS-носителем и одноразовым bootstrap-токеном; авторизация по HMAC
+   bridge-capability (§ 2.3), иначе HTTP 404.
+2. **HTTPS long-poll carrier** — `POST /api/v1/session` (bootstrap→session-токен, `HELLO→WELCOME`),
+   `POST /api/v1/up` (`X-Up-Seq`→`X-Up-Ack`), `POST /api/v1/down` (long-poll `X-Down-Cursor`),
+   `DELETE /api/v1/session`; авторизация `Authorization: Bearer <token>`.
 3. **Мультиплексор relay-frame + flow-control** — разбирать/собирать кадры § 2.1, вести потоки.
 4. **Терминация обфусцированного MTProto на поток** — каждый relay-поток — это MTProto-сессия:
    obfs2 init → выбор DC/proto → `relay_init` → перешифровка → маршрутизация в Telegram DC.
@@ -297,11 +330,14 @@ Telegram гонит через hand-rolled `RawWebSocket`/`H2PacketCodec`.
 | Производительность | `System.Net.WebSockets.WebSocket`; замеряется | потенциально выше, но не доказано |
 | Привязка | «только старт» — совпадает с § 8.1 действующего контракта | своя, отдельная от Kestrel |
 
-**Рекомендация:** Kestrel-листенер `webProxyHost:webProxyPort` с `UseHttps(сертификат)` +
-`UseWebSockets()`; маршруты: `GET /` → статика, `GET /transport` → relay (с поддержкой `basePath`).
-Данные поверх `WebSocket` подаются в `RelayFrameCodec` → `RelayMultiplexer` → `RelayStream` →
-`MtProtoBridgeEngine`. Если бенчмарки (`TgWsProxy.Benchmarks`) покажут, что `System.Net.WebSockets`
-— узкое место, перейти на `SslStream`-реализацию за тем же `IWebProxyBridgeServer` (решение отложено).
+**Рекомендация:** Kestrel-листенер `webProxyHost:webProxyPort` с `UseHttps(сертификат)`;
+маршруты: `GET /?bridge=…` → динамическая bridge-страница (встроенный JS-носитель + bootstrap-токен),
+`{base}api/v1/{session,up,down}` → HTTPS long-poll carrier (с поддержкой `basePath`). Тела `POST /up`
+подаются в `RelayFrameCodec` → `RelayMultiplexer` → `RelayStream` → `MtProtoBridgeEngine`; исходящие
+кадры буферизуются и отдаются через long-poll `POST /down` (seq/cursor/replay). Опциональный
+WS-носитель `GET /api/v1/ws` (subprotocol `tproxy-v1.<token>`) оставлен на будущее. Если бенчмарки
+(`TgWsProxy.Benchmarks`) покажут, что Kestrel + long-poll — узкое место, перейти на `SslStream`-реализацию
+за тем же интерфейсом (решение отложено).
 
 ### 4.5. Жизненный цикл relay-потока
 
@@ -327,7 +363,7 @@ Bye(0x1F) ─▶ отказ (неверный bridge HMAC / превышение
 |----|-----------|-----------|
 | **F-W.1** | Bridge — отдельный HTTPS-листенер на `webProxyHost:webProxyPort` (по умолчанию порт `443`). Включается ключом `webProxyEnabled` (умолчание `false`). При выключении не занимает порт и не регистрирует маршруты. | Must |
 | **F-W.2** | `GET /` (или `GET /{basePath}/`) отдаёт bridge-страницу и JS из локальных ресурсов (без внешних CDN). Содержимое — встроенный статический ресурс проекта. | Must |
-| **F-W.3** | `GET /transport` (или `GET /{basePath}/transport`) выполняет WebSocket-апгрейд и становится каналом relay-frame. | Must |
+| **F-W.3** | `POST {base}api/v1/session` создаёт сессию (bootstrap→session-токен, `HELLO→WELCOME`); `POST {base}api/v1/up` принимает восходящие кадры (`X-Up-Seq`→`X-Up-Ack`); `POST {base}api/v1/down` — long-poll нисходящих кадров (`X-Down-Cursor`); `DELETE {base}api/v1/session` закрывает сессию. Авторизация — `Authorization: Bearer <token>`. | Must |
 | **F-W.4** | `basePath` поддерживается (`v2`-контекст HMAC и путь маршрутов); нормализация — без пустых сегментов/пробелов/точек, ≤ 128 символов (иначе `400`/отказ). | Should |
 | **F-W.5** | Bridge-порт не должен совпадать с `Port` (MTProxy) и `MetricsPort` (панель): `ConfigValidator` отклоняет конфликт. | Must |
 
@@ -335,9 +371,9 @@ Bye(0x1F) ─▶ отказ (неверный bridge HMAC / превышение
 
 | ID | Требование | Приоритет |
 |----|-----------|-----------|
-| **F-W.6** | Соединение принимается только с валидным `?bridge=<capability>`. `capability` = `base64url(HMAC-SHA256(context, secret))` без паддинга; контекст `v1` (`tdesktop-web-proxy-bridge-v1\n<host>`) или `v2` (`tdesktop-web-proxy-bridge-v2\n<host>\n<basePath>`). | Must |
+| **F-W.6** | Bridge-страница отдаётся только с валидным `?bridge=<capability>` (иначе HTTP 404). `capability` = `base64url(HMAC-SHA256(secret, context))` без паддинга; контекст `v1` (`tdesktop-web-proxy-bridge-v1\n<host>`) или `v2` (`tdesktop-web-proxy-bridge-v2\n<host>\n<basePath>`). | Must |
 | **F-W.7** | Подбор токена по HMAC: перебор включённых токенов (`IProxyTokenRegistry.HandshakeOrder`); совпавший токен фиксирует пару (IP, токен) для учёта и `Touch()`. | Must |
-| **F-W.8** | Несовпадение — кадр `Bye(0x1F)` (или WS close) без выделения потока; попытка учитывается в метриках. | Must |
+| **F-W.8** | Несовпадение — HTTP 404 без выдачи bootstrap-токена; попытка учитывается в метриках. | Must |
 | **F-W.9** | Сравнение HMAC — постоянного времени (`CryptographicOperations.FixedTimeEquals`), без тайминг-канала по секрету. | Must |
 
 ### 5.3. Relay-frame и мультиплексирование
@@ -417,7 +453,7 @@ Bye(0x1F) ─▶ отказ (неверный bridge HMAC / превышение
 5. **Модель угроз** — bridge-канал переносит зашифрованный MTProto; перехват TLS невозможен при
    валидном сертификате. Секрет прокси раскрывается только тому, кто его знает (HMAC необратим).
 6. **Изоляция режимов** — bridge и панель (`/api/*` с `webApiToken`) — разные маршруты и порты;
-   авторизация панели не распространяется на `/transport`, авторизация bridge не открывает `/api/*`.
+   авторизация панели не распространяется на carrier-эндпоинты `{base}api/v1/*`, авторизация bridge не открывает `/api/*`.
 
 ---
 

@@ -44,7 +44,9 @@ public sealed class RelayMultiplexer : IAsyncDisposable
     /// <summary>
     /// Обрабатывает один разобранный входящий кадр. Вызывается inbound-циклом по одному кадру
     /// за раз. <c>Open</c> создаёт поток и запускает мост; <c>Data</c>/<c>Window</c>/<c>Close</c>
-    /// маршрутизируются в поток; <c>Ping</c>/<c>Hello</c> получают ответ.
+    /// маршрутизируются в поток; входящий <c>Ping</c> игнорируется (PING — r→c); <c>Hello</c>
+    /// валидируется (stream0 + payload=<see cref="RelayFrameCodec.HelloProtocolVersion"/>) и получает
+    /// <c>Welcome</c> либо <c>Bye</c>.
     /// </summary>
     public async ValueTask HandleInboundFrameAsync(RelayFrame frame, CancellationToken ct)
     {
@@ -63,10 +65,18 @@ public sealed class RelayMultiplexer : IAsyncDisposable
                 HandleWindow(frame);
                 break;
             case RelayFrameType.Ping:
-                await SendFrameAsync(RelayFrameType.Pong, 0, ReadOnlyMemory<byte>.Empty, ct).ConfigureAwait(false);
+                // PING — r→c (keepalive шлёт сам релей); входящий PING от клиента не ожидается — игнорируем.
                 break;
             case RelayFrameType.Hello:
-                // [выведено] приветствие: отвечаем Welcome; авторизация выполняется только по ?bridge=.
+                if (frame.StreamId != 0 ||
+                    frame.Payload.Length != 1 ||
+                    frame.Payload.Span[0] != RelayFrameCodec.HelloProtocolVersion)
+                {
+                    // Неверное приветствие: завершаем соединение без Welcome.
+                    await SendFrameAsync(RelayFrameType.Bye, 0, ReadOnlyMemory<byte>.Empty, ct).ConfigureAwait(false);
+                    break;
+                }
+
                 await SendFrameAsync(RelayFrameType.Welcome, 0, ReadOnlyMemory<byte>.Empty, ct).ConfigureAwait(false);
                 break;
             case RelayFrameType.Bye:

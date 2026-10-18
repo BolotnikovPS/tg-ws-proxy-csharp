@@ -4,9 +4,10 @@ using TgWsProxy.Application.Abstractions;
 namespace TgWsProxy.Infrastructure.WebProxy;
 
 /// <summary>
-/// Порт relay-сессии WEB proxy. Хост (Kestrel/WebSocket) вызывает <see cref="ResolveToken"/>
-/// для авторизации канала по <c>?bridge=&lt;capability&gt;</c> перед апгрейдом, а затем
-/// <see cref="RunAsync"/> для запуска relay-цикла поверх транспорта.
+/// Порт relay-сессии WEB proxy. Хост (Kestrel) вызывает <see cref="ResolveToken"/> для
+/// авторизации bridge-страницы по <c>?bridge=&lt;capability&gt;</c>, а <see cref="OpenSession"/>
+/// — при создании сессии (<c>POST /api/v1/session</c>) для получения фабрики мостов потоков
+/// и аренды жизненного цикла (статистика, привязка (IP, токен), реестр живых сессий).
 /// </summary>
 public interface IWebProxyRelaySession
 {
@@ -20,14 +21,9 @@ public interface IWebProxyRelaySession
     ProxyTokenEntry? ResolveToken(string host, string? capability);
 
     /// <summary>
-    /// Выполняет relay-цикл: мультиплексирует потоки и для каждого потока поднимает MTProto-мост
-    /// в Telegram. Возвращается по EOF транспорта или отмене. Ведёт счётчики соединений и
-    /// привязку (IP, токен).
+    /// Открывает жизненный цикл relay-сессии: ведёт счётчики соединений, регистрирует сессию
+    /// в реестре живых сессий (разрыв по отзыву токена/перезапуску) и возвращает аренду с
+    /// фабрикой мостов потоков. Аренда закрывается <see cref="WebProxyRelayLease.Dispose"/>.
     /// </summary>
-    Task RunAsync(
-        IRelayTransport transport,
-        ProxyTokenEntry token,
-        IPAddress? peer,
-        string scope,
-        CancellationToken ct);
+    WebProxyRelayLease OpenSession(ProxyTokenEntry token, IPAddress? peer, string scope);
 }

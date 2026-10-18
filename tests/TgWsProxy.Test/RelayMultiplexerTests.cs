@@ -124,26 +124,56 @@ public class RelayMultiplexerTests
     }
 
     [Fact]
-    public async Task Ping_RepliesWithPong()
+    public async Task Ping_IsIgnored()
     {
         var sink = new CapturingSink();
         var mux = new RelayMultiplexer(sink);
 
         await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Ping, 0, ReadOnlyMemory<byte>.Empty), default);
 
-        Assert.Contains(sink.Frames, f => f.Type == RelayFrameType.Pong);
+        Assert.Empty(sink.Frames);
         await mux.DisposeAsync();
     }
 
     [Fact]
-    public async Task Hello_RepliesWithWelcome()
+    public async Task Hello_ValidPayload_RepliesWithWelcome()
+    {
+        var sink = new CapturingSink();
+        var mux = new RelayMultiplexer(sink);
+
+        await mux.HandleInboundFrameAsync(
+            MakeFrame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion }),
+            default);
+
+        Assert.Contains(sink.Frames, f => f.Type == RelayFrameType.Welcome);
+        await mux.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Hello_InvalidPayload_RepliesWithBye()
     {
         var sink = new CapturingSink();
         var mux = new RelayMultiplexer(sink);
 
         await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Hello, 0, ReadOnlyMemory<byte>.Empty), default);
 
-        Assert.Contains(sink.Frames, f => f.Type == RelayFrameType.Welcome);
+        Assert.DoesNotContain(sink.Frames, f => f.Type == RelayFrameType.Welcome);
+        Assert.Contains(sink.Frames, f => f.Type == RelayFrameType.Bye);
+        await mux.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Hello_NonZeroStream_RepliesWithBye()
+    {
+        var sink = new CapturingSink();
+        var mux = new RelayMultiplexer(sink);
+
+        await mux.HandleInboundFrameAsync(
+            MakeFrame(RelayFrameType.Hello, 7, new byte[] { RelayFrameCodec.HelloProtocolVersion }),
+            default);
+
+        Assert.DoesNotContain(sink.Frames, f => f.Type == RelayFrameType.Welcome);
+        Assert.Contains(sink.Frames, f => f.Type == RelayFrameType.Bye);
         await mux.DisposeAsync();
     }
 
