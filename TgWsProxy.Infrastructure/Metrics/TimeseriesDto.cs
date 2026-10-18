@@ -1,5 +1,3 @@
-#nullable enable
-
 namespace TgWsProxy.Infrastructure.Metrics;
 
 /// <summary>Одна точка временного ряда для графиков страницы (F-3.3).</summary>

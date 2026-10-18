@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # HEALTHCHECK образа tg-ws-proxy (F-6.5).
 #
 # Спрашиваем readiness, а не liveness и не TCP-порт:
@@ -10,28 +10,39 @@
 # TCP-фолбэк удалён вместе с ветвью «web отключён» (F-1.4): открытый порт ничего
 # не говорит о том, что листенер прокси принимает соединения.
 #
+# Реализация — встроенный bash-механизм /dev/tcp: внешние утилиты (curl/wget)
+# не нужны, поэтому в образе нет apt-слоя с curl (F-6.5).
+#
 # Переопределяемые переменные:
-#   TGWS_HEALTHCHECK_HOST — адрес проверки (по умолчанию 127.0.0.1)
-#   TGWS_HEALTHCHECK_PORT — порт Web API (по умолчанию 8081)
+#   TGWS_HEALTHCHECK_HOST    — адрес проверки (по умолчанию 127.0.0.1)
+#   TGWS_HEALTHCHECK_PORT    — порт Web API (по умолчанию 8081)
+#   TGWS_HEALTHCHECK_TIMEOUT — таймаут чтения статусной строки, сек (по умолчанию 4)
 set -u
 
 host="${TGWS_HEALTHCHECK_HOST:-127.0.0.1}"
 port="${TGWS_HEALTHCHECK_PORT:-8081}"
+timeout="${TGWS_HEALTHCHECK_TIMEOUT:-4}"
 
-response=$(curl --silent --show-error --max-time 4 \
-    --write-out '\n%{http_code}' \
-    "http://${host}:${port}/healthz/ready" 2>/dev/null)
-curl_status=$?
-
-if [ "$curl_status" -ne 0 ]; then
-    printf 'healthz/ready: curl завершился с кодом %s\n' "$curl_status" >&2
+# Открыть TCP-соединение на чтение/запись; дескриптор 3.
+if ! exec 3<>"/dev/tcp/${host}/${port}" 2>/dev/null; then
+    printf 'healthz/ready: не удалось подключиться к %s:%s\n' "$host" "$port" >&2
     exit 1
 fi
 
-code=$(printf '%s\n' "$response" | tail -n 1)
-if [ "$code" = "200" ]; then
-    exit 0
-fi
+# Минимальный HTTP/1.0-запрос; Kestrel закрывает соединение после ответа.
+printf 'GET /healthz/ready HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n\r\n' "$host" >&3
 
-printf 'healthz/ready: HTTP %s — слушатель прокси не готов\n' "$code" >&2
-exit 1
+# Прочитать только статусную строку (Kestrel отвечает мгновенно).
+IFS= read -r -t "$timeout" status <&3 || status=""
+exec 3<&- 3>&-
+
+status="${status%$'\r'}"
+case "$status" in
+    *" 200"*)
+        exit 0
+        ;;
+    *)
+        printf 'healthz/ready: %s — слушатель прокси не готов\n' "${status:-нет ответа}" >&2
+        exit 1
+        ;;
+esac

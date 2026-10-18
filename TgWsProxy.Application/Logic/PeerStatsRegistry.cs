@@ -1,5 +1,3 @@
-#nullable enable
-
 using System.Collections.Concurrent;
 using System.Net;
 using TgWsProxy.Application.Abstractions;

@@ -1,5 +1,3 @@
-#nullable enable
-
 using TgWsProxy.Application.Abstractions;
 
 namespace TgWsProxy.Application.Logic;

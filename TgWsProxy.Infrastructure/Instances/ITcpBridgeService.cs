@@ -1,5 +1,3 @@
-#nullable enable
-
 using System.Net;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Infrastructure.Wire;

@@ -1,7 +1,5 @@
-#nullable enable
-
-using Microsoft.Extensions.Logging.Abstractions;
 using System.Net.Sockets;
+using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Infrastructure.Instances;
 
 namespace TgWsProxy.Test;

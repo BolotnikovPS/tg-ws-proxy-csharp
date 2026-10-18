@@ -1,6 +1,6 @@
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Wire;
 using TgWsProxy.Infrastructure.Instances;
+using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Test;
 

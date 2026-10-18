@@ -1,5 +1,3 @@
-#nullable enable
-
 using System.Buffers.Binary;
 using TgWsProxy.Application.Logic;
 

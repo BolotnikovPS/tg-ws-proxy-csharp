@@ -1,5 +1,3 @@
-#nullable enable
-
 namespace TgWsProxy.Application.Abstractions;
 
 public interface IRawWebSocket

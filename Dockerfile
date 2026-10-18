@@ -2,7 +2,7 @@
 # Стадия build на нативной архитектуре билд-машины (BUILDPLATFORM), publish — кросс-сборка под TARGETARCH.
 # Пример: docker buildx build --platform linux/arm64 -t tg-ws-proxy:arm64 --load .
 
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 ARG TARGETARCH
 WORKDIR /src
 
@@ -20,7 +20,7 @@ RUN case "$TARGETARCH" in \
       arm)    RID=linux-arm ;; \
       *)      RID=linux-${TARGETARCH} ;; \
     esac && \
-    dotnet restore TgWsProxy/TgWsProxy.csproj -r "$RID"
+    dotnet restore TgWsProxy/TgWsProxy.csproj -r "$RID" -p:PublishReadyToRun=true
 
 COPY . .
 WORKDIR /src/TgWsProxy
@@ -30,15 +30,13 @@ RUN case "$TARGETARCH" in \
       arm)    RID=linux-arm ;; \
       *)      RID=linux-${TARGETARCH} ;; \
     esac && \
-    dotnet publish TgWsProxy.csproj -c Release -o /app/publish -r "$RID" --self-contained false --no-restore
+    dotnet publish TgWsProxy.csproj -c Release -o /app/publish -r "$RID" --self-contained false --no-restore -p:PublishReadyToRun=true
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS final
 WORKDIR /app
 
-# curl нужен только для HEALTHCHECK: в aspnet-образе его нет (F-6.5).
-RUN apt-get update \
- && apt-get install -y --no-install-recommends curl \
- && rm -rf /var/lib/apt/lists/*
+# curl/wget не нужны: HEALTHCHECK реализован на встроенном bash-механизме /dev/tcp,
+# поэтому в образе нет apt-слоя с пакетами для проверки (F-6.5).
 
 COPY --from=build /app/publish .
 

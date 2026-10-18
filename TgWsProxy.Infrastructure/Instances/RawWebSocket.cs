@@ -1,11 +1,9 @@
-#nullable enable
-
-using Microsoft.Extensions.Logging;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Net.Sockets;
 using System.Runtime.Intrinsics;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain.Exceptions;
 using TgWsProxy.Infrastructure.IO;

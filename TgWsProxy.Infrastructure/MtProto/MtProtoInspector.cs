@@ -1,12 +1,10 @@
-#nullable enable
-
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Wire;
 using TgWsProxy.Domain;
+using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Infrastructure.MtProto;
 

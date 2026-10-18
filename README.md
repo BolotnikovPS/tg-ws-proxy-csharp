@@ -1,6 +1,6 @@
 # TG WS Proxy (C#)
 
-Локальный MTProto-прокси для Telegram на C#/.NET 8. Маршрутизирует трафик через WebSocket/TLS к дата-центрам Telegram, умеет маскироваться под обычный HTTPS (Fake TLS) и автоматически уходит на резервные транспорты (Cloudflare Worker → Cloudflare → TCP), когда WS недоступен.
+Локальный MTProto-прокси для Telegram на C#/.NET 11. Маршрутизирует трафик через WebSocket/TLS к дата-центрам Telegram, умеет маскироваться под обычный HTTPS (Fake TLS) и автоматически уходит на резервные транспорты (Cloudflare Worker → Cloudflare → TCP), когда WS недоступен.
 
 Проект — порт Python-реализации [Flowseal/tg-ws-proxy](https://github.com/Flowseal/tg-ws-proxy), доведённый до upstream v1.11.2 и переработанный в **web-only сервис**: единственный способ запуска — ASP.NET Core хост, единственный интерфейс настройки — веб-панель.
 
@@ -8,7 +8,7 @@
 
 ## Быстрый старт
 
-**Локально, из исходников** (нужен .NET 8 SDK):
+**Локально, из исходников** (нужен .NET 11 SDK):
 
 ```bash
 dotnet run --project TgWsProxy -- --config config.example.json
@@ -361,7 +361,7 @@ dotnet TgWsProxy.dll --config /etc/tg-ws-proxy/config.json
 docker buildx build --platform linux/arm64 -t tg-ws-proxy:arm64 --load .
 
 # один тег для amd64 + arm64 в registry
-docker buildx build --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/tg-ws-proxy:3.0.2-beta1 --push .
+docker buildx build --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/tg-ws-proxy:3.0.2-beta2 --push .
 
 # на самом ARM-сервере, без эмуляции
 docker build -t tg-ws-proxy:local .
@@ -373,7 +373,7 @@ Workflow [`.github/workflows/docker-build.yml`](.github/workflows/docker-build.y
 
 1. гоняет `dotnet test` (сборка + тесты);
 2. собирает мультиархитектурный образ `linux/amd64,linux/arm64` через BuildKit;
-3. пушит в Docker Hub `pboldev/tg-ws-proxy`: пуш в `main` — тег `latest`; стабильный тег (например `3.0.1`) — теги `3.0.1` и `3.0`; prerelease (например `3.0.2-beta1`) — только `3.0.2-beta1`, стабильный `3.0` не перезаписывается. Теги веток не публикуются.
+3. пушит в Docker Hub `pboldev/tg-ws-proxy`: пуш в `main` — тег `latest`; стабильный тег (например `3.0.1`) — теги `3.0.1` и `3.0`; prerelease (например `3.0.2-beta2`) — только `3.0.2-beta2`, стабильный `3.0` не перезаписывается. Теги веток не публикуются.
 
 ### Docker Compose
 
