@@ -14,9 +14,17 @@ namespace TgWsProxy.Application.StartConfig;
 public static class ConfigDefaults
 {
     /// <summary>
-    /// Дефолтные DC-редиректы upstream: без явного <c>dcIp</c> прокси работает через эти два DC.
+    /// Дефолтные DC-редиректы: без явного <c>dcIp</c> прокси работает через эти DC.
+    /// IP актуальны на момент правки (сверены с DNS kws1..kws5.web.telegram.org).
     /// </summary>
-    public static readonly string[] DefaultDcIp = ["2:149.154.167.220", "4:149.154.167.220"];
+    public static readonly string[] DefaultDcIp =
+    [
+        "1:149.154.174.100",
+        "2:149.154.167.99",
+        "3:149.154.174.100",
+        "4:149.154.167.99",
+        "5:149.154.170.100",
+    ];
 
     /// <summary>
     /// Применяет к конфигурации умолчания, зависящие от источника.

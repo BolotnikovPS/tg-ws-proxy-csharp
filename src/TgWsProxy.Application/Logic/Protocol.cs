@@ -73,11 +73,11 @@ public static class Protocol
     /// <summary>Продакшн-адреса дата-центров (DC_DEFAULT_IPS).</summary>
     public static readonly FrozenDictionary<int, string> DcDefaultIps = new Dictionary<int, string>
     {
-        [1] = "149.154.175.50",
-        [2] = "149.154.167.51",
-        [3] = "149.154.175.100",
-        [4] = "149.154.167.91",
-        [5] = "149.154.171.5",
+        [1] = "149.154.174.100",
+        [2] = "149.154.167.99",
+        [3] = "149.154.174.100",
+        [4] = "149.154.167.99",
+        [5] = "149.154.170.100",
         [203] = "91.105.192.100",
     }.ToFrozenDictionary();
 

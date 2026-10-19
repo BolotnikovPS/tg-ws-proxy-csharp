@@ -101,8 +101,8 @@ public sealed class WebApiEndpointsTests
         Assert.True(dto.GetProperty("startedAt").GetDateTimeOffset() <= DateTimeOffset.UtcNow);
         Assert.Equal(8081, dto.GetProperty("metricsPort").GetInt32());
         Assert.Equal("127.0.0.1", dto.GetProperty("metricsHost").GetString());
-        // Config по умолчанию: пул DC из двух записей, маскировка выключена.
-        Assert.Equal(2, dto.GetProperty("dcCount").GetInt32());
+        // Config по умолчанию: пул DC из пяти записей (DC1..DC5), маскировка выключена.
+        Assert.Equal(5, dto.GetProperty("dcCount").GetInt32());
         Assert.False(dto.GetProperty("maskingConfigured").GetBoolean());
         // F-7.8: текущая привязка слушателя, состояние и статистика перезапусков видны через /api/info.
         Assert.Equal("127.0.0.1", dto.GetProperty("listenerHost").GetString());
