@@ -2,7 +2,7 @@ using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
-using TgWsProxy.Domain;
+using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Domain.Exceptions;
 using TgWsProxy.Infrastructure.Wire;
 

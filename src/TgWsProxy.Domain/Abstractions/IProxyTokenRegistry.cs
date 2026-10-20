@@ -1,4 +1,4 @@
-namespace TgWsProxy.Domain;
+namespace TgWsProxy.Domain.Abstractions;
 
 /// <summary>
 /// Снимок токенов доступа прокси, который читает обработчик сессии (F-8.4). Список уже

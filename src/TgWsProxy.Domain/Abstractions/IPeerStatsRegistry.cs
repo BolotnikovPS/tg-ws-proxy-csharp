@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace TgWsProxy.Domain;
+namespace TgWsProxy.Domain.Abstractions;
 
 /// <summary>
 /// Реестр статистики по парам «IP-адрес, токен доступа» (требования F-4 и F-9). Горячие пути

@@ -1,5 +1,6 @@
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain;
+using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.WebProxy;
 
 namespace TgWsProxy.Test;

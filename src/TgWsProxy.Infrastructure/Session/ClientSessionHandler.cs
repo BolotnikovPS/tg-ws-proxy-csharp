@@ -4,6 +4,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain;
+using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.FakeTls;
 using TgWsProxy.Infrastructure.IO;
 using TgWsProxy.Infrastructure.MtProto;

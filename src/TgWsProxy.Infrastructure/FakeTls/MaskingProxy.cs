@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
-using TgWsProxy.Domain;
+using TgWsProxy.Domain.Abstractions;
 
 namespace TgWsProxy.Infrastructure.FakeTls;
 

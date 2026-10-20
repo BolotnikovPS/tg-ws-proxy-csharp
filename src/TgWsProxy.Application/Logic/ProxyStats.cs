@@ -1,6 +1,7 @@
 using System.Globalization;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain;
+using TgWsProxy.Domain.Abstractions;
 
 namespace TgWsProxy.Application.Logic;
 

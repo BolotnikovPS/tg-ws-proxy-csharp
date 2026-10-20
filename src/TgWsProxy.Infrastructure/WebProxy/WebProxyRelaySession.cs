@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
+using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.MtProto;
 
 namespace TgWsProxy.Infrastructure.WebProxy;

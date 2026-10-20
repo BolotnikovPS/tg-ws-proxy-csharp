@@ -5,6 +5,7 @@ using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
+using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.Session;
 using TgWsProxy.Infrastructure.WebProxy;
 

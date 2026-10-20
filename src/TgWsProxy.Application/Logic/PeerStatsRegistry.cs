@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain;
+using TgWsProxy.Domain.Abstractions;
 
 namespace TgWsProxy.Application.Logic;
 

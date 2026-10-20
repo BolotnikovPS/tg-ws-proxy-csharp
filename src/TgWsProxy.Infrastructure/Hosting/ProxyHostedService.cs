@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
+using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.Instances;
 using TgWsProxy.Infrastructure.Metrics;
 using TgWsProxy.Infrastructure.Session;
