@@ -10,10 +10,10 @@ COPY src/TgWsProxy.Domain/TgWsProxy.Domain.csproj src/TgWsProxy.Domain/
 COPY src/TgWsProxy.Application/TgWsProxy.Application.csproj src/TgWsProxy.Application/
 COPY src/TgWsProxy.Infrastructure/TgWsProxy.Infrastructure.csproj src/TgWsProxy.Infrastructure/
 COPY src/TgWsProxy/TgWsProxy.csproj src/TgWsProxy/
-# Реальные props-файлы перенесены в "Solution Items/" (в корне репозитория остались шим-импорты).
-# Для кэширования restore копируем их напрямую в корень образа.
-COPY "Solution Items/Directory.Packages.props" /Directory.Packages.props
-COPY "Solution Items/Directory.Build.props" /Directory.Build.props
+# props-файлы лежат в корне репозитория; копируем их напрямую в корень образа
+# до restore, чтобы работали Central Package Management и общие свойства сборки.
+COPY Directory.Packages.props /Directory.Packages.props
+COPY Directory.Build.props /Directory.Build.props
 
 # arm64v8 / arm64-v8 / linux-arm64-v8 — варианты linux/arm64/v8; RID в .NET: linux-arm64
 RUN case "$TARGETARCH" in \

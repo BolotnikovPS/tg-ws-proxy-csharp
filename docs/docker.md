@@ -2,17 +2,17 @@
 
 [← Оглавление](README.md)
 
-`Dockerfile` лежит в `Solution Items/` (в Solution Explorer он сгруппирован со служебными файлами) и рассчитан на **мультиархитектурную** сборку через BuildKit: этап `build` идёт на архитектуре билд-машины (`BUILDPLATFORM`), `dotnet publish` получает RID из `TARGETARCH` (`linux-arm64` для arm64), финальный слой берётся под целевую платформу. Контекст сборки — корень репозитория (скрипт healthcheck копируется из `DockerCompose/docker/healthcheck.sh`), поэтому путь к файлу передаётся флагом `-f`.
+`Dockerfile` рассчитан на **мультиархитектурную** сборку через BuildKit: этап `build` идёт на архитектуре билд-машины (`BUILDPLATFORM`), `dotnet publish` получает RID из `TARGETARCH` (`linux-arm64` для arm64), финальный слой берётся под целевую платформу. Контекст сборки — корень репозитория (скрипт healthcheck копируется из `DockerCompose/docker/healthcheck.sh`), поэтому путь к файлу передаётся флагом `-f`.
 
 ```bash
-# только AArch64 (Dockerfile лежит в Solution Items/)
-docker buildx build -f "Solution Items/Dockerfile" --platform linux/arm64 -t tg-ws-proxy:arm64 --load .
+# только AArch64
+docker buildx build -f Dockerfile --platform linux/arm64 -t tg-ws-proxy:arm64 --load .
 
 # один тег для amd64 + arm64 в registry
-docker buildx build -f "Solution Items/Dockerfile" --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/tg-ws-proxy:3.1.0 --push .
+docker buildx build -f Dockerfile --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/tg-ws-proxy:3.1.0 --push .
 
 # на самом ARM-сервере, без эмуляции
-docker build -f "Solution Items/Dockerfile" -t tg-ws-proxy:local .
+docker build -f Dockerfile -t tg-ws-proxy:local .
 ```
 
 ## CI/CD (GitHub Actions)
