@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Net.Sockets;
 using System.Text;
 using Microsoft.Extensions.Logging;
-using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.FakeTls;

@@ -104,7 +104,7 @@ public sealed class ProxyTokenRegistry(Config config) : IProxyTokenRegistry
         {
             if (string.Equals(entries[i].Id, tokenId, StringComparison.Ordinal))
             {
-                entries[i].LastUsedAt = now;
+                entries[i].Touch(now);
                 _orderDirty = true;
                 break;
             }

@@ -6,6 +6,7 @@ using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
+using TgWsProxy.Infrastructure;
 using TgWsProxy.Infrastructure.Hosting;
 using TgWsProxy.Infrastructure.Instances;
 using TgWsProxy.Infrastructure.Metrics;

@@ -1,6 +1,4 @@
-using TgWsProxy.Domain;
-
-namespace TgWsProxy.Application.StartConfig;
+namespace TgWsProxy.Domain;
 
 /// <summary>
 /// Транспортное представление <see cref="Config"/> для файла <c>config.json</c> и Web API.
@@ -147,7 +145,7 @@ public sealed class ConfigDto
 
     /// <summary>
     /// Токены доступа прокси (F-8.1). Прежний единственный ключ <c>secret</c> отсутствует:
-    /// он переносится в этот список при чтении файла (F-8.3, <see cref="ConfigFileLoader"/>),
+    /// он переносится в этот список при чтении файла (F-8.3),
     /// а для записи всегда используется полный набор токенов.
     /// </summary>
     public List<ProxyToken>? Tokens { get; set; }

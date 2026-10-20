@@ -1,7 +1,6 @@
 using System.Net;
-using TgWsProxy.Domain;
 
-namespace TgWsProxy.Application.Abstractions;
+namespace TgWsProxy.Domain;
 
 /// <summary>
 /// Реестр статистики по парам «IP-адрес, токен доступа» (требования F-4 и F-9). Горячие пути
@@ -17,7 +16,7 @@ public interface IPeerStatsRegistry
     /// <summary>Сколько пар (адрес, токен) сейчас отслеживается.</summary>
     long TrackedPeers { get; }
 
-    /// <summary>Сколько раз новая пара не была учтена из-за предела <see cref="Logic.Constants.MaxTrackedPeers"/>.</summary>
+    /// <summary>Сколько раз новая пара не была учтена из-за предела числа отслеживаемых адресов.</summary>
     long OverflowCount { get; }
 
     /// <summary>

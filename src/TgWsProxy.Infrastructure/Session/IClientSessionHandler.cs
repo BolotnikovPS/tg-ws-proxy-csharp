@@ -1,5 +1,4 @@
 using System.Net.Sockets;
-using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 
 namespace TgWsProxy.Infrastructure.Session;

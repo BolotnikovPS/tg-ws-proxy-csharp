@@ -1,5 +1,5 @@
 using System.Net;
-using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Infrastructure.WebProxy;
 

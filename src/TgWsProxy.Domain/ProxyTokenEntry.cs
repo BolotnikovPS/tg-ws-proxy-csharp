@@ -1,4 +1,4 @@
-namespace TgWsProxy.Application.Abstractions;
+namespace TgWsProxy.Domain;
 
 /// <summary>
 /// Токен доступа прокси, подготовленный для горячего пути рукопожатия (F-8.4). Hex-разбор
@@ -33,8 +33,15 @@ public sealed class ProxyTokenEntry(
     public DateTimeOffset CreatedAt { get; } = createdAt;
 
     /// <summary>
-    /// Момент последнего успешного рукопожатия. Обновляется на месте (<c>Touch</c>), чтобы
+    /// Момент последнего успешного рукопожатия. Обновляется на месте (<see cref="Touch"/>), чтобы
     /// следующий перебор начинался с самого «свежего» токена без пересборки снимка.
     /// </summary>
-    public DateTimeOffset? LastUsedAt { get; internal set; } = lastUsedAt;
+    public DateTimeOffset? LastUsedAt { get; private set; } = lastUsedAt;
+
+    /// <summary>
+    /// Отмечает успешное использование токена (F-8.4): обновляет <see cref="LastUsedAt"/>
+    /// на месте, без пересборки снимка.
+    /// </summary>
+    /// <param name="now">Момент рукопожатия.</param>
+    public void Touch(DateTimeOffset now) => LastUsedAt = now;
 }

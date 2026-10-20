@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace TgWsProxy.Application;
+namespace TgWsProxy.Infrastructure;
 
 /// <summary>
 /// Контекст одного принятого клиентского соединения.

@@ -1,6 +1,4 @@
-using TgWsProxy.Domain;
-
-namespace TgWsProxy.Application.Abstractions;
+namespace TgWsProxy.Domain;
 
 /// <summary>
 /// Счётчики работы прокси. Набор и формат сводки соответствуют upstream stats.py.
