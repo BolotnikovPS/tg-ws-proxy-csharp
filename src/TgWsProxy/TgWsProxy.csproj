@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+	<Version>3.1.0</Version>
+    <RootNamespace>TgWsProxy</RootNamespace>
+	<DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+	<RuntimeIdentifiers>linux-x64;linux-arm64</RuntimeIdentifiers>
+	<EnableSdkContainerDebugging>True</EnableSdkContainerDebugging>
+	<!-- F-1.11: XML-комментарии попадают в документ OpenAPI. -->
+	<GenerateDocumentationFile>true</GenerateDocumentationFile>
+	<NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Serilog.AspNetCore" />
+		<PackageReference Include="Serilog.Extensions.Hosting" />
+		<PackageReference Include="Serilog.Extensions.Logging.File" />
+		<PackageReference Include="Serilog.Sinks.File" />
+		<PackageReference Include="Serilog.Sinks.Async" />
+		<PackageReference Include="prometheus-net.AspNetCore" />
+		<PackageReference Include="prometheus-net.AspNetCore.HealthChecks" />
+		<PackageReference Include="AspNetCore.HealthChecks.UI.Client" />
+		<PackageReference Include="Swashbuckle.AspNetCore" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="TgWsProxy.Test" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\TgWsProxy.Infrastructure\TgWsProxy.Infrastructure.csproj" />
+	</ItemGroup>
+
+</Project>

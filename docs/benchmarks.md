@@ -1,7 +1,7 @@
 # Бенчмарки горячих путей
 
-Микробенчмарки через BenchmarkDotNet. Проект: `TgWsProxy.Benchmarks`.
-Запуск: `dotnet run -c Release --project TgWsProxy.Benchmarks [--filter "*Crypto*"]`
+Микробенчмарки через BenchmarkDotNet. Проект: `benchmarks/TgWsProxy.Benchmarks`.
+Запуск: `dotnet run -c Release --project benchmarks/TgWsProxy.Benchmarks [--filter "*Crypto*"]`
 
 ## Baseline — net8.0
 

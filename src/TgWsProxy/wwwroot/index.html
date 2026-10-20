@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="auto">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<meta name="description" content="Панель мониторинга и настройки tg-ws-proxy" />
+<title>tg-ws-proxy — панель мониторинга</title>
+<link rel="stylesheet" href="site.css" />
+</head>
+<body>
+<a class="skip-link" href="#main">Перейти к содержимому</a>
+
+<div id="banner" class="banner" role="status" hidden></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand__dot" aria-hidden="true"></span>
+    <h1 class="brand__title">tg-ws-proxy</h1>
+    <span class="brand__version" id="version">—</span>
+  </div>
+  <div class="topbar__actions">
+    <span class="pill" id="status-pill" data-state="unknown">нет данных</span>
+    <button type="button" id="theme-toggle" class="btn btn--ghost" aria-label="Переключить цветовую тему">Тема: авто</button>
+  </div>
+</header>
+
+<main id="main">
+  <section class="panel panel--wide" aria-labelledby="overview-title">
+    <h2 id="overview-title" class="panel__title">Обзор</h2>
+    <div class="cards" id="overview-cards"></div>
+  </section>
+
+  <section class="panel panel--wide" aria-labelledby="traffic-title">
+    <div class="panel__head">
+      <h2 id="traffic-title" class="panel__title">Скорость трафика</h2>
+      <ul class="legend" id="traffic-legend">
+        <li><span class="legend__swatch legend__swatch--up" aria-hidden="true"></span>в сторону Telegram</li>
+        <li><span class="legend__swatch legend__swatch--down" aria-hidden="true"></span>от Telegram</li>
+      </ul>
+    </div>
+    <div class="chart" id="traffic-chart"></div>
+  </section>
+
+  <section class="panel" aria-labelledby="types-title">
+    <h2 id="types-title" class="panel__title">Типы соединений</h2>
+    <ul class="bars" id="type-bars"></ul>
+  </section>
+
+  <section class="panel" aria-labelledby="pool-title">
+    <h2 id="pool-title" class="panel__title">Пул соединений</h2>
+    <div class="cards cards--compact" id="pool-cards"></div>
+  </section>
+
+  <section class="panel panel--wide" aria-labelledby="tokens-title">
+    <div class="panel__head">
+      <h2 id="tokens-title" class="panel__title">Токены доступа</h2>
+      <span class="muted" id="tokens-summary"></span>
+    </div>
+    <p class="muted">
+      Токен — это секрет прокси (32 hex-символа). Каждое устройство или группа получает свой токен:
+      по паре «IP + токен» считается трафик, а отключение токена разрывает только его сессии.
+    </p>
+    <div class="table-wrap">
+      <table class="table" id="token-table">
+        <caption class="sr-only">Токены доступа прокси с их состоянием и израсходованным трафиком</caption>
+        <thead>
+          <tr>
+            <th scope="col">Имя</th>
+            <th scope="col">Секрет</th>
+            <th scope="col">Состояние</th>
+            <th scope="col" class="num">Отправлено</th>
+            <th scope="col" class="num">Получено</th>
+            <th scope="col" class="num">Сессий</th>
+            <th scope="col">Последнее использование</th>
+            <th scope="col">Действия</th>
+          </tr>
+        </thead>
+        <tbody id="token-rows"></tbody>
+      </table>
+    </div>
+    <p class="muted" id="token-empty" hidden>
+      Токенов нет. Создайте первый токен — без него клиенты не смогут подключиться.
+    </p>
+
+    <div class="reveal" id="token-reveal" hidden role="status" aria-live="polite">
+      <p class="reveal__title" id="token-reveal-title">Секрет показывается один раз</p>
+      <div class="input-row">
+        <input type="text" id="token-reveal-value" class="mono" readonly aria-label="Секрет токена" />
+        <button type="button" class="btn" id="token-reveal-copy">Скопировать</button>
+        <button type="button" class="btn" id="token-reveal-close">Скрыть</button>
+      </div>
+      <p class="muted" id="token-reveal-link"></p>
+    </div>
+
+    <form id="token-form" novalidate>
+      <div class="form-grid">
+        <label class="field" for="token-name">
+          <span class="field__label">Имя токена</span>
+          <input type="text" id="token-name" maxlength="64" placeholder="например, ноутбук" autocomplete="off" />
+        </label>
+        <label class="field" for="token-secret">
+          <span class="field__label">Секрет (32 hex)</span>
+          <input type="text" id="token-secret" maxlength="32" placeholder="пусто — сгенерируется" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="field field--check" for="token-enabled">
+          <input type="checkbox" id="token-enabled" checked />
+          <span class="field__label">Включён</span>
+        </label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn--primary" id="token-submit">Создать токен</button>
+        <button type="button" class="btn" id="token-cancel" hidden>Отмена</button>
+      </div>
+      <p class="form-status" id="token-status" role="status" aria-live="polite"></p>
+    </form>
+  </section>
+
+  <section class="panel panel--wide" aria-labelledby="peers-title">
+    <div class="panel__head">
+      <h2 id="peers-title" class="panel__title">Трафик по источникам</h2>
+      <label class="field field--inline" for="peer-group">
+        <span class="field__label">Группировка</span>
+        <select id="peer-group">
+          <option value="pair">IP + токен</option>
+          <option value="ip">только IP</option>
+          <option value="token">только токен</option>
+        </select>
+      </label>
+      <label class="field field--inline" for="peer-filter">
+        <span class="field__label">Фильтр</span>
+        <input type="search" id="peer-filter" placeholder="например, 192.168." autocomplete="off" spellcheck="false" />
+      </label>
+    </div>
+    <div class="table-wrap">
+      <table class="table" id="peer-table">
+        <caption class="sr-only">Статистика по клиентским IP-адресам и токенам, отсортированная по объёму трафика</caption>
+        <thead>
+          <tr>
+            <th scope="col">Источник</th>
+            <th scope="col" class="num">Активных</th>
+            <th scope="col" class="num">Всего</th>
+            <th scope="col" class="num">Отправлено</th>
+            <th scope="col" class="num">Получено</th>
+            <th scope="col" class="num">Отклонено</th>
+            <th scope="col" class="num">Ошибки</th>
+            <th scope="col" class="num">Пул</th>
+            <th scope="col">Последняя активность</th>
+          </tr>
+        </thead>
+        <tbody id="peer-rows"></tbody>
+      </table>
+    </div>
+    <p class="muted" id="peer-summary"></p>
+  </section>
+
+  <section class="panel panel--wide" aria-labelledby="config-title">
+    <div class="panel__head">
+      <h2 id="config-title" class="panel__title">Конфигурация</h2>
+      <span class="muted mono" id="config-path"></span>
+    </div>
+    <form id="config-form" novalidate>
+      <div id="config-groups"></div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn--primary" id="config-save">Сохранить</button>
+        <button type="button" class="btn" id="config-reload">Перезагрузить</button>
+        <button type="button" class="btn btn--danger" id="config-reset">Сбросить</button>
+      </div>
+      <p class="form-status" id="config-status" role="status" aria-live="polite"></p>
+    </form>
+  </section>
+
+  <section class="panel panel--wide" aria-labelledby="dc-title">
+    <div class="panel__head">
+      <h2 id="dc-title" class="panel__title">Доступность DC</h2>
+      <button type="button" class="btn" id="dc-fill" disabled>Заполнить DC → IP</button>
+      <button type="button" class="btn btn--primary" id="dc-check">Проверить</button>
+    </div>
+    <p class="muted">
+      Проверка выполняется с хоста прокси: видно, какие маршруты до Telegram реально доступны
+      из сети развёртывания — прямой TCP, прямой WebSocket, Cloudflare-фронтинг и Cloudflare Worker.
+    </p>
+    <div class="table-wrap">
+      <table class="table" id="dc-table">
+        <caption class="sr-only">Доступность дата-центров Telegram по четырём маршрутам</caption>
+        <thead id="dc-head"></thead>
+        <tbody id="dc-rows"></tbody>
+      </table>
+    </div>
+    <p class="muted" id="dc-summary">Нажмите «Проверить», чтобы выполнить проверку с хоста прокси.</p>
+    <p class="form-status" id="dc-status" role="status" aria-live="polite"></p>
+  </section>
+</main>
+
+<div class="sr-only" id="live" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>

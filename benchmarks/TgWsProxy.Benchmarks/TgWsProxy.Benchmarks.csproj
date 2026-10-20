@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TgWsProxy.Application\TgWsProxy.Application.csproj" />
+    <ProjectReference Include="..\..\src\TgWsProxy.Infrastructure\TgWsProxy.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

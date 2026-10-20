@@ -237,6 +237,9 @@ ClientBin/
 *.dbproj.schemaview
 *.jfm
 *.pfx
+*.pem
+*.cer
+*.key
 *.publishsettings
 orleans.codegen.cs
 
@@ -377,6 +380,5 @@ DocumentLayout.backup.json
 
 # Рабочая конфигурация с реальными токенами доступа: остаётся только на диске.
 # Образцы для репозитория — config.example.json и DockerCompose/config.docker.json.
-TgWsProxy/config.json
-TgWsProxy/config.*.json
-!TgWsProxy/config.example.json
+src/TgWsProxy/config.json
+src/TgWsProxy/config.*.json

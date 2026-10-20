@@ -4,14 +4,16 @@
 
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0 AS build
 ARG TARGETARCH
-WORKDIR /src
+WORKDIR /
 
-COPY TgWsProxy.Domain/TgWsProxy.Domain.csproj TgWsProxy.Domain/
-COPY TgWsProxy.Application/TgWsProxy.Application.csproj TgWsProxy.Application/
-COPY TgWsProxy.Infrastructure/TgWsProxy.Infrastructure.csproj TgWsProxy.Infrastructure/
-COPY TgWsProxy/TgWsProxy.csproj TgWsProxy/
-COPY Directory.Packages.props /
-COPY Directory.Build.props /
+COPY src/TgWsProxy.Domain/TgWsProxy.Domain.csproj src/TgWsProxy.Domain/
+COPY src/TgWsProxy.Application/TgWsProxy.Application.csproj src/TgWsProxy.Application/
+COPY src/TgWsProxy.Infrastructure/TgWsProxy.Infrastructure.csproj src/TgWsProxy.Infrastructure/
+COPY src/TgWsProxy/TgWsProxy.csproj src/TgWsProxy/
+# props-файлы лежат в корне репозитория; копируем их напрямую в корень образа
+# до restore, чтобы работали Central Package Management и общие свойства сборки.
+COPY Directory.Packages.props /Directory.Packages.props
+COPY Directory.Build.props /Directory.Build.props
 
 # arm64v8 / arm64-v8 / linux-arm64-v8 — варианты linux/arm64/v8; RID в .NET: linux-arm64
 RUN case "$TARGETARCH" in \
@@ -20,7 +22,7 @@ RUN case "$TARGETARCH" in \
       arm)    RID=linux-arm ;; \
       *)      RID=linux-${TARGETARCH} ;; \
     esac && \
-    dotnet restore TgWsProxy/TgWsProxy.csproj -r "$RID" -p:PublishReadyToRun=true
+    dotnet restore src/TgWsProxy/TgWsProxy.csproj -r "$RID" -p:PublishReadyToRun=true
 
 COPY . .
 WORKDIR /src/TgWsProxy
