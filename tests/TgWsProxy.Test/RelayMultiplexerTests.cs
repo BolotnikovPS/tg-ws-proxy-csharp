@@ -223,6 +223,75 @@ public class RelayMultiplexerTests
         Assert.True(bridgeFinished);
     }
 
+    [Fact]
+    public async Task Open_AboveSessionLimit_RepliesWithClose()
+    {
+        var sink = new CapturingSink();
+        var mux = new RelayMultiplexer(sink, (_, _) => Task.CompletedTask, maxStreams: 1);
+
+        await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Open, 1, ReadOnlyMemory<byte>.Empty), default);
+        await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Open, 2, ReadOnlyMemory<byte>.Empty), default);
+
+        Assert.Equal(1, mux.ActiveStreamCount);
+        Assert.Contains(sink.Frames, f => f.Type == RelayFrameType.Close && f.StreamId == 2);
+        Assert.DoesNotContain(sink.Frames, f => f.Type == RelayFrameType.Close && f.StreamId == 1);
+        await mux.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Open_WhenGlobalBudgetExhausted_RepliesWithClose()
+    {
+        var sink = new CapturingSink();
+        var acquired = 0;
+        var mux = new RelayMultiplexer(
+            sink,
+            (_, _) => Task.CompletedTask,
+            tryAcquireGlobalStream: () => Interlocked.Increment(ref acquired) == 1);
+
+        await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Open, 1, ReadOnlyMemory<byte>.Empty), default);
+        await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Open, 2, ReadOnlyMemory<byte>.Empty), default);
+
+        Assert.Equal(1, mux.ActiveStreamCount);
+        Assert.Contains(sink.Frames, f => f.Type == RelayFrameType.Close && f.StreamId == 2);
+        await mux.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Close_ReleasesGlobalSlotOnce()
+    {
+        var released = 0;
+        var mux = new RelayMultiplexer(
+            new CapturingSink(),
+            (_, _) => Task.CompletedTask,
+            tryAcquireGlobalStream: () => true,
+            releaseGlobalStream: () => Interlocked.Increment(ref released));
+
+        await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Open, 3, ReadOnlyMemory<byte>.Empty), default);
+        await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Close, 3, ReadOnlyMemory<byte>.Empty), default);
+        await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Close, 3, ReadOnlyMemory<byte>.Empty), default);
+
+        Assert.Equal(1, released);
+        await mux.DisposeAsync();
+        Assert.Equal(1, released);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_ReleasesGlobalSlots()
+    {
+        var released = 0;
+        var mux = new RelayMultiplexer(
+            new CapturingSink(),
+            (_, _) => Task.CompletedTask,
+            tryAcquireGlobalStream: () => true,
+            releaseGlobalStream: () => Interlocked.Increment(ref released));
+
+        await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Open, 1, ReadOnlyMemory<byte>.Empty), default);
+        await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Open, 2, ReadOnlyMemory<byte>.Empty), default);
+        await mux.DisposeAsync();
+
+        Assert.Equal(2, released);
+    }
+
     private static RelayFrame MakeFrame(RelayFrameType type, int streamId, ReadOnlyMemory<byte> payload)
     {
         var buffer = new byte[RelayFrameCodec.FrameSize(payload.Length)];

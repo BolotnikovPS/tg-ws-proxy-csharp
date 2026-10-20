@@ -38,8 +38,12 @@ public sealed class WebProxyHttpSession : IAsyncDisposable
     private readonly object _sync = new();
     private readonly List<byte[]> _pending = new();
     private readonly SemaphoreSlim _upGate = new(1, 1);
+    private readonly int _maxPendingBytes;
+    private readonly int _maxPendingItems;
     private TaskCompletionSource<PollSignal>? _parked;
     private bool _closed;
+    private int _pendingBytes;
+    private int _wsCarrier;              // 1 — WebSocket-носитель занят этой сессией
 
     private long _upSeq;                 // последняя принятая восходящая последовательность (0 — ни одной)
     private byte[]? _lastUpBody;         // тело последнего принятого батча (для байт-идентичного повтора)
@@ -47,10 +51,51 @@ public sealed class WebProxyHttpSession : IAsyncDisposable
     private byte[]? _lastBatch;          // последний доставленный батч (для повтора)
     private long _lastBatchCursor = -1;  // курсор, по которому клиент получает повтор <see cref="_lastBatch"/>
 
-    public WebProxyHttpSession(Func<RelayStream, CancellationToken, Task> startBridge)
+    /// <param name="startBridge">Запуск моста для открытого потока.</param>
+    /// <param name="maxStreamsPerSession">
+    /// Предел одновременных потоков (<c>webProxyMaxStreamsPerSession</c>), <c>0</c> — без ограничения.
+    /// </param>
+    /// <param name="tryAcquireGlobalStream">Резерв слота в глобальном бюджете потоков.</param>
+    /// <param name="releaseGlobalStream">Возврат глобального слота.</param>
+    /// <param name="maxPendingBytes">
+    /// Предел байт в исходящей очереди (<c>webProxyMaxPendingBytesPerSession</c>); при превышении
+    /// сессия закрывается — клиент обязан переподключиться (F-W.25).
+    /// </param>
+    /// <param name="maxPendingItems">Предел числа кадров в исходящей очереди (F-W.25).</param>
+    public WebProxyHttpSession(
+        Func<RelayStream, CancellationToken, Task> startBridge,
+        int maxStreamsPerSession = 0,
+        Func<bool>? tryAcquireGlobalStream = null,
+        Action? releaseGlobalStream = null,
+        int maxPendingBytes = 0,
+        int maxPendingItems = 0)
     {
-        _multiplexer = new RelayMultiplexer(new Sink(this), startBridge);
+        _maxPendingBytes = maxPendingBytes;
+        _maxPendingItems = maxPendingItems;
+        _multiplexer = new RelayMultiplexer(
+            new Sink(this),
+            startBridge,
+            RelayFrameCodec.InitialStreamWindow,
+            maxStreamsPerSession,
+            tryAcquireGlobalStream,
+            releaseGlobalStream);
     }
+
+    /// <summary>
+    /// Носитель сессии, зафиксированный при создании (<c>https</c> либо <c>websocket</c>).
+    /// Запросы чужого носителя отклоняются, чтобы сессия не смешивала каналы (F-W.24).
+    /// </summary>
+    public string CarrierMode { get; init; } = "https";
+
+    /// <summary>
+    /// Занимает WebSocket-носитель сессии. Возвращает <see langword="false"/>, если носитель уже
+    /// занят: на сессию допускается одно WS-соединение (повторный upgrade отклоняется).
+    /// </summary>
+    public bool TryAcquireWebSocketCarrier()
+        => Interlocked.CompareExchange(ref _wsCarrier, 1, 0) == 0;
+
+    /// <summary>Освобождает WebSocket-носитель (при закрытии соединения).</summary>
+    public void ReleaseWebSocketCarrier() => Interlocked.Exchange(ref _wsCarrier, 0);
 
     /// <summary>Закрыта ли сессия (для диагностики и тестов).</summary>
     public bool IsClosed
@@ -201,22 +246,41 @@ public sealed class WebProxyHttpSession : IAsyncDisposable
 
     private void Append(ReadOnlyMemory<byte> frameBytes)
     {
+        TaskCompletionSource<PollSignal>? closed = null;
         lock (_sync)
         {
-            _pending.Add(frameBytes.ToArray());
-            _parked?.TrySetResult(PollSignal.Data);
-            _parked = null;
+            if (_closed)
+            {
+                return;
+            }
+
+            // F-W.25: переполнение исходящей очереди закрывает сессию — клиент переподключится
+            // и продолжит с нового курсора, вместо того чтобы копить данные без границ.
+            var overItems = _maxPendingItems > 0 && _pending.Count >= _maxPendingItems;
+            var overBytes = _maxPendingBytes > 0 && _pendingBytes + frameBytes.Length > _maxPendingBytes;
+            if (overItems || overBytes)
+            {
+                _closed = true;
+                _pending.Clear();
+                _pendingBytes = 0;
+                closed = _parked;
+                _parked = null;
+            }
+            else
+            {
+                _pending.Add(frameBytes.ToArray());
+                _pendingBytes += frameBytes.Length;
+                _parked?.TrySetResult(PollSignal.Data);
+                _parked = null;
+            }
         }
+
+        closed?.TrySetResult(PollSignal.Closed);
     }
 
     private byte[] JoinAndClear()
     {
-        var total = 0;
-        foreach (var frame in _pending)
-        {
-            total += frame.Length;
-        }
-
+        var total = _pendingBytes;
         var batch = new byte[total];
         var offset = 0;
         foreach (var frame in _pending)
@@ -226,6 +290,7 @@ public sealed class WebProxyHttpSession : IAsyncDisposable
         }
 
         _pending.Clear();
+        _pendingBytes = 0;
         return batch;
     }
 

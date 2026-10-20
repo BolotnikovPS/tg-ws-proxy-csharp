@@ -44,6 +44,15 @@ public sealed class ConfigUpdateService(
         "publicHost",
         // Внешний домен для bridge-ссылки пересчитывается без перезапуска листенера.
         "webProxyPublicHost",
+        // Режим носителя и лимиты ресурсов читаются на каждом запросе carrier/сессии,
+        // поэтому применяются к новым сессиям без перезапуска bridge-листенера (F-W.24, F-W.25).
+        "webProxyCarrierMode",
+        "webProxyMaxSessions",
+        "webProxyMaxSessionsPerIp",
+        "webProxyMaxStreamsPerSession",
+        "webProxyMaxStreams",
+        "webProxyMaxPendingBytesPerSession",
+        "webProxyMaxPendingItemsPerSession",
         "enablePerIpStats",
         "perIpStatsTtlSeconds",
         "perIpStatsMaxPeers",
@@ -377,6 +386,43 @@ public sealed class ConfigUpdateService(
                     config.Tokens.Clear();
                     config.Tokens.AddRange(candidate.Tokens.Select(static token => token.Clone()));
                     tokenRegistry.Reload();
+                    break;
+
+                case "webProxyPublicHost":
+                    // Домен попадает и в ссылку t.me/webproxy, и в relayBase bridge-страницы:
+                    // обе собираются на каждый запрос, перезапуск не нужен.
+                    config.WebProxyPublicHost = candidate.WebProxyPublicHost;
+                    break;
+
+                case "webProxyCarrierMode":
+                    // Носитель читается при выдаче bridge-страницы и в ответе POST /session,
+                    // поэтому смена действует на следующую сессию; открытые сессии сохраняют
+                    // режим, с которым были созданы.
+                    config.WebProxyCarrierMode = candidate.WebProxyCarrierMode;
+                    break;
+
+                case "webProxyMaxSessions":
+                    config.WebProxyMaxSessions = candidate.WebProxyMaxSessions;
+                    break;
+
+                case "webProxyMaxSessionsPerIp":
+                    config.WebProxyMaxSessionsPerIp = candidate.WebProxyMaxSessionsPerIp;
+                    break;
+
+                case "webProxyMaxStreamsPerSession":
+                    config.WebProxyMaxStreamsPerSession = candidate.WebProxyMaxStreamsPerSession;
+                    break;
+
+                case "webProxyMaxStreams":
+                    config.WebProxyMaxStreams = candidate.WebProxyMaxStreams;
+                    break;
+
+                case "webProxyMaxPendingBytesPerSession":
+                    config.WebProxyMaxPendingBytesPerSession = candidate.WebProxyMaxPendingBytesPerSession;
+                    break;
+
+                case "webProxyMaxPendingItemsPerSession":
+                    config.WebProxyMaxPendingItemsPerSession = candidate.WebProxyMaxPendingItemsPerSession;
                     break;
             }
         }

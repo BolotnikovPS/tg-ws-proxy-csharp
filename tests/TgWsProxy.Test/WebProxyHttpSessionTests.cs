@@ -170,6 +170,72 @@ public class WebProxyHttpSessionTests
         Assert.True(session.IsClosed);
     }
 
+    [Fact]
+    public async Task Append_OverPendingByteLimit_ClosesSession()
+    {
+        // WELCOME-кадр занимает 8 байт заголовка — лимит 4 байта гарантированно превышен.
+        var session = new WebProxyHttpSession((_, _) => Task.CompletedTask, maxPendingBytes: 4);
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+
+        await session.ProcessUpAsync(1, hello, default);
+
+        Assert.True(session.IsClosed);
+        var down = await session.PollAsync(0, default);
+        Assert.True(down.Closed);
+        Assert.Null(down.Batch);
+        await session.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Append_OverPendingItemsLimit_ClosesSession()
+    {
+        var session = new WebProxyHttpSession((_, _) => Task.CompletedTask, maxPendingItems: 1);
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+
+        await session.ProcessUpAsync(1, hello, default);
+        Assert.False(session.IsClosed);
+
+        // Второй WELCOME не помещается в очередь из одного кадра — сессия закрывается (F-W.25).
+        await session.ProcessUpAsync(2, hello, default);
+        Assert.True(session.IsClosed);
+
+        await session.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Append_WithinPendingLimits_DoesNotCloseSession()
+    {
+        var session = new WebProxyHttpSession(
+            (_, _) => Task.CompletedTask,
+            maxPendingBytes: 64 * 1024,
+            maxPendingItems: 16);
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+
+        await session.ProcessUpAsync(1, hello, default);
+
+        Assert.False(session.IsClosed);
+        var down = await session.PollAsync(0, default);
+        Assert.False(down.Closed);
+        Assert.NotNull(down.Batch);
+        await session.DisposeAsync();
+    }
+
+    [Fact]
+    public void WebSocketCarrier_IsExclusive()
+    {
+        var session = CreateSession();
+
+        Assert.True(session.TryAcquireWebSocketCarrier());
+        Assert.False(session.TryAcquireWebSocketCarrier());
+
+        session.ReleaseWebSocketCarrier();
+        Assert.True(session.TryAcquireWebSocketCarrier());
+    }
+
+    [Fact]
+    public void CarrierMode_DefaultsToHttps()
+        => Assert.Equal("https", CreateSession().CarrierMode);
+
     private static WebProxyHttpSession CreateSession()
         => new((_, _) => Task.CompletedTask);
 

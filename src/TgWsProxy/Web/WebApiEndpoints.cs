@@ -38,9 +38,6 @@ internal static class WebApiEndpoints
         .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         .Split('+')[0] ?? "unknown";
 
-    /// <summary>Content-Type для Prometheus text exposition format 0.0.4.</summary>
-    private const string PrometheusContentType = "text/plain; version=0.0.4; charset=utf-8";
-
     /// <summary>Content-Type для <c>ProblemDetails</c>-ответов.</summary>
     private const string ProblemContentType = "application/problem+json";
 
@@ -642,7 +639,8 @@ internal static class WebApiEndpoints
                     token.Name,
                     BuildTelegramLink(cfg, token),
                     token.Secret,
-                    cfg.WebProxyEnabled ? WebProxyLinkBuilder.BuildTgLink(cfg, token) : null,
+                    cfg.WebProxyEnabled ? WebProxyLinkBuilder.BuildShareLink(cfg, token) : null,
+                    cfg.WebProxyEnabled ? WebProxyLinkBuilder.BuildDeepLink(cfg, token) : null,
                     cfg.WebProxyEnabled ? WebProxyLinkBuilder.BuildBridgeUrl(cfg, token) : null),
                 StatusCodes.Status200OK,
                 JsonContentType,
@@ -650,6 +648,17 @@ internal static class WebApiEndpoints
         })
         .Produces<TokenLinkDto>(StatusCodes.Status200OK, JsonContentType)
         .Produces<ProblemDetails>(StatusCodes.Status404NotFound, ProblemContentType);
+
+        // F-9.x: проверка доступности дата-центров прямо с хоста прокси. Проверяются
+        // четыре маршрута до каждого DC (прямой WebSocket, прямой TCP, CF-фронтинг,
+        // CF Worker), чтобы понять, какой путь реально открыт из сети развёртывания.
+        // Результаты — это видимость сети именно с сервера, а не с машины клиента.
+        app.MapPost("/api/dc-check", async (IDcReachabilityChecker checker, CancellationToken ct) =>
+        {
+            var report = await checker.CheckAsync(ct);
+            return Results.Json(report, JsonOptions);
+        })
+        .Produces<DcCheckReport>(StatusCodes.Status200OK);
 
         // F-3.1: экспозиция Prometheus через prometheus-net. Значения снимаются со
         // счётчиков в before-collect колбэке реестра, поэтому формат и имена метрик

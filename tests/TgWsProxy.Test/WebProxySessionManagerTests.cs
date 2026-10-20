@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.WebProxy;
 
 namespace TgWsProxy.Test;
@@ -102,8 +103,89 @@ public class WebProxySessionManagerTests
         Assert.False(manager.CloseSession("does-not-exist"));
     }
 
-    private static WebProxySessionManager CreateManager(TimeProvider? time = null)
-        => new(new FakeRelaySession(), NullLogger<WebProxySessionManager>.Instance, time);
+    [Fact]
+    public void CreateSession_WhenGlobalLimitReached_ReturnsBusy()
+    {
+        var manager = CreateManager(config: new Config { WebProxyMaxSessions = 1 });
+
+        var first = manager.CreateSession(manager.IssueBootstrap(MakeToken()), HelloFrame(), null, "test");
+        var second = manager.CreateSession(manager.IssueBootstrap(MakeToken()), HelloFrame(), null, "test");
+
+        Assert.Equal(WebProxyCreateStatus.Ok, first.Status);
+        Assert.Equal(WebProxyCreateStatus.Busy, second.Status);
+        Assert.Equal(1, manager.SessionCount);
+
+        manager.CloseSession(first.SessionToken!);
+        var third = manager.CreateSession(manager.IssueBootstrap(MakeToken()), HelloFrame(), null, "test");
+        Assert.Equal(WebProxyCreateStatus.Ok, third.Status);
+    }
+
+    [Fact]
+    public void CreateSession_WhenPerIpLimitReached_ReturnsBusy()
+    {
+        var manager = CreateManager(config: new Config { WebProxyMaxSessionsPerIp = 1 });
+        var peer = IPAddress.Parse("203.0.113.7");
+
+        var first = manager.CreateSession(manager.IssueBootstrap(MakeToken()), HelloFrame(), peer, "test");
+        var second = manager.CreateSession(manager.IssueBootstrap(MakeToken()), HelloFrame(), peer, "test");
+        var otherIp = manager.CreateSession(
+            manager.IssueBootstrap(MakeToken()),
+            HelloFrame(),
+            IPAddress.Parse("203.0.113.8"),
+            "test");
+
+        Assert.Equal(WebProxyCreateStatus.Ok, first.Status);
+        Assert.Equal(WebProxyCreateStatus.Busy, second.Status);
+        Assert.Equal(WebProxyCreateStatus.Ok, otherIp.Status);
+        Assert.Equal(2, manager.SessionCount);
+    }
+
+    [Fact]
+    public void CreateSession_PerIpLimitZero_MeansUnlimited()
+    {
+        var manager = CreateManager(config: new Config { WebProxyMaxSessionsPerIp = 0 });
+        var peer = IPAddress.Loopback;
+
+        for (var i = 0; i < 5; i++)
+        {
+            var result = manager.CreateSession(manager.IssueBootstrap(MakeToken()), HelloFrame(), peer, "test");
+            Assert.Equal(WebProxyCreateStatus.Ok, result.Status);
+        }
+
+        Assert.Equal(5, manager.SessionCount);
+    }
+
+    [Fact]
+    public void CreateSession_ReportsConfiguredCarrierMode()
+    {
+        var manager = CreateManager(config: new Config { WebProxyCarrierMode = "websocket" });
+
+        var result = manager.CreateSession(manager.IssueBootstrap(MakeToken()), HelloFrame(), null, "test");
+
+        Assert.Equal(WebProxyCreateStatus.Ok, result.Status);
+        Assert.Equal("websocket", result.CarrierMode);
+        Assert.Equal("websocket", manager.GetSession(result.SessionToken!)!.CarrierMode);
+        Assert.Equal("websocket", manager.CurrentCarrierMode);
+    }
+
+    [Fact]
+    public void CurrentCarrierMode_FallsBackToHttps_WhenUnset()
+    {
+        var manager = CreateManager(config: new Config { WebProxyCarrierMode = "  " });
+
+        Assert.Equal("https", manager.CurrentCarrierMode);
+    }
+
+    private static WebProxySessionManager CreateManager(TimeProvider? time = null, Config? config = null)
+    {
+        config ??= new Config();
+        return new(
+            new FakeRelaySession(),
+            new WebProxyStreamBudget(config),
+            config,
+            NullLogger<WebProxySessionManager>.Instance,
+            time);
+    }
 
     private static ProxyTokenEntry MakeToken()
     {

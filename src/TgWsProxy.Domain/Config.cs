@@ -260,6 +260,49 @@ public sealed class Config
     public string WebProxyCertPassword { get; set; } = "";
 
     /// <summary>
+    /// Носитель (carrier) bridge-сессии: <c>https</c> — HTTPS long-poll (<c>POST /api/v1/up</c> и
+    /// <c>POST /api/v1/down</c>), <c>websocket</c> — один WebSocket <c>GET /api/v1/ws</c> с
+    /// подпротоколом <c>tproxy-v1.&lt;token&gt;</c>. Значение попадает в bridge-страницу и в
+    /// заголовок <c>X-Carrier-Mode</c>; клиент обязан использовать именно этот режим (F-W.24).
+    /// Горячий ключ.
+    /// </summary>
+    public string WebProxyCarrierMode { get; set; } = "https";
+
+    /// <summary>
+    /// Предел одновременных relay-сессий WEB proxy. Сверх предела <c>POST /api/v1/session</c>
+    /// отвечает <c>503</c> с <c>Retry-After</c>. Горячий ключ.
+    /// </summary>
+    public int WebProxyMaxSessions { get; set; } = 128;
+
+    /// <summary>
+    /// Предел одновременных relay-сессий с одного IP клиента. <c>0</c> — без ограничения.
+    /// Горячий ключ.
+    /// </summary>
+    public int WebProxyMaxSessionsPerIp { get; set; }
+
+    /// <summary>
+    /// Предел одновременно открытых потоков (stream) в одной relay-сессии. OPEN сверх предела
+    /// отклоняется кадром <c>CLOSE</c>. Горячий ключ.
+    /// </summary>
+    public int WebProxyMaxStreamsPerSession { get; set; } = 128;
+
+    /// <summary>
+    /// Предел одновременно открытых потоков во всех relay-сессиях WEB proxy. Горячий ключ.
+    /// </summary>
+    public int WebProxyMaxStreams { get; set; } = 4096;
+
+    /// <summary>
+    /// Предел объёма исходящей очереди одной сессии (несобранные батчи). При превышении сессия
+    /// закрывается: клиент обязан забирать нисходящие батчи. Горячий ключ.
+    /// </summary>
+    public int WebProxyMaxPendingBytesPerSession { get; set; } = 32 * 1024 * 1024;
+
+    /// <summary>
+    /// Предел числа кадров в исходящей очереди одной сессии. Горячий ключ.
+    /// </summary>
+    public int WebProxyMaxPendingItemsPerSession { get; set; } = 16384;
+
+    /// <summary>
     /// HTTP/2 доступен только при включённом CF fallback, secure-соединениях и без test DC.
     /// </summary>
     public bool H2Enabled => CfProxyH2Media && CfProxyEnabled && !DisableSecure && !ForceTestDc;

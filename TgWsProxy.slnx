@@ -11,20 +11,44 @@
   <Folder Name="/benchmarks/">
     <Project Path="benchmarks/TgWsProxy.Benchmarks/TgWsProxy.Benchmarks.csproj" />
   </Folder>
-  <Folder Name="/Элементы решения/">
+  <Folder Name="/docs/">
+    <File Path="docs/README.md" />
+    <File Path="docs/architecture.md" />
+    <File Path="docs/benchmarks.md" />
+    <File Path="docs/build.md" />
+    <File Path="docs/configuration.md" />
+    <File Path="docs/diagnostics.md" />
+    <File Path="docs/docker.md" />
+    <File Path="docs/run.md" />
+    <File Path="docs/telegram.md" />
+    <File Path="docs/web-api.md" />
+  </Folder>
+  <Folder Name="/docs/prompts/">
+    <File Path="docs/prompts/DESIGN-WEB-PROXY.md" />
+    <File Path="docs/prompts/REQUIREMENTS-WEB-API.md" />
+  </Folder>
+  <Folder Name="/tools/">
+    <File Path="tools/web-proxy-smoke.mjs" />
+    <File Path="tools/cloudflare-worker.js" />
+  </Folder>
+  <Folder Name="/tools/scripts/">
+    <File Path="tools/scripts/cert.ps1" />
+    <File Path="tools/scripts/dc_check2.ps1" />
+  </Folder>
+  <Folder Name="/Solution Items/">
     <File Path="Directory.Build.props" />
     <File Path="Directory.Packages.props" />
-    <File Path="Dockerfile" />
-    <File Path="README.md" />
+    <File Path="Solution Items/Dockerfile" />
+    <File Path="Solution Items/config.example.json" />
   </Folder>
-  <Folder Name="/Элементы решения/DockerCompose/">
+  <Folder Name="/Solution Items/DockerCompose/">
     <File Path="DockerCompose/config.docker.json" />
     <File Path="DockerCompose/docker-compose.dns.yml" />
     <File Path="DockerCompose/docker-compose.host.yml" />
     <File Path="DockerCompose/docker-compose.mtu.yml" />
     <File Path="DockerCompose/docker-compose.yml" />
   </Folder>
-  <Folder Name="/Элементы решения/DockerCompose/docker/">
+  <Folder Name="/Solution Items/DockerCompose/docker/">
     <File Path="DockerCompose/docker/healthcheck.sh" />
   </Folder>
 </Solution>

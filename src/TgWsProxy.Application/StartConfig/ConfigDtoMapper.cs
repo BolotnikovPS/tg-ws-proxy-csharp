@@ -57,6 +57,13 @@ public static class ConfigDtoMapper
         if (dto.WebProxyPublicHost is { } webProxyPublicHost) target.WebProxyPublicHost = webProxyPublicHost.Trim();
         if (dto.WebProxyCertPath is { } webProxyCertPath) target.WebProxyCertPath = webProxyCertPath;
         if (dto.WebProxyCertPassword is { } webProxyCertPassword) target.WebProxyCertPassword = webProxyCertPassword;
+        if (dto.WebProxyCarrierMode is { } webProxyCarrierMode) target.WebProxyCarrierMode = webProxyCarrierMode.Trim();
+        if (dto.WebProxyMaxSessions is { } webProxyMaxSessions) target.WebProxyMaxSessions = webProxyMaxSessions;
+        if (dto.WebProxyMaxSessionsPerIp is { } webProxyMaxSessionsPerIp) target.WebProxyMaxSessionsPerIp = webProxyMaxSessionsPerIp;
+        if (dto.WebProxyMaxStreamsPerSession is { } webProxyMaxStreamsPerSession) target.WebProxyMaxStreamsPerSession = webProxyMaxStreamsPerSession;
+        if (dto.WebProxyMaxStreams is { } webProxyMaxStreams) target.WebProxyMaxStreams = webProxyMaxStreams;
+        if (dto.WebProxyMaxPendingBytesPerSession is { } webProxyMaxPendingBytes) target.WebProxyMaxPendingBytesPerSession = webProxyMaxPendingBytes;
+        if (dto.WebProxyMaxPendingItemsPerSession is { } webProxyMaxPendingItems) target.WebProxyMaxPendingItemsPerSession = webProxyMaxPendingItems;
 
         if (dto.DcIp is { } dcIp) Replace(target.DcIp, dcIp);
         if (dto.AllowIp is { } allowIp) Replace(target.AllowIp, allowIp);
@@ -119,6 +126,13 @@ public static class ConfigDtoMapper
             WebProxyPublicHost = config.WebProxyPublicHost,
             WebProxyCertPath = config.WebProxyCertPath,
             WebProxyCertPassword = config.WebProxyCertPassword,
+            WebProxyCarrierMode = config.WebProxyCarrierMode,
+            WebProxyMaxSessions = config.WebProxyMaxSessions,
+            WebProxyMaxSessionsPerIp = config.WebProxyMaxSessionsPerIp,
+            WebProxyMaxStreamsPerSession = config.WebProxyMaxStreamsPerSession,
+            WebProxyMaxStreams = config.WebProxyMaxStreams,
+            WebProxyMaxPendingBytesPerSession = config.WebProxyMaxPendingBytesPerSession,
+            WebProxyMaxPendingItemsPerSession = config.WebProxyMaxPendingItemsPerSession,
             Tokens = [.. config.Tokens.Select(static token => token.Clone())],
         };
     }

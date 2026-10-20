@@ -286,6 +286,80 @@ public static class ConfigValidator
         }
 
         ValidateWebProxyPublicHost(config.WebProxyPublicHost);
+        ValidateWebProxyCarrierMode(config.WebProxyCarrierMode);
+        ValidateWebProxyLimits(config);
+    }
+
+    /// <summary>Допустимые значения <c>webProxyCarrierMode</c> (F-W.24).</summary>
+    public static readonly string[] WebProxyCarrierModes = ["https", "websocket"];
+
+    /// <summary>
+    /// Носитель bridge-сессии: только <c>https</c> (long-poll) либо <c>websocket</c>
+    /// (один WS на сессию). Прочие режимы (<c>https-lanes</c>, <c>websocket-lanes</c>) не
+    /// поддержаны сервером и отклоняются, чтобы клиент не получил неизвестный ему режим.
+    /// </summary>
+    private static void ValidateWebProxyCarrierMode(string value)
+    {
+        var text = value?.Trim() ?? "";
+        if (text.Length == 0)
+        {
+            throw new ArgumentException("webProxyCarrierMode cannot be empty");
+        }
+
+        if (!WebProxyCarrierModes.Contains(text, StringComparer.Ordinal))
+        {
+            throw new ArgumentException(
+                $"webProxyCarrierMode must be one of: {string.Join(", ", WebProxyCarrierModes)}");
+        }
+    }
+
+    /// <summary>Предел объёма исходящей очереди одной сессии (верхняя граница — 64 МиБ).</summary>
+    public const int MaxWebProxyPendingBytes = 64 * 1024 * 1024;
+
+    /// <summary>
+    /// Лимиты ресурсов WEB proxy (F-W.25): сессии, потоки, исходящая очередь. Значения должны
+    /// быть положительными; <c>webProxyMaxSessionsPerIp = 0</c> — без ограничения. Глобальные
+    /// пределы не могут быть меньше соответствующих локальных, иначе локальные недостижимы.
+    /// </summary>
+    private static void ValidateWebProxyLimits(Config config)
+    {
+        if (config.WebProxyMaxSessions < 1)
+        {
+            throw new ArgumentException("webProxyMaxSessions must be greater than 0");
+        }
+
+        if (config.WebProxyMaxSessionsPerIp < 0)
+        {
+            throw new ArgumentException("webProxyMaxSessionsPerIp must be 0 (unlimited) or greater");
+        }
+
+        if (config.WebProxyMaxStreamsPerSession < 1)
+        {
+            throw new ArgumentException("webProxyMaxStreamsPerSession must be greater than 0");
+        }
+
+        if (config.WebProxyMaxStreams < 1)
+        {
+            throw new ArgumentException("webProxyMaxStreams must be greater than 0");
+        }
+
+        if (config.WebProxyMaxStreams < config.WebProxyMaxStreamsPerSession)
+        {
+            throw new ArgumentException(
+                "webProxyMaxStreams must be greater than or equal to webProxyMaxStreamsPerSession");
+        }
+
+        if (config.WebProxyMaxPendingBytesPerSession < 1
+            || config.WebProxyMaxPendingBytesPerSession > MaxWebProxyPendingBytes)
+        {
+            throw new ArgumentException(
+                $"webProxyMaxPendingBytesPerSession must be in range 1..{MaxWebProxyPendingBytes}");
+        }
+
+        if (config.WebProxyMaxPendingItemsPerSession < 1)
+        {
+            throw new ArgumentException("webProxyMaxPendingItemsPerSession must be greater than 0");
+        }
     }
 
     /// <summary>

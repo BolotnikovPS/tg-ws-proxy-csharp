@@ -3,7 +3,7 @@
 **Проект:** `tg-ws-proxy-csharp` (порт Flowseal/tg-ws-proxy на C#/.NET, `net11.0`)
 **Статус документа:** черновик дизайна, редакция 2 (коррекция под авторитетную спецификацию tproxy-server)
 **Область:** `TgWsProxy.Domain`, `TgWsProxy.Application`, `TgWsProxy.Infrastructure`, `TgWsProxy` (host), `config.json`, `README.md`
-**Зависит от:** `docs/REQUIREMENTS-WEB-API.md` (действующий контракт web-only режима и мультитокенов)
+**Зависит от:** `docs/prompts/REQUIREMENTS-WEB-API.md` (действующий контракт web-only режима и мультитокенов)
 
 > **Исправление статуса (редакция 2).** Фича WEB proxy уже в стабильном релизе Telegram Desktop
 > **7.3.1** (октябрь 2026): `ProxyData::Type::Web`, сериализуется кодом `4`. Существует эталонный сервер
@@ -207,9 +207,15 @@ Bridge URL **[выведено]**: `https://host/basePath/?bridge=<capability>`.
 1. **Bridge-страница** — `GET /?bridge=<capability>` (или `GET /basePath/?bridge=…`) отдаёт динамическую
    страницу со встроенным JS-носителем и одноразовым bootstrap-токеном; авторизация по HMAC
    bridge-capability (§ 2.3), иначе HTTP 404.
-2. **HTTPS long-poll carrier** — `POST /api/v1/session` (bootstrap→session-токен, `HELLO→WELCOME`),
-   `POST /api/v1/up` (`X-Up-Seq`→`X-Up-Ack`), `POST /api/v1/down` (long-poll `X-Down-Cursor`),
-   `DELETE /api/v1/session`; авторизация `Authorization: Bearer <token>`.
+2. **Носитель (carrier)** — выбирается ключом `webProxyCarrierMode`, режим подставляется в bridge-страницу
+   и повторяется в ответе `POST /api/v1/session` заголовком `X-Carrier-Mode`; клиент обязан использовать
+   именно его, сессия привязана к своему носителю (запросы «чужого» carrier'а → HTTP 404).
+   - **HTTPS long-poll** (`https`, по умолчанию) — `POST /api/v1/session` (bootstrap→session-токен,
+     `HELLO→WELCOME`), `POST /api/v1/up` (`X-Up-Seq`→`X-Up-Ack`), `POST /api/v1/down` (long-poll
+     `X-Down-Cursor`), `DELETE /api/v1/session`; авторизация `Authorization: Bearer <token>`.
+   - **WebSocket** (`websocket`) — одно соединение `GET /api/v1/ws` на сессию, авторизация подпротоколом
+     `Sec-WebSocket-Protocol: tproxy-v1.<token>`; тот же поток relay-батчей в обе стороны, keepalive —
+     протокольный ping Kestrel. Режимы `https-lanes`/`websocket-lanes` эталонного сервера не поддержаны.
 3. **Мультиплексор relay-frame + flow-control** — разбирать/собирать кадры § 2.1, вести потоки.
 4. **Терминация обфусцированного MTProto на поток** — каждый relay-поток — это MTProto-сессия:
    obfs2 init → выбор DC/proto → `relay_init` → перешифровка → маршрутизация в Telegram DC.
@@ -354,7 +360,7 @@ Bye(0x1F) ─▶ отказ (неверный bridge HMAC / превышение
 
 ## 5. Функциональные требования
 
-Приоритеты: **Must** / **Should** / **Could** (как в `docs/REQUIREMENTS-WEB-API.md`).
+Приоритеты: **Must** / **Should** / **Could** (как в `docs/prompts/REQUIREMENTS-WEB-API.md`).
 Идентификаторы с префиксом `F-W` во избежание коллизии с существующими `F-1…F-9`.
 
 ### 5.1. Bridge-листенер и статика
@@ -403,7 +409,9 @@ Bye(0x1F) ─▶ отказ (неверный bridge HMAC / превышение
 | **F-W.20** | Байты web-proxy-потоков учитываются в `IProxyStats`/`IPeerStatsRegistry` по паре (IP, токен); маршрут `route = "web-proxy"` (рядом с `ws`/`fallback`). | Should |
 | **F-W.21** | Живые web-proxy-потоки регистрируются в `IActiveSessionRegistry`; выключение/отзыв токена разрывает их (как F-8.6 существующего контракта). | Should |
 | **F-W.22** | Readiness отражает состояние bridge-листенера; метрики web-proxy (соединения, потоки, байты, отказы HMAC) в `/metrics` и `/api/metrics`. | Should |
-| **F-W.23** | При `webProxyEnabled` в стартовый журнал выводится bridge URL (`https://host/basePath/`); секрет не печатается (только `SecretMask`). | Could |
+| **F-W.23** | При `webProxyEnabled` в стартовый журнал выводятся ссылка-приглашение `https://t.me/webproxy?server=…&secret=…` и deep-link `tg://webproxy?…`; bridge-URL с capability не печатается (capability не логируется, N-W.4/§3.4). | Could |
+| **F-W.24** | Носитель сессии задаётся ключом `webProxyCarrierMode` (`https`\|`websocket`), подставляется в bridge-страницу и в `X-Carrier-Mode`; сессия обслуживает только свой носитель, запросы другого carrier'а → `404`; в режиме `websocket` — одно соединение `GET …/api/v1/ws` с подпротоколом `tproxy-v1.<token>`. Ключ горячий: новое значение действует на новые сессии. | Must |
+| **F-W.25** | Лимиты ресурсов: `webProxyMaxSessions` (сверх — `503` + `Retry-After`), `webProxyMaxSessionsPerIp` (0 — без ограничения), `webProxyMaxStreamsPerSession` (`Open` сверх лимита → `Close`-кадр), `webProxyMaxStreams` (глобальный бюджет потоков процесса), `webProxyMaxPendingBytesPerSession`/`webProxyMaxPendingItemsPerSession` (переполнение исходящей очереди закрывает сессию, клиент переподключается). Все ключи горячие и валидируются при сохранении. | Must |
 
 ---
 
@@ -423,7 +431,7 @@ Bye(0x1F) ─▶ отказ (неверный bridge HMAC / превышение
 ## 7. Конфигурация (новые ключи)
 
 Добавляются в `ConfigDto`/`Config`/`ConfigValidator` и панель. Категории применения — как в
-`docs/REQUIREMENTS-WEB-API.md` (§ 4): **горячо** / **слушатель** / **только старт**.
+`docs/prompts/REQUIREMENTS-WEB-API.md` (§ 4): **горячо** / **слушатель** / **только старт**.
 
 | Ключ | Тип | Умолчание | Применение | Описание |
 |---|---|---|---|---|
@@ -431,15 +439,27 @@ Bye(0x1F) ─▶ отказ (неверный bridge HMAC / превышение
 | `webProxyHost` | string | `"0.0.0.0"` | только старт | адрес привязки bridge |
 | `webProxyPort` | int | `443` | только старт | порт bridge (≠ `Port`, ≠ `MetricsPort`) |
 | `webProxyBasePath` | string | `""` | только старт | путь сайта (`""` → корень, `v1`) |
-| `webProxyPublicHost` | string | `""` | горячо | внешний домен для ссылки (если за reverse-proxy) |
+| `webProxyPublicHost` | string | `""` | горячо | внешний домен для ссылки и bridge-страницы (только домен: IP и хосты без точки Telegram не принимает) |
 | `webProxyCertPath` | string | `""` | только старт | PFX/сертификат для TLS (обязателен при `webProxyEnabled`) |
 | `webProxyCertPassword` | string | `""` | только старт | пароль PFX (в GET API маскируется) |
+| `webProxyCarrierMode` | string | `"https"` | горячо | носитель сессии: `https` (long-poll) или `websocket` (`GET /api/v1/ws`, подпротокол `tproxy-v1.<token>`); `*-lanes` отклоняются валидацией (F-W.24) |
+| `webProxyMaxSessions` | int | `128` | горячо | предел одновременных сессий (`503` + `Retry-After` сверх лимита) |
+| `webProxyMaxSessionsPerIp` | int | `0` | горячо | предел сессий с одного IP (`0` — без ограничения) |
+| `webProxyMaxStreamsPerSession` | int | `128` | горячо | потоков в сессии; `Open` сверх лимита получает `Close`-кадр |
+| `webProxyMaxStreams` | int | `4096` | горячо | глобальный бюджет relay-потоков процесса |
+| `webProxyMaxPendingBytesPerSession` | int | `33554432` | горячо | объём исходящей очереди сессии (1 … 64 МиБ); переполнение закрывает сессию |
+| `webProxyMaxPendingItemsPerSession` | int | `16384` | горячо | кадров в исходящей очереди сессии |
 
 Замечания:
 
 - `webProxyCertPath` обязателен при `webProxyEnabled` — bridge без TLS не имеет смысла (N-W.1).
+- `webProxyCarrierMode` и все лимиты — горячие (F-W.24/F-W.25): новый носитель действует на новые
+  сессии, уже открытые доживают на прежнем; лимиты перечитываются при каждой проверке.
 - Поддержка TLS-терминации **за** reverse-proxy (nginx отдаёт 443, приложение слушает внутренний
   порт) — отдельный вопрос § 9; на первой итерации реализуется прямая привязка 443 с сертификатом.
+- Локальная проверка без публичного домена — имя, резолвящееся в `127.0.0.1` (`lvh.me`), и
+  самоподписанный сертификат с этим SAN (`tools/scripts/cert.ps1 -Local`); смоук-скрипт принимает
+  `--ca <pem>`, что оставляет проверку TLS включённой.
 
 ---
 
@@ -519,7 +539,7 @@ E2E на тест-DC проходит, метрики и readiness коррек�
   - <https://core.telegram.org/mtproto/transports> (WebSocket-транспорт, обфускация)
   - <https://core.telegram.org/api/links#mtproxy-links> (секрет в ссылке)
 - Проект:
-  - `docs/REQUIREMENTS-WEB-API.md` — действующий контракт web-only/мультитокенов
+  - `docs/prompts/REQUIREMENTS-WEB-API.md` — действующий контракт web-only/мультитокенов
   - `src\TgWsProxy.Application\Logic\Protocol.cs` — константы протокола
   - `src\TgWsProxy.Infrastructure\Session\ClientSessionHandler.cs` — эталонный поток сессии
   - `src\TgWsProxy.Infrastructure\MtProto\MtProtoInspector.cs` — obfs2 handshake / relay init

@@ -169,6 +169,27 @@
       <p class="form-status" id="config-status" role="status" aria-live="polite"></p>
     </form>
   </section>
+
+  <section class="panel panel--wide" aria-labelledby="dc-title">
+    <div class="panel__head">
+      <h2 id="dc-title" class="panel__title">Доступность DC</h2>
+      <button type="button" class="btn" id="dc-fill" disabled>Заполнить DC → IP</button>
+      <button type="button" class="btn btn--primary" id="dc-check">Проверить</button>
+    </div>
+    <p class="muted">
+      Проверка выполняется с хоста прокси: видно, какие маршруты до Telegram реально доступны
+      из сети развёртывания — прямой TCP, прямой WebSocket, Cloudflare-фронтинг и Cloudflare Worker.
+    </p>
+    <div class="table-wrap">
+      <table class="table" id="dc-table">
+        <caption class="sr-only">Доступность дата-центров Telegram по четырём маршрутам</caption>
+        <thead id="dc-head"></thead>
+        <tbody id="dc-rows"></tbody>
+      </table>
+    </div>
+    <p class="muted" id="dc-summary">Нажмите «Проверить», чтобы выполнить проверку с хоста прокси.</p>
+    <p class="form-status" id="dc-status" role="status" aria-live="polite"></p>
+  </section>
 </main>
 
 <div class="sr-only" id="live" role="status" aria-live="polite"></div>

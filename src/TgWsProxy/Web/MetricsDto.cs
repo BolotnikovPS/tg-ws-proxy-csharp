@@ -71,6 +71,12 @@ public sealed record UpdateTokenRequest(string? Name, string? Secret, bool? Enab
 /// Ответ <c>GET /api/tokens/{id}/link</c>: готовая ссылка для Telegram и полный секрет.
 /// Секрет в этом ответе раскрыт (ссылка иначе не собрать), поэтому ответ запрещён
 /// к кэшированию (F-8.8, исключение для кнопки «Скопировать ссылку»).
+///
+/// Поля WEB proxy: <see cref="WebProxyLink"/> — ссылка-приглашение
+/// <c>https://t.me/webproxy?…</c> по каноническому шаблону Telegram,
+/// <see cref="WebProxyDeepLink"/> — эквивалентный <c>tg://webproxy?…</c> для прямого
+/// открытия в клиенте, <see cref="WebProxyBridgeUrl"/> — адрес страницы-носителя
+/// с HMAC capability (только для отладки и смоук-клиента, не для Telegram).
 /// </summary>
 public sealed record TokenLinkDto(
     string TokenId,
@@ -78,6 +84,7 @@ public sealed record TokenLinkDto(
     string? Link,
     string Secret,
     string? WebProxyLink,
+    string? WebProxyDeepLink,
     string? WebProxyBridgeUrl);
 
 /// <summary>

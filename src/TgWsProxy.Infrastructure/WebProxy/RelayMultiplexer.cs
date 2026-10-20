@@ -13,20 +13,42 @@ public sealed class RelayMultiplexer : IAsyncDisposable
     private readonly IRelayFrameSink _sink;
     private readonly Func<RelayStream, CancellationToken, Task>? _startBridge;
     private readonly long _initialSendWindow;
+    private readonly int _maxStreams;
+    private readonly Func<bool>? _tryAcquireGlobalStream;
+    private readonly Action? _releaseGlobalStream;
     private readonly Dictionary<int, RelayStream> _streams = new();
+    private readonly HashSet<int> _globalSlots = [];
     private readonly List<Task> _bridges = new();
     private readonly CancellationTokenSource _sessionCts = new();
     private readonly object _sync = new();
     private int _closed;
 
+    /// <param name="sink">Куда сериализуются исходящие кадры.</param>
+    /// <param name="startBridge">Запуск моста для открытого потока.</param>
+    /// <param name="initialSendWindow">Начальный кредит отправки потока.</param>
+    /// <param name="maxStreams">
+    /// Предел одновременных потоков в сессии (<c>webProxyMaxStreamsPerSession</c>); <c>0</c> — без
+    /// ограничения. OPEN сверх предела отклоняется кадром <c>CLOSE</c> (F-W.25).
+    /// </param>
+    /// <param name="tryAcquireGlobalStream">
+    /// Резерв слота в глобальном бюджете потоков (<c>webProxyMaxStreams</c>); <c>null</c> — бюджет
+    /// не ведётся. Отказ также отклоняет OPEN кадром <c>CLOSE</c>.
+    /// </param>
+    /// <param name="releaseGlobalStream">Возврат ранее зарезервированного глобального слота.</param>
     public RelayMultiplexer(
         IRelayFrameSink sink,
         Func<RelayStream, CancellationToken, Task>? startBridge = null,
-        long initialSendWindow = RelayFrameCodec.InitialStreamWindow)
+        long initialSendWindow = RelayFrameCodec.InitialStreamWindow,
+        int maxStreams = 0,
+        Func<bool>? tryAcquireGlobalStream = null,
+        Action? releaseGlobalStream = null)
     {
         _sink = sink;
         _startBridge = startBridge;
         _initialSendWindow = initialSendWindow;
+        _maxStreams = maxStreams;
+        _tryAcquireGlobalStream = tryAcquireGlobalStream;
+        _releaseGlobalStream = releaseGlobalStream;
     }
 
     /// <summary>Число активных потоков (для тестов и диагностики).</summary>
@@ -53,7 +75,7 @@ public sealed class RelayMultiplexer : IAsyncDisposable
         switch (frame.Type)
         {
             case RelayFrameType.Open:
-                HandleOpen(frame.StreamId);
+                await HandleOpenAsync(frame.StreamId, ct).ConfigureAwait(false);
                 break;
             case RelayFrameType.Data:
                 HandleData(frame);
@@ -115,6 +137,7 @@ public sealed class RelayMultiplexer : IAsyncDisposable
         foreach (var stream in streams)
         {
             stream.CompleteInbound();
+            ReleaseGlobalSlot(stream.StreamId);
         }
 
         try
@@ -129,21 +152,51 @@ public sealed class RelayMultiplexer : IAsyncDisposable
         _sessionCts.Dispose();
     }
 
-    private void HandleOpen(int streamId)
+    private async ValueTask HandleOpenAsync(int streamId, CancellationToken ct)
     {
         RelayStream? stream = null;
+        var globalSlot = false;
         lock (_sync)
         {
-            if (!_streams.ContainsKey(streamId))
+            if (_streams.ContainsKey(streamId))
+            {
+                return; // дублирующий Open — игнорируем
+            }
+
+            // F-W.25: локальный предел сессии проверяется до резервирования глобального слота,
+            // чтобы отказ не «съедал» бюджет других сессий.
+            if (_maxStreams > 0 && _streams.Count >= _maxStreams)
+            {
+                stream = null;
+            }
+            else
             {
                 stream = new RelayStream(streamId, SendFrameAsync, _initialSendWindow) { OnDisposed = Unregister };
-                _streams[streamId] = stream;
             }
         }
 
         if (stream is null)
         {
-            return; // дублирующий Open — игнорируем
+            await RejectOpenAsync(streamId, ct).ConfigureAwait(false);
+            return;
+        }
+
+        if (_tryAcquireGlobalStream is not null && !_tryAcquireGlobalStream())
+        {
+            await stream.DisposeAsync().ConfigureAwait(false);
+            await RejectOpenAsync(streamId, ct).ConfigureAwait(false);
+            return;
+        }
+
+        globalSlot = _tryAcquireGlobalStream is not null;
+
+        lock (_sync)
+        {
+            _streams[streamId] = stream;
+            if (globalSlot)
+            {
+                _globalSlots.Add(streamId);
+            }
         }
 
         PruneCompletedBridges();
@@ -161,6 +214,33 @@ public sealed class RelayMultiplexer : IAsyncDisposable
             {
                 _bridges.Add(bridge);
             }
+        }
+    }
+
+    /// <summary>
+    /// Отклоняет OPEN кадром <c>CLOSE</c>: клиент видит закрытие потока и не ждёт данных
+    /// (F-W.25 — предел потоков сессии либо исчерпанный глобальный бюджет).
+    /// </summary>
+    private ValueTask RejectOpenAsync(int streamId, CancellationToken ct)
+        => SendFrameAsync(RelayFrameType.Close, streamId, ReadOnlyMemory<byte>.Empty, ct);
+
+    /// <summary>Возвращает глобальный слот потока (ровно один раз на зарезервированный поток).</summary>
+    private void ReleaseGlobalSlot(int streamId)
+    {
+        if (_releaseGlobalStream is null)
+        {
+            return;
+        }
+
+        var released = false;
+        lock (_sync)
+        {
+            released = _globalSlots.Remove(streamId);
+        }
+
+        if (released)
+        {
+            _releaseGlobalStream();
         }
     }
 
@@ -200,6 +280,7 @@ public sealed class RelayMultiplexer : IAsyncDisposable
             _streams.Remove(streamId, out stream);
         }
 
+        ReleaseGlobalSlot(streamId);
         stream?.CompleteInbound();
     }
 
@@ -209,6 +290,8 @@ public sealed class RelayMultiplexer : IAsyncDisposable
         {
             _streams.Remove(stream.StreamId);
         }
+
+        ReleaseGlobalSlot(stream.StreamId);
     }
 
     private void PruneCompletedBridges()

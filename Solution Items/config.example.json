@@ -87,14 +87,23 @@
   // WEB proxy (browser-relay bridge) — опциональный мост для браузерных клиентов
   // Telegram Desktop. По умолчанию выключен и порт не занимает.
   // Bridge слушает HTTPS на webProxyHost:webProxyPort; GET /?bridge=<capability>
-  // отдаёт динамическую bridge-страницу (bootstrap-токен), а …/api/v1/{session,up,down}
-  // — HTTPS long-poll носитель (Authorization: Bearer <token>). Все ключи, кроме
-  // webProxyPublicHost («горячо»), — «только старт».
+  // отдаёт динамическую bridge-страницу (bootstrap-токен), а …/api/v1/* — носитель
+  // сессии: https — long-poll POST /{session,up,down} (Authorization: Bearer <token>),
+  // websocket — одно соединение GET /api/v1/ws (подпротокол tproxy-v1.<token>).
+  // webProxyEnabled/Host/Port/BasePath/CertPath/CertPassword — «только старт»,
+  // webProxyPublicHost, webProxyCarrierMode и все лимиты — «горячо».
   "webProxyEnabled": false,
   "webProxyHost": "0.0.0.0",
   "webProxyPort": 443,
   "webProxyBasePath": "",
   "webProxyPublicHost": "",
   "webProxyCertPath": "",
-  "webProxyCertPassword": ""
+  "webProxyCertPassword": "",
+  "webProxyCarrierMode": "https",
+  "webProxyMaxSessions": 128,
+  "webProxyMaxSessionsPerIp": 0,
+  "webProxyMaxStreamsPerSession": 128,
+  "webProxyMaxStreams": 4096,
+  "webProxyMaxPendingBytesPerSession": 33554432,
+  "webProxyMaxPendingItemsPerSession": 16384
 }

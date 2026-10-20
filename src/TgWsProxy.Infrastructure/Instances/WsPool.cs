@@ -30,12 +30,6 @@ internal sealed class WsPool(
     /// <summary>Максимальная задержка backoff наполнения (REFILL_BACKOFF_MAX).</summary>
     private static readonly TimeSpan RefillBackoffMax = TimeSpan.FromSeconds(3600);
 
-    /// <summary>Путь WebSocket-эндпоинта (WS_PATH).</summary>
-    private const string WsPath = "/apiws";
-
-    /// <summary>Путь тестового WebSocket-эндпоинта (WS_PATH_TEST).</summary>
-    private const string WsPathTest = "/apiws_test";
-
     /// <summary>SNI для domain fronting (upstream использует этот домен вместо реального).</summary>
     private const string FrontingSni = "sprinthost.ru";
 
@@ -236,7 +230,7 @@ internal sealed class WsPool(
             }
 
             var domains = WsDomains(key.Dc, key.IsMedia);
-            var path = key.IsTestDc ? WsPathTest : WsPath;
+            var path = key.IsTestDc ? Protocol.WsPathTest : Protocol.WsPath;
             var scope = $"pool DC{key.Dc}{(key.IsTestDc ? "t" : "")}{(key.IsMedia ? "m" : "")}";
 
             var tasks = new Task<IRawWebSocket?>[needed];

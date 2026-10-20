@@ -122,6 +122,30 @@ public sealed class ConfigDto
     public string? WebProxyCertPassword { get; set; }
 
     /// <summary>
+    /// Носитель bridge-сессии: <c>https</c> (long-poll) либо <c>websocket</c> (F-W.24).
+    /// Горячий ключ.
+    /// </summary>
+    public string? WebProxyCarrierMode { get; set; }
+
+    /// <summary>Предел одновременных relay-сессий WEB proxy. Горячий ключ.</summary>
+    public int? WebProxyMaxSessions { get; set; }
+
+    /// <summary>Предел relay-сессий с одного IP (<c>0</c> — без ограничения). Горячий ключ.</summary>
+    public int? WebProxyMaxSessionsPerIp { get; set; }
+
+    /// <summary>Предел потоков в одной relay-сессии. Горячий ключ.</summary>
+    public int? WebProxyMaxStreamsPerSession { get; set; }
+
+    /// <summary>Предел потоков во всех relay-сессиях. Горячий ключ.</summary>
+    public int? WebProxyMaxStreams { get; set; }
+
+    /// <summary>Предел исходящей очереди сессии в байтах. Горячий ключ.</summary>
+    public int? WebProxyMaxPendingBytesPerSession { get; set; }
+
+    /// <summary>Предел исходящей очереди сессии в кадрах. Горячий ключ.</summary>
+    public int? WebProxyMaxPendingItemsPerSession { get; set; }
+
+    /// <summary>
     /// Токены доступа прокси (F-8.1). Прежний единственный ключ <c>secret</c> отсутствует:
     /// он переносится в этот список при чтении файла (F-8.3, <see cref="ConfigFileLoader"/>),
     /// а для записи всегда используется полный набор токенов.

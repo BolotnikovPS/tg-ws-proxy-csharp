@@ -17,7 +17,7 @@ public interface IPeerStatsRegistry
     /// <summary>Сколько пар (адрес, токен) сейчас отслеживается.</summary>
     long TrackedPeers { get; }
 
-    /// <summary>Сколько раз новая пара не была учтена из-за предела <see cref="Logic.PeerStatsRegistry.MaxTrackedPeers"/>.</summary>
+    /// <summary>Сколько раз новая пара не была учтена из-за предела <see cref="Logic.Constants.MaxTrackedPeers"/>.</summary>
     long OverflowCount { get; }
 
     /// <summary>

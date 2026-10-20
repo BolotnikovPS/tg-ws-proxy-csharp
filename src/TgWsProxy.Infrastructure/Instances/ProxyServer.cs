@@ -518,6 +518,18 @@ internal sealed class ProxyServer(
         var enabled = cfg.Tokens.Where(static t => t.Enabled).ToList();
         logger.LogInformation("  Tokens:        {Enabled} enabled of {Total}", enabled.Count, cfg.Tokens.Count);
 
+        // WEB proxy: ссылка-приглашение строится только для доменного имени —
+        // клиент Telegram отвергает IP, хост без точки и wildcard. Если внешний
+        // адрес не подходит, ссылки не будет: сообщаем явно, чтобы не молчать.
+        if (cfg.WebProxyEnabled && WebProxyLinkBuilder.ResolveHost(cfg) is null)
+        {
+            var configured = string.IsNullOrWhiteSpace(cfg.WebProxyPublicHost) ? cfg.WebProxyHost : cfg.WebProxyPublicHost;
+            logger.LogWarning(
+                "  WEB proxy: ссылка для Telegram не строится — нужен домен в webProxyPublicHost (сейчас '{Host}'); " +
+                "bridge-страница при этом доступна по этому же адресу",
+                configured);
+        }
+
         foreach (var token in enabled)
         {
             var ddLink = $"tg://proxy?server={linkHost}&port={cfg.Port}&secret=dd{token.Secret}";
@@ -529,14 +541,21 @@ internal sealed class ProxyServer(
                 logger.LogInformation("  [{Name}] ee: {Link}", token.Name, eeLink);
             }
 
-            // WEB proxy (browser-relay) ссылка — только если bridge включён и внешний адрес задан.
-            // Bridge-URL (с capability) в лог не попадает: capability не логируется (N-W.4/§3.4).
+            // WEB proxy (browser-relay) ссылка — только если bridge включён и внешний адрес
+            // задан. Ссылка-приглашение строится по шаблону Telegram (t.me/webproxy);
+            // deep-link tg://webproxy печатается рядом, чтобы клиент можно было открыть
+            // напрямую, пока маршрут t.me/webproxy не зарегистрирован. Bridge-URL
+            // (с capability) в лог не попадает: capability не логируется (N-W.4/§3.4).
             if (cfg.WebProxyEnabled)
             {
-                var webLink = WebProxyLinkBuilder.BuildTgLink(cfg, token);
+                var webLink = WebProxyLinkBuilder.BuildShareLink(cfg, token);
                 if (webLink is not null)
                 {
                     logger.LogInformation("  [{Name}] web: {Link}", token.Name, webLink);
+                    if (WebProxyLinkBuilder.BuildDeepLink(cfg, token) is { } deepLink)
+                    {
+                        logger.LogInformation("  [{Name}] web (tg): {Link}", token.Name, deepLink);
+                    }
                 }
             }
         }

@@ -28,6 +28,7 @@ const state = {
   editingTokenId: null,
   status: null,
   chartKey: '',
+  dcReport: null,
 };
 
 /* ============================ форматирование ============================ */
@@ -586,16 +587,46 @@ function stopPolling() {
 
 const CONFIG_GROUPS = [
   {
-    // Блок справочный: привязка слушателя и адрес Web API меняются только в config.json,
+    // Блок справочный: адрес Web API и Swagger меняются только в config.json,
     // API отклоняет их правку с 409 (F-2.12, F-5.16).
-    legend: 'Сеть и Web API',
+    legend: 'Web API',
     info: true,
     fields: [
-      { key: 'port', label: 'Порт прокси', type: 'number', startup: true },
-      { key: 'host', label: 'Адрес прослушивания', type: 'text', startup: true },
       { key: 'metricsPort', label: 'Порт Web API', type: 'number', startup: true, hint: 'В этой редакции Web API запускается всегда' },
       { key: 'metricsHost', label: 'Адрес Web API', type: 'text', startup: true, hint: 'По умолчанию только 127.0.0.1' },
       { key: 'enableSwagger', label: 'Swagger (/swagger)', type: 'bool', startup: true, hint: 'Маршруты регистрируются при старте' },
+    ],
+  },
+  {
+    // Блок справочный: привязка слушателей и параметры WEB proxy задаются в config.json
+    // (стартовые ключи, API отклоняет их правку с 409). Разбит на подразделы MTPROTO
+    // (основной proxy-слушатель) и WebProxy (browser-relay).
+    legend: 'Сеть',
+    info: true,
+    sections: [
+      {
+        title: 'MTPROTO',
+        fields: [
+          { key: 'port', label: 'Порт прокси', type: 'number', startup: true },
+          { key: 'host', label: 'Адрес прослушивания', type: 'text', startup: true },
+        ],
+      },
+      {
+        title: 'WebProxy',
+        fields: [
+          { key: 'webProxyEnabled', label: 'WEB proxy включён', type: 'bool' },
+          { key: 'webProxyHost', label: 'Адрес привязки', type: 'text', startup: true },
+          { key: 'webProxyPort', label: 'Порт bridge', type: 'number', startup: true },
+          { key: 'webProxyBasePath', label: 'Base path', type: 'text', startup: true },
+          { key: 'webProxyPublicHost', label: 'Публичный домен', type: 'text', hint: 'Домен для ссылок t.me/webproxy (IP не принимается)' },
+          { key: 'webProxyCarrierMode', label: 'Носитель', type: 'text', hint: 'https (long-poll) или websocket' },
+          { key: 'webProxyCertPath', label: 'Сертификат (PFX)', type: 'text', startup: true },
+          { key: 'webProxyMaxSessions', label: 'Максимум сессий', type: 'number' },
+          { key: 'webProxyMaxSessionsPerIp', label: 'Сессий на IP', type: 'number', hint: '0 — без ограничения' },
+          { key: 'webProxyMaxStreamsPerSession', label: 'Потоков на сессию', type: 'number' },
+          { key: 'webProxyMaxStreams', label: 'Потоков всего', type: 'number' },
+        ],
+      },
     ],
   },
   {
@@ -685,6 +716,14 @@ function fieldId(key) {
   return `cfg-${key}`;
 }
 
+/**
+ * Группа конфигурации может быть плоской (fields) либо разбитой на подразделы
+ * (sections). Возвращает единый плоский список полей для всех циклов обработки.
+ */
+function groupFields(group) {
+  return group.sections ? group.sections.flatMap((s) => s.fields) : (group.fields || []);
+}
+
 function buildForm() {
   const host = $('config-groups');
   host.textContent = '';
@@ -693,10 +732,21 @@ function buildForm() {
     const box = el('fieldset', group.info ? 'field-group field-group--info' : 'field-group');
     box.append(el('legend', '', group.legend));
 
-    for (const field of group.fields) {
-      // Справочные блоки показываются текстом: править их можно только в config.json,
-      // API отклоняет изменение таких ключей с 409 (F-2.12, F-5.16).
-      box.append(group.info ? buildInfoRow(field) : buildField(field));
+    if (group.sections) {
+      for (const section of group.sections) {
+        const sectionBox = el('div', 'field-section');
+        sectionBox.append(el('div', 'field-section__title', section.title));
+        for (const field of section.fields) {
+          sectionBox.append(group.info ? buildInfoRow(field) : buildField(field));
+        }
+        box.append(sectionBox);
+      }
+    } else {
+      for (const field of group.fields) {
+        // Справочные блоки показываются текстом: править их можно только в config.json,
+        // API отклоняет изменение таких ключей с 409 (F-2.12, F-5.16).
+        box.append(group.info ? buildInfoRow(field) : buildField(field));
+      }
     }
 
     host.append(box);
@@ -857,7 +907,7 @@ function fillForm(config) {
   state.config = config;
 
   for (const group of CONFIG_GROUPS) {
-    for (const field of group.fields) {
+    for (const field of groupFields(group)) {
       const wrapper = document.querySelector(`.field[data-key="${field.key}"]`);
       if (!wrapper) continue;
 
@@ -968,7 +1018,7 @@ function validate(payload) {
 
 function findField(key) {
   for (const group of CONFIG_GROUPS) {
-    for (const field of group.fields) {
+    for (const field of groupFields(group)) {
       if (field.key === key) return field;
     }
   }
@@ -988,7 +1038,7 @@ function changedKeys(payload) {
   const keys = [];
 
   for (const group of CONFIG_GROUPS) {
-    for (const field of group.fields) {
+    for (const field of groupFields(group)) {
       if (!(field.key in payload)) continue;
 
       const before = loaded[field.key];
@@ -1020,7 +1070,7 @@ function refreshCategoryBadges() {
   const changed = new Set(listenerKeysAmong(changedKeys(collectForm())));
 
   for (const group of CONFIG_GROUPS) {
-    for (const field of group.fields) {
+    for (const field of groupFields(group)) {
       if (fieldCategory(field) !== 'listener') continue;
       const wrapper = document.querySelector(`.field[data-key="${field.key}"]`);
       const badge = wrapper ? wrapper.querySelector('.field__restart') : null;
@@ -1031,7 +1081,7 @@ function refreshCategoryBadges() {
 
 function showValidation(errors) {
   for (const group of CONFIG_GROUPS) {
-    for (const field of group.fields) {
+    for (const field of groupFields(group)) {
       const wrapper = document.querySelector(`.field[data-key="${field.key}"]`);
       if (!wrapper) continue;
 
@@ -1250,7 +1300,7 @@ async function copyText(text) {
   }
 }
 
-// Кнопка «Ссылка»: берёт у сервера полный секрет и копирует готовую ссылку для
+// Кнопка «Ссылка MTProto»: берёт у сервера полный секрет и копирует готовую ссылку для
 // Telegram (F-8.8, исключение для /api/tokens/{id}/link). Ссылка не кэшируется и
 // не попадает в состояние панели — только в буфер обмена.
 async function copyTokenLink(token) {
@@ -1274,23 +1324,29 @@ async function copyTokenLink(token) {
   }
 }
 
-// Кнопка «Web»: копирует bridge-URL WEB proxy (browser-relay) — тот самый URL, который
-// нужен для теста смоук-клиентом (содержит HMAC capability). Возвращается только при
-// включённом webProxyEnabled и заданном внешнем адресе bridge.
+// Кнопка «Ссылка Web (alfa)»: копирует ссылку-приглашение WEB proxy по каноническому
+// шаблону Telegram — https://t.me/webproxy?server=<host>[/<basePath>]&secret=<secret>.
+// Секрет в ссылке: обычный 32-hex для корня и base64url(0x70‖secret) при заданном
+// basePath. Bridge-URL (адрес страницы-носителя с HMAC capability) в буфер не попадает:
+// это отладочный адрес, а не ссылка для Telegram. Возможность помечена как alfa:
+// контракт сверяется с Telegram Desktop, поведение может меняться.
 async function copyWebProxyLink(token) {
   try {
     const result = await apiJson(`/api/tokens/${encodeURIComponent(token.id)}/link`);
-    if (!result.webProxyBridgeUrl) {
+    if (!result.webProxyLink) {
       tokenStatus(
-        'WEB proxy ссылка не строится: включите webProxyEnabled и задайте webProxyPublicHost.',
+        'WEB proxy ссылка не строится: включите webProxyEnabled и задайте внешний домен '
+          + '(webProxyPublicHost). Тип WEB proxy работает только с доменом — IP-адрес '
+          + 'Telegram не принимает.',
         'warn');
       return;
     }
 
-    if (await copyText(result.webProxyBridgeUrl)) {
-      tokenStatus(`WEB proxy bridge URL для «${token.name}» скопирован в буфер обмена`, 'ok');
+    if (await copyText(result.webProxyLink)) {
+      const deep = result.webProxyDeepLink ? ` (deep-link: ${result.webProxyDeepLink})` : '';
+      tokenStatus(`WEB proxy ссылка для «${token.name}» скопирована${deep}`, 'ok');
     } else {
-      tokenStatus(`WEB proxy bridge URL для «${token.name}»: ${result.webProxyBridgeUrl}`, 'warn');
+      tokenStatus(`WEB proxy ссылка для «${token.name}»: ${result.webProxyLink}`, 'warn');
     }
   } catch (error) {
     tokenStatus(describeTokenError(error), 'bad');
@@ -1332,8 +1388,8 @@ function renderTokens() {
 
     const actions = el('td');
     const group = el('span', 'table__actions');
-    group.append(actionButton('Ссылка', () => copyTokenLink(token)));
-    group.append(actionButton('Web', () => copyWebProxyLink(token)));
+    group.append(actionButton('Ссылка MTProto', () => copyTokenLink(token)));
+    group.append(actionButton('Ссылка Web (alfa)', () => copyWebProxyLink(token)));
     group.append(actionButton('Изменить', () => startTokenEdit(token)));
     group.append(actionButton('Ротация', () => rotateToken(token)));
     group.append(actionButton(token.enabled ? 'Отключить' : 'Включить', () => toggleToken(token)));
@@ -1506,6 +1562,149 @@ function describeTokenError(error) {
   return error.message || 'Не удалось выполнить операцию';
 }
 
+/* ============================ доступность DC ============================ */
+
+// Порядок колонок совпадает с маршрутами сервера (IDcReachabilityChecker):
+// прямой WebSocket, прямой TCP, Cloudflare-фронтинг, Cloudflare Worker.
+const DC_ROUTES = [
+  { key: 'directWs', label: 'Прямой WebSocket' },
+  { key: 'directTcp', label: 'Прямой TCP' },
+  { key: 'cfProxy', label: 'Cloudflare-фронтинг' },
+  { key: 'cfWorker', label: 'Cloudflare Worker' },
+];
+
+async function runDcCheck() {
+  const button = $('dc-check');
+  const status = $('dc-status');
+  button.disabled = true;
+  button.textContent = 'Проверяем…';
+  status.textContent = '';
+  status.dataset.tone = '';
+  try {
+    const report = await apiJson('/api/dc-check', { method: 'POST' });
+    state.dcReport = report;
+    renderDcCheck(report);
+    updateDcFillButton();
+  } catch (error) {
+    if (error instanceof AuthRequired) {
+      if (!tokenPromptShown) {
+        tokenPromptShown = true;
+        showBanner('Web API защищён токеном: введите Bearer-токен, чтобы видеть данные.', 'auth');
+      }
+    } else {
+      status.textContent = `Не удалось выполнить проверку: ${error.message}`;
+      status.dataset.tone = 'bad';
+    }
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Проверить';
+  }
+}
+
+function dcCell(result) {
+  const cell = el('td');
+  if (!result) {
+    cell.append(el('span', 'muted', '—'));
+    return cell;
+  }
+  cell.append(el(
+    'span',
+    `pill dc-pill ${result.ok ? 'dc-pill--ok' : 'dc-pill--fail'}`,
+    result.ok ? 'доступен' : 'недоступен',
+  ));
+  if (result.ok && result.latencyMs != null) {
+    cell.append(el('span', 'muted dc-ms', ` ${fmtNum(result.latencyMs)} мс`));
+  }
+  if (result.ok && result.ip) {
+    cell.append(el('div', 'muted dc-detail', `IP ${result.ip}`));
+  } else if (result.ok && result.detail) {
+    cell.append(el('div', 'muted dc-detail', result.detail));
+  } else if (!result.ok) {
+    const lines = [result.error, result.detail].filter(Boolean);
+    cell.append(el('div', 'muted dc-detail', lines.join(' · ')));
+  }
+  return cell;
+}
+
+function renderDcCheck(report) {
+  const head = $('dc-head');
+  head.textContent = '';
+  const headRow = el('tr');
+  const dcCol = el('th', '', 'DC');
+  dcCol.scope = 'col';
+  headRow.append(dcCol);
+  for (const route of DC_ROUTES) {
+    const found = report.routes.find((r) => r.route === route.key);
+    const th = el('th', '', found && found.label ? found.label : route.label);
+    th.scope = 'col';
+    headRow.append(th);
+  }
+  head.append(headRow);
+
+  const body = $('dc-rows');
+  body.textContent = '';
+  const byRoute = new Map(report.routes.map((r) => [r.route, r]));
+  for (const dc of report.dcs) {
+    const row = el('tr');
+    const dcHeader = el('th', 'dc-num', `DC ${dc}`);
+    dcHeader.scope = 'row';
+    row.append(dcHeader);
+    for (const route of DC_ROUTES) {
+      const r = byRoute.get(route.key);
+      const result = r && r.results.find((x) => x.dc === dc);
+      row.append(dcCell(result));
+    }
+    body.append(row);
+  }
+
+  const notes = report.routes
+    .filter((r) => r.note)
+    .map((r) => `${r.label || r.route}: ${r.note}`)
+    .join(' · ');
+  $('dc-summary').textContent = `Проверено ${report.dcs.length} DC · ${fmtTime(report.checkedAt)}${notes ? ` · ${notes}` : ''}`;
+}
+
+// Собирает рабочие IP маршрута «Прямой TCP» из последнего отчёта проверки DC.
+function collectDcFill() {
+  const report = state.dcReport;
+  if (!report) return [];
+  const route = report.routes.find((r) => r.route === 'directTcp');
+  if (!route) return [];
+  return route.results
+    .filter((r) => r.ok && r.ip)
+    .sort((a, b) => a.dc - b.dc)
+    .map((r) => `${r.dc}:${r.ip}`);
+}
+
+function updateDcFillButton() {
+  const button = $('dc-fill');
+  if (!button) return;
+  const entries = collectDcFill();
+  button.disabled = entries.length === 0;
+  button.title = entries.length === 0
+    ? 'Сначала выполните проверку: кнопка активна, когда есть DC, доступные по прямому TCP'
+    : `Подставить в «DC → IP»: ${entries.join(', ')}`;
+}
+
+function fillDcIpFromCheck() {
+  const entries = collectDcFill();
+  if (entries.length === 0) return;
+
+  const input = $(fieldId('dcIp'));
+  if (!input) return;
+
+  input.value = entries.join('\n');
+  refreshCategoryBadges();
+
+  const wrapper = document.querySelector('.field[data-key="dcIp"]');
+  if (wrapper) wrapper.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  showBanner(
+    `Подставлены IP для ${entries.length} DC в поле «DC → IP». Проверьте список и нажмите «Сохранить» — применится с перезапуском слушателя.`,
+    'warn',
+  );
+}
+
 /* ============================ инициализация ============================ */
 
 function initFilter() {
@@ -1566,6 +1765,8 @@ function init() {
     setFormStatus(config ? 'Конфигурация перечитана с сервера' : '', config ? 'ok' : 'bad');
   });
   $('config-reset').addEventListener('click', resetConfig);
+  $('dc-check').addEventListener('click', runDcCheck);
+  $('dc-fill').addEventListener('click', fillDcIpFromCheck);
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {

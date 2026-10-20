@@ -76,32 +76,75 @@ public sealed class WebProxyLinkBuilderTests
     }
 
     [Fact]
-    public void BuildTgLink_Null_For_Wildcard_Host()
+    public void BuildShareLink_Null_For_Wildcard_Host()
     {
         var config = WebProxyConfig("0.0.0.0");
 
-        Assert.Null(WebProxyLinkBuilder.BuildTgLink(config, Token(config)));
+        Assert.Null(WebProxyLinkBuilder.BuildShareLink(config, Token(config)));
+        Assert.Null(WebProxyLinkBuilder.BuildDeepLink(config, Token(config)));
     }
 
     [Fact]
-    public void BuildTgLink_Formats_WebProxy_Scheme_Without_Port()
+    public void BuildShareLink_Root_Uses_Telegram_WebProxy_Template()
     {
         var config = WebProxyConfig("0.0.0.0", "bridge.example.com");
 
         Assert.Equal(
-            $"tg://webproxy?server=bridge.example.com&secret={TestConfig.TokenSecret}",
-            WebProxyLinkBuilder.BuildTgLink(config, Token(config)));
+            $"{WebProxyLinkBuilder.ShareLinkPrefix}?server=bridge.example.com&secret={TestConfig.TokenSecret}",
+            WebProxyLinkBuilder.BuildShareLink(config, Token(config)));
     }
 
     [Fact]
-    public void BuildTgLink_BasePath_Encodes_Server_Slash()
+    public void BuildShareLink_BasePath_Encodes_Server_Slash()
     {
         var config = WebProxyConfig("0.0.0.0", "bridge.example.com", "v1");
         var marker = WebProxyLinkBuilder.BuildMarkerSecret(TestConfig.TokenSecret, "v1");
 
         Assert.Equal(
-            $"tg://webproxy?server=bridge.example.com%2Fv1&secret={marker}",
-            WebProxyLinkBuilder.BuildTgLink(config, Token(config)));
+            $"{WebProxyLinkBuilder.ShareLinkPrefix}?server=bridge.example.com%2Fv1&secret={marker}",
+            WebProxyLinkBuilder.BuildShareLink(config, Token(config)));
+    }
+
+    [Fact]
+    public void BuildDeepLink_Matches_ShareLink_Shape()
+    {
+        var config = WebProxyConfig("0.0.0.0", "bridge.example.com");
+
+        Assert.Equal(
+            $"{WebProxyLinkBuilder.DeepLinkPrefix}?server=bridge.example.com&secret={TestConfig.TokenSecret}",
+            WebProxyLinkBuilder.BuildDeepLink(config, Token(config)));
+    }
+
+    [Theory]
+    [InlineData("bridge.example.com", "bridge.example.com")]
+    [InlineData("  Bridge.Example.COM  ", "bridge.example.com")]
+    [InlineData("bridge.example.com:8443", null)]
+    [InlineData("bridge.example.com/path", null)]
+    [InlineData("bridge.example.com.", null)]
+    [InlineData("localhost", null)]
+    [InlineData("127.0.0.1", null)]
+    [InlineData("127.1", null)]
+    [InlineData("0x7f.1", null)]
+    [InlineData("", null)]
+    public void NormalizeHost_Rejects_Ip_And_Non_Domain_Forms(string input, string? expected)
+    {
+        Assert.Equal(expected, WebProxyLinkBuilder.NormalizeHost(input));
+    }
+
+    [Fact]
+    public void NormalizeHost_Converts_Idn_To_Ace()
+    {
+        Assert.Equal("xn--bcher-kva.example", WebProxyLinkBuilder.NormalizeHost("bücher.example"));
+    }
+
+    [Fact]
+    public void BuildShareLink_Uses_Ace_Form_For_Idn_Host()
+    {
+        var config = WebProxyConfig("0.0.0.0", "bücher.example");
+
+        Assert.Equal(
+            $"{WebProxyLinkBuilder.ShareLinkPrefix}?server=xn--bcher-kva.example&secret={TestConfig.TokenSecret}",
+            WebProxyLinkBuilder.BuildShareLink(config, Token(config)));
     }
 
     [Fact]
@@ -134,5 +177,39 @@ public sealed class WebProxyLinkBuilderTests
         var config = WebProxyConfig("0.0.0.0");
 
         Assert.Null(WebProxyLinkBuilder.BuildBridgeUrl(config, Token(config)));
+    }
+
+    [Fact]
+    public void BuildBridgeUrl_Allows_Ip_Host_For_Local_Debugging()
+    {
+        var config = WebProxyConfig("0.0.0.0", "127.0.0.1");
+        var capability = BridgeCapabilityVerifier.ComputeCapability(
+            Convert.FromHexString(TestConfig.TokenSecret), "127.0.0.1", "");
+
+        Assert.Equal(
+            $"https://127.0.0.1/?bridge={capability}",
+            WebProxyLinkBuilder.BuildBridgeUrl(config, Token(config)));
+    }
+
+    [Fact]
+    public void BuildShareLink_Null_For_Ip_Host()
+    {
+        // Telegram принимает для WEB proxy только доменное имя: IP-адрес в ссылке невалиден,
+        // при этом bridge-URL (отладочный адрес) остаётся доступным.
+        var config = WebProxyConfig("0.0.0.0", "127.0.0.1");
+
+        Assert.Null(WebProxyLinkBuilder.BuildShareLink(config, Token(config)));
+        Assert.Null(WebProxyLinkBuilder.BuildDeepLink(config, Token(config)));
+        Assert.NotNull(WebProxyLinkBuilder.BuildBridgeUrl(config, Token(config)));
+    }
+
+    [Fact]
+    public void ResolveBridgeHost_Keeps_Ip_And_Lowercases_Domain()
+    {
+        Assert.Equal("127.0.0.1", WebProxyLinkBuilder.ResolveBridgeHost(WebProxyConfig("127.0.0.1")));
+        Assert.Equal(
+            "bridge.example.com",
+            WebProxyLinkBuilder.ResolveBridgeHost(WebProxyConfig("0.0.0.0", "Bridge.Example.COM")));
+        Assert.Null(WebProxyLinkBuilder.ResolveBridgeHost(WebProxyConfig("0.0.0.0")));
     }
 }

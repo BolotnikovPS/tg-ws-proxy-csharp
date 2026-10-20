@@ -541,6 +541,28 @@ public sealed class WebApiEndpointsTests
         Assert.DoesNotContain(TestConfig.TokenSecret, body, StringComparison.Ordinal);
     }
 
+    // F-9.x: POST /api/dc-check возвращает матрицу «DC × маршрут» (4 маршрута, 6 DC).
+    [Fact]
+    public async Task DcCheck_Returns_Route_Matrix()
+    {
+        await using var app = await StartAppAsync(listening: true);
+
+        var response = await app.Client.PostAsync("/api/dc-check", null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var report = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(6, report.GetProperty("dcs").GetArrayLength());
+        var routes = report.GetProperty("routes");
+        Assert.Equal(4, routes.GetArrayLength());
+        Assert.Equal("directWs", routes[0].GetProperty("route").GetString());
+        Assert.Equal("Прямой WebSocket", routes[0].GetProperty("label").GetString());
+        Assert.True(routes[0].GetProperty("results")[0].GetProperty("ok").GetBoolean());
+        Assert.Equal(42, routes[0].GetProperty("results")[0].GetProperty("latencyMs").GetInt32());
+        // Маршрут «Прямой TCP» возвращает фактический IP, проверенный хостом (для переноса в «DC → IP»).
+        Assert.Equal("directTcp", routes[1].GetProperty("route").GetString());
+        Assert.Equal("149.154.167.99", routes[1].GetProperty("results")[1].GetProperty("ip").GetString());
+    }
+
     /// <summary>
     /// Поднимает приложение на свободном порту (порт 0) с подставным <see cref="IProxyServer"/>
     /// и клиентом, привязанным к фактическому адресу привязки.
@@ -561,6 +583,9 @@ public sealed class WebApiEndpointsTests
         // вводят IActiveSessionRegistry, а незарегистрированный интерфейс minimal API
         // принял бы за тело запроса и уронил бы построение всей таблицы маршрутов.
         builder.Services.AddSingleton<IActiveSessionRegistry, ActiveSessionRegistry>();
+        // Проверка достижимости DC — сетевой ввод-вывод: в тестах подменяется заглушкой,
+        // иначе незарегистрированный интерфейс minimal API принял бы за тело запроса.
+        builder.Services.AddSingleton<IDcReachabilityChecker>(new StubDcChecker());
         builder.Services.AddSingleton<IProxyServer>(new StubProxyServer(listening));
         builder.Services.AddSingleton<IProxyStats>(new ProxyStats());
         builder.Services.AddSingleton<MetricsHistory>();
@@ -592,6 +617,28 @@ public sealed class WebApiEndpointsTests
             Client.Dispose();
             await App.StopAsync();
             await App.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// Заглушка проверки достижимости DC: возвращает фиксированную матрицу без сетевых вызовов.
+    /// </summary>
+    private sealed class StubDcChecker : IDcReachabilityChecker
+    {
+        public Task<DcCheckReport> CheckAsync(CancellationToken ct = default)
+        {
+            var dcs = new[] { 1, 2, 3, 4, 5, 203 };
+            var ok = new DcResult(1, true, 42, null, "ok: 149.154.175.50", null);
+            var okTcp = new DcResult(2, true, 5, null, null, "149.154.167.99");
+            var fail = new DcResult(2, false, null, "timeout", "проверено 1 адрес(ов)", null);
+            var routes = new DcRouteCheck[]
+            {
+                new("directWs", "Прямой WebSocket", new[] { ok, fail, ok, ok, ok, ok }, null),
+                new("directTcp", "Прямой TCP", new[] { fail, okTcp, ok, ok, ok, ok }, null),
+                new("cfProxy", "Cloudflare-фронтинг", new[] { ok, ok, ok, ok, ok, ok }, "использован встроенный пул (сэмпл из 3)"),
+                new("cfWorker", "Cloudflare Worker", new[] { ok, ok, ok, ok, ok, ok }, null),
+            };
+            return Task.FromResult(new DcCheckReport(DateTimeOffset.UtcNow, dcs, routes));
         }
     }
 

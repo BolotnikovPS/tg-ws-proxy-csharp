@@ -609,9 +609,9 @@ main {
 
 #config-groups {
   display: grid;
-  /* Две колонки нужны только для пары справочных блоков в начале секции:
-     остальные группы занимают строку целиком (grid-column: 1 / -1). */
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* Шесть колонок: три справочных блока в начале секции стоят рядом
+     (каждый занимает по 2 колонки); остальные группы — на всю строку. */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 14px 16px;
 }
 
@@ -635,11 +635,27 @@ main {
 }
 
 /* Справочный блок: значения только для чтения, правка — через config.json.
-   Справочные блоки стоят рядом в начале секции, поэтому делят строку пополам. */
+   Занимает треть ширины (2 из 6 колонок), чтобы три блока стояли рядом. */
 .field-group--info {
-  grid-column: auto;
+  grid-column: span 2;
   background: var(--surface);
   border-style: dashed;
+}
+
+/* Подразделы внутри справочного блока (например, MTPROTO / WebProxy в «Сети»). */
+.field-section + .field-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+}
+
+.field-section__title {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 640;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .field--info {
@@ -951,6 +967,10 @@ textarea {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .field-group--info {
+    grid-column: 1 / -1;
+  }
+
   .form-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -976,4 +996,45 @@ textarea {
   #config-form {
     display: none;
   }
+}
+
+/* ---------- доступность DC ---------- */
+
+.dc-pill {
+  padding: 3px 10px;
+  font-size: 11.5px;
+}
+
+.dc-pill--ok {
+  border-color: transparent;
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.dc-pill--fail {
+  border-color: transparent;
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.dc-ms {
+  margin-left: 6px;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.dc-detail {
+  margin-top: 4px;
+  font-size: 11px;
+  word-break: break-word;
+}
+
+.dc-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#dc-table th,
+#dc-table td {
+  vertical-align: top;
 }

@@ -9,7 +9,7 @@ public sealed class CfDomainBalancer : ICfDomainBalancer
 {
     private static readonly int[] KnownDcs = [1, 2, 3, 4, 5, 203];
 
-    private readonly object sync = new();
+    private readonly Lock sync = new();
     private List<string> domains = [];
     private Dictionary<int, string> dcToDomain = [];
 

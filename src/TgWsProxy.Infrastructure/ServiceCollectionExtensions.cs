@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
+using TgWsProxy.Infrastructure.Diagnostics;
 using TgWsProxy.Infrastructure.FakeTls;
 using TgWsProxy.Infrastructure.Hosting;
 using TgWsProxy.Infrastructure.Instances;
@@ -25,6 +26,8 @@ public static class ServiceCollectionExtensions
             .AddSingleton<ICfDomainRefresher, CfDomainRefresher>()
             .AddSingleton<ICfH2Pool, CfH2Pool>()
             .AddSingleton<H2Bridge>()
+            // Диагностика достижимости DC: проверка «какие DC доступны» с хоста прокси.
+            .AddSingleton<IDcReachabilityChecker, DcReachabilityChecker>()
             // Клиентские сессии, чтение init и Fake TLS-перенаправление — сетевой ввод-вывод
             // (Infrastructure), а не бизнес-логика Application.
             .AddSingleton<ClientInitReader>()
@@ -35,6 +38,8 @@ public static class ServiceCollectionExtensions
             // Relay-сессия WEB proxy: подбор токена по HMAC bridge-capability и жизненный цикл
             // сессии (статистика/реестр); менеджер сессий — bootstrap/session-токены и слоты.
             .AddSingleton<IWebProxyRelaySession, WebProxyRelaySession>()
+            // Глобальный бюджет relay-потоков (webProxyMaxStreams) — общий на все сессии.
+            .AddSingleton<WebProxyStreamBudget>()
             .AddSingleton<WebProxySessionManager>()
             .AddSingleton<IClientSessionHandler, ClientSessionHandler>()
             .AddSingleton<IActiveSessionRegistry, ActiveSessionRegistry>()

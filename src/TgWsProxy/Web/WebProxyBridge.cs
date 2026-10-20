@@ -1,5 +1,7 @@
+using System.Buffers.Text;
 using System.Globalization;
 using System.Net;
+using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
@@ -37,6 +39,12 @@ internal static class WebProxyBridge
     /// <summary>Регистрирует bridge-конвейер: carrier-API и маршруты bridge-сайта.</summary>
     public static void Map(WebApplication app)
     {
+        // Носитель websocket (F-W.24): апгрейд обслуживает только bridge-порт, панель не затрагивается.
+        app.UseWebSockets(new WebSocketOptions
+        {
+            KeepAliveInterval = TimeSpan.FromSeconds(30),
+        });
+
         app.Use(async (context, next) =>
         {
             var cfg = context.RequestServices.GetRequiredService<Config>();
@@ -57,6 +65,7 @@ internal static class WebProxyBridge
                     case "api/v1/session":
                     case "api/v1/up":
                     case "api/v1/down":
+                    case "api/v1/ws":
                         await HandleApiAsync(context, cfg, basePath, rawPath[basePrefix.Length..]);
                         return;
                 }
@@ -130,7 +139,7 @@ internal static class WebProxyBridge
             var manager = context.RequestServices.GetRequiredService<WebProxySessionManager>();
             var bootstrap = manager.IssueBootstrap(token);
 
-            var publicHost = WebProxyLinkBuilder.ResolveHost(cfg) ?? host;
+            var publicHost = WebProxyLinkBuilder.ResolveBridgeHost(cfg) ?? host;
             var relayBase = "https://" + publicHost + Base(basePath);
             var nonce = GenerateNonce();
 
@@ -138,7 +147,7 @@ internal static class WebProxyBridge
                 .Replace("__NONCE__", nonce, StringComparison.Ordinal)
                 .Replace("__RELAY_BASE__", JsonEncode(relayBase), StringComparison.Ordinal)
                 .Replace("__BOOTSTRAP__", JsonEncode(bootstrap), StringComparison.Ordinal)
-                .Replace("__CARRIER_MODE__", JsonEncode("https"), StringComparison.Ordinal)
+                .Replace("__CARRIER_MODE__", JsonEncode(manager.CurrentCarrierMode), StringComparison.Ordinal)
                 .Replace("__BATCH_LIMIT__", CarrierBatchBytes.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
 
             var response = context.Response;
@@ -173,7 +182,14 @@ internal static class WebProxyBridge
         {
             var request = context.Request;
 
-            // Carrier-запросы без query и с единственным Authorization-заголовком.
+            // Носитель websocket авторизуется подпротоколом, а не заголовком Authorization (F-W.24).
+            if (suffix == "api/v1/ws")
+            {
+                await HandleWebSocketAsync(context, cfg, basePath);
+                return;
+            }
+
+            // Остальные carrier-запросы — без query и с единственным Authorization-заголовком.
             if (request.QueryString.HasValue || request.Headers.Authorization.Count > 1)
             {
                 NotFound(context);
@@ -257,7 +273,7 @@ internal static class WebProxyBridge
                 response.Headers.CacheControl = "no-store";
                 response.ContentType = "application/octet-stream";
                 response.Headers["X-Session-Token"] = result.SessionToken;
-                response.Headers["X-Carrier-Mode"] = "https";
+                response.Headers["X-Carrier-Mode"] = result.CarrierMode;
                 response.Headers["X-Down-Cursor"] = "0";
                 response.StatusCode = StatusCodes.Status200OK;
                 response.ContentLength = result.Welcome!.Length;
@@ -296,7 +312,7 @@ internal static class WebProxyBridge
         }
 
         var session = manager.GetSession(token);
-        if (session is null)
+        if (session is null || !IsHttpsCarrier(session))
         {
             NotFound(context);
             return;
@@ -340,7 +356,7 @@ internal static class WebProxyBridge
         }
 
         var session = manager.GetSession(token);
-        if (session is null)
+        if (session is null || !IsHttpsCarrier(session))
         {
             NotFound(context);
             return;
@@ -389,6 +405,197 @@ internal static class WebProxyBridge
         response.ContentType = "application/octet-stream";
         response.ContentLength = downlink.Batch.Length;
         await response.Body.WriteAsync(downlink.Batch, ct);
+    }
+
+    // ---------------------------------------------------------------------
+    // Носитель websocket
+    // ---------------------------------------------------------------------
+
+    /// <summary>Префикс подпротокола одиночного носителя.</summary>
+    private const string WebSocketProtocolPrefix = "tproxy-v1.";
+
+    /// <summary>Префикс подпротокола полосового носителя (не поддерживается — отклоняется).</summary>
+    private const string WebSocketLaneProtocolPrefix = "tproxy-lane-v1.";
+
+    /// <summary>
+    /// <c>GET {base}api/v1/ws</c>: апгрейд в WebSocket и дуплексный обмен батчами relay-кадров.
+    /// Авторизация — подпротокол <c>tproxy-v1.&lt;session-token&gt;</c> (F-W.24): session-токен
+    /// выдаётся только после погашения bootstrap, поэтому подделка без bridge-страницы невозможна.
+    /// </summary>
+    private static async Task HandleWebSocketAsync(HttpContext context, Config cfg, string basePath)
+    {
+        var logger = GetLogger(context);
+        var request = context.Request;
+
+        // Контракт носителя: GET без query, без Authorization и Cookie, ровно один подпротокол.
+        if (!HttpMethods.IsGet(request.Method)
+            || request.QueryString.HasValue
+            || request.Headers.Authorization.Count != 0
+            || request.Headers.Cookie.Count != 0
+            || !context.WebSockets.IsWebSocketRequest)
+        {
+            NotFound(context);
+            return;
+        }
+
+        var protocols = request.Headers.SecWebSocketProtocol;
+        if (protocols.Count != 1)
+        {
+            NotFound(context);
+            return;
+        }
+
+        var protocol = protocols[0]!;
+        if (!protocol.StartsWith(WebSocketProtocolPrefix, StringComparison.Ordinal))
+        {
+            if (protocol.StartsWith(WebSocketLaneProtocolPrefix, StringComparison.Ordinal))
+            {
+                logger.LogDebug("web-proxy websocket: lane carrier requested but not supported");
+            }
+
+            NotFound(context);
+            return;
+        }
+
+        var token = protocol[WebSocketProtocolPrefix.Length..];
+        if (!IsCanonicalBearer(token))
+        {
+            NotFound(context);
+            return;
+        }
+
+        var manager = context.RequestServices.GetRequiredService<WebProxySessionManager>();
+        var session = manager.GetSession(token);
+        if (session is null || !string.Equals(session.CarrierMode, "websocket", StringComparison.Ordinal))
+        {
+            // Сессия неизвестна либо создана под другим носителем — смешивать каналы нельзя.
+            NotFound(context);
+            return;
+        }
+
+        if (!session.TryAcquireWebSocketCarrier())
+        {
+            logger.LogDebug("web-proxy websocket: session already has an active websocket carrier");
+            NotFound(context);
+            return;
+        }
+
+        using var socket = await context.WebSockets.AcceptWebSocketAsync(protocol);
+        try
+        {
+            var channel = new WebSocketRelayChannel(socket);
+            await WebProxyWebSocketCarrier.RunAsync(
+                session,
+                channel,
+                LongPollTimeout * 2,
+                logger,
+                context.RequestAborted);
+        }
+        finally
+        {
+            session.ReleaseWebSocketCarrier();
+        }
+
+        if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+        {
+            using var closeCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try
+            {
+                await socket.CloseAsync(
+                    WebSocketCloseStatus.NormalClosure,
+                    "carrier closed",
+                    closeCts.Token);
+            }
+            catch (Exception ex) when (ex is WebSocketException or OperationCanceledException or IOException)
+            {
+                // Соединение уже разорвано — закрывать нечего.
+            }
+        }
+    }
+
+    /// <summary>Сессия создана под носителем <c>https</c> (long-poll).</summary>
+    private static bool IsHttpsCarrier(WebProxyHttpSession session)
+        => string.Equals(session.CarrierMode, "https", StringComparison.Ordinal);
+
+    /// <summary>Канонический bearer: 32 байта в base64url без выравнивания (43 символа).</summary>
+    private static bool IsCanonicalBearer(string token)
+    {
+        if (token.Length != 43)
+        {
+            return false;
+        }
+
+        Span<byte> decoded = stackalloc byte[32];
+        return Base64Url.TryDecodeFromChars(token, decoded, out var written)
+            && written == decoded.Length
+            && string.Equals(Base64Url.EncodeToString(decoded), token, StringComparison.Ordinal);
+    }
+
+    /// <summary>Адаптер ASP.NET Core WebSocket к протокольному каналу носителя.</summary>
+    private sealed class WebSocketRelayChannel(WebSocket socket) : IWebProxyWebSocketChannel
+    {
+        private byte[] _buffer = new byte[64 * 1024];
+
+        public async ValueTask<byte[]?> ReceiveBatchAsync(CancellationToken ct)
+        {
+            while (true)
+            {
+                var result = await socket.ReceiveAsync(_buffer.AsMemory(), ct);
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    return null;
+                }
+
+                if (result.MessageType != WebSocketMessageType.Binary)
+                {
+                    throw new InvalidOperationException("web-proxy websocket: binary frames required");
+                }
+
+                if (result.EndOfMessage)
+                {
+                    return _buffer.AsSpan(0, result.Count).ToArray();
+                }
+
+                // Сообщение пришло фрагментами: дочитываем в тот же буфер, наращивая его до
+                // предела контракта (MaxBodyBytes).
+                var offset = result.Count;
+                while (true)
+                {
+                    if (offset >= _buffer.Length)
+                    {
+                        if (_buffer.Length >= MaxBodyBytes)
+                        {
+                            throw new InvalidOperationException("web-proxy websocket: batch exceeds limit");
+                        }
+
+                        Array.Resize(ref _buffer, Math.Min(MaxBodyBytes, _buffer.Length * 2));
+                    }
+
+                    var more = await socket.ReceiveAsync(_buffer.AsMemory(offset), ct);
+                    if (more.MessageType == WebSocketMessageType.Close)
+                    {
+                        return null;
+                    }
+
+                    offset += more.Count;
+                    if (more.EndOfMessage)
+                    {
+                        return _buffer.AsSpan(0, offset).ToArray();
+                    }
+                }
+            }
+        }
+
+        public async ValueTask SendBatchAsync(ReadOnlyMemory<byte> batch, CancellationToken ct)
+            => await socket.SendAsync(batch, WebSocketMessageType.Binary, endOfMessage: true, ct);
+
+        public ValueTask SendPingAsync(CancellationToken ct)
+        {
+            // Простой держит Kestrel (KeepAliveInterval=30s в WebSocketOptions): он сам шлёт
+            // protocol-level ping. Пустое бинарное сообщение здесь недопустимо — клиент принял бы
+            // его за пустой батч кадров и отверг сессию.
+            return ValueTask.CompletedTask;
+        }
     }
 
     // ---------------------------------------------------------------------

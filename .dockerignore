@@ -5,7 +5,7 @@
 **/*.user
 **/*.suo
 **/*.rsuser
-README.md
+docs/README.md
 LICENSE
 
 # Конфигурация не запекается в образ: она живёт в томе /app/config (F-6.2).

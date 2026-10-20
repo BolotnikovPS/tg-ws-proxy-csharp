@@ -10,18 +10,10 @@ namespace TgWsProxy.Application.Logic;
 /// <see cref="PeerRateLimiter"/>, но горячий путь (пересылка байт) не берёт блокировку:
 /// ключи лежат в <see cref="ConcurrentDictionary{TKey,TValue}"/>, а счётчики меняются
 /// через <see cref="Interlocked"/>. Фоновая очистка удаляет пары без активных соединений,
-/// у которых истёк TTL, и удерживает размер реестра в пределах <see cref="MaxTrackedPeers"/>.
+/// у которых истёк TTL, и удерживает размер реестра в пределах <see cref="Constants.MaxTrackedPeers"/>.
 /// </summary>
 public sealed class PeerStatsRegistry : IPeerStatsRegistry
 {
-    /// <summary>Предел по умолчанию для числа отслеживаемых пар (ключ <c>perIpStatsMaxPeers</c>).</summary>
-    public const int DefaultMaxTrackedPeers = 100_000;
-
-    /// <summary>Предел числа отслеживаемых пар: защита памяти от сканирования портов.</summary>
-    public const int MaxTrackedPeers = DefaultMaxTrackedPeers;
-
-    /// <summary>Период между проходами очистки устаревших пар (секунды).</summary>
-    public const double SweepIntervalSeconds = 30.0;
     private readonly double _ttlSeconds;
     private readonly Func<double> _clock;
     private readonly Func<DateTimeOffset> _wallClock;
@@ -50,7 +42,7 @@ public sealed class PeerStatsRegistry : IPeerStatsRegistry
     {
     }
 
-    internal PeerStatsRegistry(bool enabled, int ttlSeconds, int maxTrackedPeers = DefaultMaxTrackedPeers)
+    internal PeerStatsRegistry(bool enabled, int ttlSeconds, int maxTrackedPeers = Constants.MaxTrackedPeers)
         : this(
             enabled,
             ttlSeconds,
@@ -69,7 +61,7 @@ public sealed class PeerStatsRegistry : IPeerStatsRegistry
     /// <param name="clock">Источник монотонного времени в секундах.</param>
     /// <param name="wallClock">Источник календарного времени для <c>firstSeen</c>/<c>lastSeen</c>.</param>
     internal PeerStatsRegistry(bool enabled, int ttlSeconds, Func<double> clock, Func<DateTimeOffset> wallClock)
-        : this(enabled, ttlSeconds, DefaultMaxTrackedPeers, clock, wallClock, null)
+        : this(enabled, ttlSeconds, Constants.MaxTrackedPeers, clock, wallClock, null)
     {
     }
 
@@ -92,7 +84,7 @@ public sealed class PeerStatsRegistry : IPeerStatsRegistry
     {
         IsEnabled = enabled;
         _ttlSeconds = ttlSeconds;
-        MaxPeers = maxTrackedPeers > 0 ? maxTrackedPeers : DefaultMaxTrackedPeers;
+        MaxPeers = maxTrackedPeers > 0 ? maxTrackedPeers : Constants.MaxTrackedPeers;
         _clock = clock;
         _wallClock = wallClock;
         _tokens = tokens;
@@ -433,7 +425,7 @@ public sealed class PeerStatsRegistry : IPeerStatsRegistry
         }
     }
 
-    /// <summary>Запускает очистку не чаще <see cref="SweepIntervalSeconds"/>; один проход за раз.</summary>
+    /// <summary>Запускает очистку не чаще <see cref="Constants.SweepIntervalSeconds"/>; один проход за раз.</summary>
     private void MaybeSweep()
     {
         if (_ttlSeconds <= 0)
@@ -442,7 +434,7 @@ public sealed class PeerStatsRegistry : IPeerStatsRegistry
         }
 
         var now = _clock();
-        if (now - Volatile.Read(ref _lastSweep) < SweepIntervalSeconds)
+        if (now - Volatile.Read(ref _lastSweep) < Constants.SweepIntervalSeconds)
         {
             return;
         }
@@ -455,7 +447,7 @@ public sealed class PeerStatsRegistry : IPeerStatsRegistry
 
         try
         {
-            if (now - _lastSweep < SweepIntervalSeconds)
+            if (now - _lastSweep < Constants.SweepIntervalSeconds)
             {
                 return;
             }

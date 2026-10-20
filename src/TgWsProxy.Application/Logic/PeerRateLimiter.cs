@@ -10,12 +10,6 @@ namespace TgWsProxy.Application.Logic;
 /// </summary>
 public sealed class PeerRateLimiter
 {
-    /// <summary>Период между проходами очистки устаревших окон (секунды).</summary>
-    private const double SweepIntervalSeconds = 30.0;
-
-    /// <summary>Порог числа отслеживаемых адресов, после которого очистка запускается принудительно.</summary>
-    private const int MaxTrackedPeers = 100_000;
-
     private volatile int _limit;
     private volatile int _windowSeconds;
     private readonly Func<double> _clock;
@@ -103,7 +97,7 @@ public sealed class PeerRateLimiter
 
         lock (_sync)
         {
-            if (now - _lastSweep >= SweepIntervalSeconds || _counters.Count > MaxTrackedPeers)
+            if (now - _lastSweep >= Constants.SweepIntervalSeconds || _counters.Count > Constants.MaxTrackedPeers)
             {
                 Sweep(now);
             }
