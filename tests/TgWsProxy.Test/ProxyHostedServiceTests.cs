@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
@@ -109,14 +110,17 @@ public class ProxyHostedServiceTests
         {
             RunBehavior = _ => Task.FromException(new InvalidOperationException("boom")),
         };
-        var (service, _) = CreateService(server, log);
+        var lifetime = new StubApplicationLifetime();
+        var (service, _) = CreateService(server, log, lifetime: lifetime);
         await using var _service = service;
 
         await service.StartAsync(CancellationToken.None);
         await service.Completion;
 
-        // Авария цикла приёма помечается, чтобы точка входа вернула код 1.
+        // Авария цикла приёма помечается, чтобы точка входа вернула код 1,
+        // и останавливает хост (ApplicationStopping), чтобы app.RunAsync() вернулся.
         Assert.True(service.Faulted);
+        Assert.True(lifetime.ApplicationStopping.IsCancellationRequested);
 
         await service.StopAsync(CancellationToken.None);
     }
@@ -141,7 +145,8 @@ public class ProxyHostedServiceTests
         IProxyServer server,
         CallLog log,
         IActiveSessionRegistry? sessions = null,
-        Config? config = null)
+        Config? config = null,
+        IHostApplicationLifetime? lifetime = null)
     {
         var history = new MetricsHistory();
         var liveConfig = config ?? new Config();
@@ -157,7 +162,8 @@ public class ProxyHostedServiceTests
             sessions ?? new ActiveSessionRegistry(NullLogger<ActiveSessionRegistry>.Instance),
             history,
             liveConfig,
-            ConfigDefaults.ParseDcIpList(liveConfig.DcIp),
+            ConfigDefaults.ParseDcIpList(liveConfig.MtProto.DcIp),
+            lifetime ?? new StubApplicationLifetime(),
             NullLogger<ProxyHostedService>.Instance);
         return (service, history);
     }
@@ -235,6 +241,28 @@ public class ProxyHostedServiceTests
         private static async Task WaitForCancellationAsync(CancellationToken cancellationToken)
         {
             await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Минимальная реализация <see cref="IHostApplicationLifetime"/>: фиксирует только
+    /// факт <see cref="StopApplication"/> через токен <see cref="ApplicationStopping"/>.
+    /// </summary>
+    private sealed class StubApplicationLifetime : IHostApplicationLifetime
+    {
+        private readonly CancellationTokenSource _stopping = new();
+        private readonly CancellationTokenSource _stopped = new();
+
+        public CancellationToken ApplicationStarted => CancellationToken.None;
+
+        public CancellationToken ApplicationStopping => _stopping.Token;
+
+        public CancellationToken ApplicationStopped => _stopped.Token;
+
+        public void StopApplication()
+        {
+            _stopping.Cancel();
+            _stopped.Cancel();
         }
     }
 

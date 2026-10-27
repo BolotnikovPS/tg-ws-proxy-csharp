@@ -7,14 +7,14 @@ namespace TgWsProxy.Application.StartConfig;
 /// Умолчания конфигурации, которые нельзя выразить инициализатором свойства, и производные
 /// разборы её значений.
 ///
-/// <see cref="Config.DcIp"/> — get-only коллекция, поэтому её начальное значение задаётся
+/// <see cref="MtProtoConfig.DcIp"/> — get-only коллекция, поэтому её начальное значение задаётся
 /// явно, а не значением по умолчанию. Единая точка нужна ещё и потому, что список DC
 /// применяется и загрузчиком файла, и тестами, и сбросом конфигурации к умолчаниям.
 /// </summary>
 public static class ConfigDefaults
 {
     /// <summary>
-    /// Дефолтные DC-редиректы: без явного <c>dcIp</c> прокси работает через эти DC.
+    /// Дефолтные DC-редиректы: без явного <c>mtproto.dcIp</c> прокси работает через эти DC.
     /// IP актуальны на момент правки (сверены с DNS kws1..kws5.web.telegram.org).
     /// </summary>
     public static readonly string[] DefaultDcIp =
@@ -37,8 +37,8 @@ public static class ConfigDefaults
     {
         ArgumentNullException.ThrowIfNull(cfg);
 
-        cfg.DcIp.Clear();
-        cfg.DcIp.AddRange(DefaultDcIp);
+        cfg.MtProto.DcIp.Clear();
+        cfg.MtProto.DcIp.AddRange(DefaultDcIp);
     }
 
     /// <summary>

@@ -16,7 +16,7 @@ namespace TgWsProxy.Web;
 /// <summary>
 /// Bridge-листенер WEB proxy (browser-relay): динамическая bridge-страница на <c>GET /?bridge=…</c>
 /// и HTTPS long-poll носитель на <c>{base}api/v1/{session,up,down}</c> (SPEC §1/§2). Делит один
-/// Kestrel-хост с панелью, но слушает отдельный порт <see cref="Config.WebProxyPort"/>, поэтому
+/// Kestrel-хост с панелью, но слушает отдельный порт <see cref="WebProxyConfig.Port"/>, поэтому
 /// маршруты различаются по <see cref="ConnectionInfo.LocalPort"/>. Регистрируется до статических
 /// файлов панели, чтобы перехватывать корень bridge-порта.
 /// </summary>
@@ -37,7 +37,7 @@ internal static class WebProxyBridge
         "accelerometer=(), autoplay=(), camera=(), clipboard-read=(), clipboard-write=(), display-capture=(), encrypted-media=(), fullscreen=(), geolocation=(), gyroscope=(), hid=(), idle-detection=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(), publickey-credentials-create=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), web-share=(), xr-spatial-tracking=()";
 
     /// <summary>Регистрирует bridge-конвейер: carrier-API и маршруты bridge-сайта.</summary>
-    public static void Map(WebApplication app)
+    public static void MapWebProxyBridge(this WebApplication app)
     {
         // Носитель websocket (F-W.24): апгрейд обслуживает только bridge-порт, панель не затрагивается.
         app.UseWebSockets(new WebSocketOptions
@@ -48,13 +48,13 @@ internal static class WebProxyBridge
         app.Use(async (context, next) =>
         {
             var cfg = context.RequestServices.GetRequiredService<Config>();
-            if (!cfg.WebProxyEnabled || context.Connection.LocalPort != cfg.WebProxyPort)
+            if (!cfg.WebProxy.Enabled || context.Connection.LocalPort != cfg.WebProxy.Port)
             {
                 await next();
                 return;
             }
 
-            var basePath = BridgeCapabilityVerifier.NormalizeBasePath(cfg.WebProxyBasePath);
+            var basePath = BridgeCapabilityVerifier.NormalizeBasePath(cfg.WebProxy.BasePath);
             var basePrefix = Base(basePath);
             var rawPath = context.Request.Path.Value ?? "/";
 

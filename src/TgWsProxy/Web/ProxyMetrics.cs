@@ -204,7 +204,7 @@ public sealed class ProxyMetrics
         var limit = config.PrometheusTopPeers;
         var current = new HashSet<(string Ip, string Token)>();
 
-        if (config.EnablePerIpStats && limit > 0)
+        if (config.Stats.Enabled && limit > 0)
         {
             var peers = TopPeers(snapshotCache.Get(), limit);
 

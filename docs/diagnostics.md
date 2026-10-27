@@ -26,7 +26,7 @@ docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
 
 ## Ссылка `t.me/proxy` не строится
 
-Значит внешний адрес не определён: `host` служебный (`0.0.0.0`, `::`) и `publicHost` пуст. Задайте `publicHost` в панели (раздел «Ссылки Telegram») — применится сразу, перезапуск не нужен.
+Значит внешний адрес не определён: слушатель всегда привязан ко всем интерфейсам (`0.0.0.0`), а `publicHost` пуст. Задайте `publicHost` в панели (раздел «Ссылки Telegram») — применится сразу, перезапуск не нужен.
 
 ## Панель отвечает `401`
 
@@ -38,13 +38,13 @@ docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
 - `rolledBack` — новый адрес прослушивания не удалось занять, изменения отменены, старый сокет работает;
 - без поля — уже идёт перезапуск слушателя, повторите через секунду (`Retry-After: 1`).
 
-## Нет кнопки «Ссылка Web (alfa)» в панели
+## Нет кнопки «Ссылка Web» в панели
 
-Статика (`app.js`, `site.css`) отдаётся с `Cache-Control: no-cache`, но если браузер всё равно держит старую копию — обновите страницу с очисткой кэша (`Ctrl+F5`). Кнопка рендерится всегда; ссылка возвращается только при `webProxyEnabled: true` и корректном внешнем адресе.
+Статика (`app.js`, `site.css`) отдаётся с `Cache-Control: no-cache`, но если браузер всё равно держит старую копию — обновите страницу с очисткой кэша (`Ctrl+F5`). Кнопка рендерится всегда; ссылка возвращается только при `"webProxy": { "enabled": true }` и корректном внешнем адресе.
 
 ## WEB proxy: ссылка на токен не строится
 
-Кнопка **«Ссылка Web (alfa)»** копирует `https://t.me/webproxy?server=…&secret=…`. Ссылка не строится, если внешний адрес — IP (`127.0.0.1`, `127.1`, `0x7f.1`), хост без точки (`localhost`) или wildcard (`0.0.0.0`): Telegram принимает для WEB proxy только доменное имя. Задайте `webProxyPublicHost` (например `proxy.example.com`) — он же должен быть достижим с устройства клиента и покрыт сертификатом `webProxyCertPath`.
+Кнопка **«Ссылка Web»** копирует `https://t.me/webproxy?server=…&secret=…`. Ссылка не строится, если внешний адрес — IP (`127.0.0.1`, `127.1`, `0x7f.1`), хост без точки (`localhost`) или wildcard (`0.0.0.0`): Telegram принимает для WEB proxy только доменное имя. Задайте `webProxy.publicHost` (например `proxy.example.com`) — он же должен быть достижим с устройства клиента и покрыт сертификатом `webProxy.certPath`.
 
 ## WEB proxy: bridge-страница открывается, но `relay_init` не приходит
 
@@ -54,11 +54,11 @@ docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
 2. Проверьте сетевой доступ: `curl -vk --max-time 10 https://kws2.web.telegram.org/apiws -o NUL`. TCP-коннект проходит, а TLS-таймаут — признак DPI/блокировки.
 3. Если и TLS, и сырой MTProto к DC молчат — прокси нужно запускать на VPS/VPN.
 
-Подробнее о ключах — [Конфигурация → WEB proxy](configuration.md#web-proxy-browser-relay-bridge--alfa).
+Подробнее о ключах — [Конфигурация → WEB proxy](configuration.md#web-proxy-browser-relay-bridge).
 
 ## Проверка WEB proxy локально, без домена
 
-Для локального прогона не нужен публичный домен: возьмите имя, которое уже резолвится в `127.0.0.1` — `lvh.me` (или `*.lvh.me`), `localtest.me`, `127.0.0.1.sslip.io`. Telegram принимает только домен, поэтому `webProxyPublicHost: "127.0.0.1"` для ссылок не годится, а `lvh.me` — годится.
+Для локального прогона не нужен публичный домен: возьмите имя, которое уже резолвится в `127.0.0.1` — `lvh.me` (или `*.lvh.me`), `localtest.me`, `127.0.0.1.sslip.io`. Telegram принимает только домен, поэтому `webProxy.publicHost: "127.0.0.1"` для ссылок не годится, а `lvh.me` — годится.
 
 1. Сертификат с нужным SAN (скрипт не требует прав администратора — генерирует в `Cert:\CurrentUser\My`):
 
@@ -68,7 +68,7 @@ docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
 
    Флаг `-Local` дополнительно кладёт `lvh.me` и `*.lvh.me` в SAN, `-Trust` импортирует сертификат в `Cert:\CurrentUser\Root` (тогда браузер не показывает предупреждение; удалить — `cert.ps1 -Remove <thumbprint>`).
 
-2. Конфиг: `webProxyEnabled: true`, `webProxyPort: 443`, `webProxyPublicHost: "lvh.me"`, `webProxyCertPath` — путь к `certs/bridge-local.pfx`, `webProxyCertPassword` — пароль PFX.
+2. Конфиг: `webProxy.enabled: true`, `webProxy.port: 443`, `webProxy.publicHost: "lvh.me"`, `webProxy.certPath` — путь к `certs/bridge-local.pfx`, `webProxy.certPassword` — пароль PFX.
 
 3. Запуск и смоук по обоим носителям:
 
@@ -80,7 +80,7 @@ docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
 
    `--ca` принимает PEM (не DER) и оставляет проверку TLS включённой: скрипт доверяет только этому корню и не меняет системное хранилище. Если PEM нет, экспортируйте его из PFX или используйте `--insecure`.
 
-4. Смену носителя на живом процессе можно проверить через API: `PUT /api/config` с `{"webProxyCarrierMode":"websocket"}` — ключ горячий, перезапуск не требуется.
+4. Смену носителя на живом процессе можно проверить через API: `PUT /api/config` с `{"webProxy":{"carrierMode":"websocket"}}` — ключ горячий, перезапуск не требуется.
 
 Сертификат из `certs/` попадёт в git только при явном `git add -f`: `*.pfx` и `*.pem` не отслеживаются.
 
@@ -90,7 +90,7 @@ WEB proxy в Telegram Desktop — proof-of-concept: код есть в дере�
 
 Клиент принимает два значения, **без** `https://`, порта и query:
 
-| Поле | root (`webProxyBasePath: ""`) | c base path (`webProxyBasePath: "v1"`) |
+| Поле | root (`webProxy.basePath: ""`) | c base path (`webProxy.basePath: "v1"`) |
 |---|---|---|
 | Proxy server | `proxy.example.com` | `proxy.example.com/v1` |
 | Proxy secret | `<32-hex>` | `<32-hex>` — при ручном вводе остаётся plain-hex |
@@ -112,7 +112,7 @@ tg://webproxy?server=proxy.example.com%2Fv1&secret=<base64url>
    .\tools\scripts\cert.ps1 -Local -Trust
    ```
 
-2. Конфиг как в разделе «Проверка WEB proxy локально» (`webProxyPublicHost: "lvh.me"`, `webProxyBasePath` по необходимости).
+2. Конфиг как в разделе «Проверка WEB proxy локально» (`webProxy.publicHost: "lvh.me"`, `webProxy.basePath` по необходимости).
 3. Клиент: тип `WEB`, server `lvh.me` или `lvh.me/v1`, secret `<32-hex>`, включить.
 4. Строка прокси должна сменить `connecting…` → `online` в пределах ~10 с.
 
@@ -121,8 +121,8 @@ tg://webproxy?server=proxy.example.com%2Fv1&secret=<base64url>
 ### На VPS (полноценный E2E)
 
 1. Домен с `A`-записью на VPS (IP или хост без точки клиент отвергнет), порты 80/443 открыты.
-2. Валидный серт (Let's Encrypt перед Kestrel либо PFX от ЦС в `webProxyCertPath`).
-3. `webProxyPublicHost: "<домен>"`; сервер на VPS должен иметь доступ к Telegram DC.
+2. Валидный серт (Let's Encrypt перед Kestrel либо PFX от ЦС в `webProxy.certPath`).
+3. `webProxy.publicHost: "<домен>"`; сервер на VPS должен иметь доступ к Telegram DC.
 4. Клиент: `WEB` → server `<домен>` или `<домен>/<slug>`, secret `<32-hex>` → включить.
 5. Успех: строка `online`, грузятся диалоги, идут сообщения и медиа.
 

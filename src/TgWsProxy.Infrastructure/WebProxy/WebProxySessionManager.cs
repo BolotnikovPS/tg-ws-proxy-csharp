@@ -37,8 +37,8 @@ public readonly record struct WebProxyCreateResult(
 
 /// <summary>
 /// Менеджер relay-сессий WEB proxy: выпуск и погашение bootstrap-токенов (2 минуты),
-/// создание/закрытие сессий, соблюдение лимитов ресурсов (<c>webProxyMaxSessions</c>,
-/// <c>webProxyMaxSessionsPerIp</c>, F-W.25). Токены — непрозрачные 32-байтные значения в
+/// создание/закрытие сессий, соблюдение лимитов ресурсов (<c>webProxy.maxSessions</c>,
+/// <c>webProxy.maxSessionsPerIp</c>, F-W.25). Токены — непрозрачные 32-байтные значения в
 /// base64url (43 символа); клиент не интерпретирует их раскладку, поэтому происхождение
 /// подтверждается хранением в памяти, а не HMAC-подписью.
 /// </summary>
@@ -136,11 +136,11 @@ public sealed class WebProxySessionManager
             var lease = _relay.OpenSession(token, peer, scope);
             var session = new WebProxyHttpSession(
                 lease.StartBridge,
-                _config.WebProxyMaxStreamsPerSession,
+                _config.WebProxy.MaxStreamsPerSession,
                 _budget.TryAcquire,
                 _budget.Release,
-                _config.WebProxyMaxPendingBytesPerSession,
-                _config.WebProxyMaxPendingItemsPerSession)
+                _config.WebProxy.MaxPendingBytesPerSession,
+                _config.WebProxy.MaxPendingItemsPerSession)
             {
                 CarrierMode = carrierMode,
             };
@@ -187,7 +187,7 @@ public sealed class WebProxySessionManager
     {
         get
         {
-            var value = _config.WebProxyCarrierMode?.Trim();
+            var value = _config.WebProxy.CarrierMode?.Trim();
             return string.IsNullOrEmpty(value) ? "https" : value;
         }
     }
@@ -199,7 +199,7 @@ public sealed class WebProxySessionManager
     /// </summary>
     private bool TryReserveSession(IPAddress? peer, string scope)
     {
-        var limit = _config.WebProxyMaxSessions;
+        var limit = _config.WebProxy.MaxSessions;
         var current = Interlocked.Increment(ref _sessionCount);
         if (limit > 0 && current > limit)
         {
@@ -208,7 +208,7 @@ public sealed class WebProxySessionManager
             return false;
         }
 
-        var perIpLimit = _config.WebProxyMaxSessionsPerIp;
+        var perIpLimit = _config.WebProxy.MaxSessionsPerIp;
         if (perIpLimit <= 0 || peer is null)
         {
             return true;

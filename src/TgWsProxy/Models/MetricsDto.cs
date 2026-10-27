@@ -1,6 +1,6 @@
 using TgWsProxy.Domain;
 
-namespace TgWsProxy.Web;
+namespace TgWsProxy.Models;
 
 /// <summary>
 /// Ответ <c>GET /api/info</c>: версия, время работы и состояние подсистем прокси (F-3.6).
@@ -14,13 +14,10 @@ public sealed record InfoDto(
     bool CfProxyEnabled,
     bool MaskingConfigured,
     bool ProxyProtocolEnabled,
-    int MetricsPort,
-    string MetricsHost,
     int MaxConnections,
     int RateLimitPerIp,
     int RateLimitWindowSeconds,
     int DcCount,
-    string ListenerHost,
     int ListenerPort,
     string ListenerState,
     int ListenerRestarts,

@@ -60,9 +60,9 @@ public sealed class ConfigUpdateServiceTests : IDisposable
 
     /// <summary>
     /// Регрессия: ответ GET /api/config, отправленный обратно без изменений, не должен
-    /// порождать ни одного «изменённого» ключа. Ранее <see cref="Config.LogPath"/> оставался
+    /// порождать ни одного «изменённого» ключа. Ранее <see cref="LogsConfig.Path"/> оставался
     /// <c>null</c>, а форма присылала <c>""</c>, из-за чего панель показывала
-    /// «нужен рестарт: logPath» при каждом сохранении.
+    /// «нужен рестарт: logs.path» при каждом сохранении.
     /// </summary>
     [Fact]
     public async Task ApplyAsync_MaskedRoundTrip_ReportsNoChanges()
@@ -100,12 +100,12 @@ public sealed class ConfigUpdateServiceTests : IDisposable
     public async Task ApplyAsync_PublicHost_AppliesWithoutRestart()
     {
         var result = await _service.ApplyAsync(
-            new ConfigDto { PublicHost = "proxy.example.com:1443" },
+            new ConfigDto { MtProto = new MtProtoConfigDto { PublicHost = "proxy.example.com:1443" } },
             CancellationToken.None);
 
         Assert.False(result.ListenerRestarted);
-        Assert.Equal(new[] { "publicHost" }, result.HotReloaded);
-        Assert.Equal("proxy.example.com:1443", _config.PublicHost);
+        Assert.Equal(new[] { "mtproto.publicHost" }, result.HotReloaded);
+        Assert.Equal("proxy.example.com:1443", _config.MtProto.PublicHost);
         Assert.False(_listener.WasCalled);
     }
 
@@ -136,19 +136,19 @@ public sealed class ConfigUpdateServiceTests : IDisposable
     {
         _listener.DroppedSessions = 3;
 
-        var result = await _service.ApplyAsync(new ConfigDto { WsPoolSize = 8 }, CancellationToken.None);
+        var result = await _service.ApplyAsync(new ConfigDto { MtProto = new MtProtoConfigDto { WsPoolSize = 8 } }, CancellationToken.None);
 
         Assert.True(result.ListenerRestarted);
         Assert.Equal(3, result.DroppedSessions);
         Assert.Empty(result.HotReloaded);
         Assert.True(_listener.WasCalled);
-        Assert.Equal(8, _listener.LastCandidate?.WsPoolSize);
+        Assert.Equal(8, _listener.LastCandidate?.MtProto.WsPoolSize);
 
         // Живой процесс по-прежнему на прежнем значении: перенос делает контроллер после bind.
-        Assert.Equal(4, _config.WsPoolSize);
+        Assert.Equal(4, _config.MtProto.WsPoolSize);
 
         var saved = ConfigFileLoader.Load(_service.Path, isExplicit: true);
-        Assert.Equal(8, saved.WsPoolSize);
+        Assert.Equal(8, saved.MtProto.WsPoolSize);
     }
 
     /// <summary>
@@ -161,11 +161,11 @@ public sealed class ConfigUpdateServiceTests : IDisposable
         _listener.Failure = "port 19999 is already in use";
 
         await Assert.ThrowsAsync<ListenerRebindException>(() =>
-            _service.ApplyAsync(new ConfigDto { WsPoolSize = 8 }, CancellationToken.None));
+            _service.ApplyAsync(new ConfigDto { MtProto = new MtProtoConfigDto { WsPoolSize = 8 } }, CancellationToken.None));
 
         var restored = ConfigFileLoader.Load(_service.Path, isExplicit: true);
-        Assert.Equal(4, restored.WsPoolSize);
-        Assert.Equal(4, _config.WsPoolSize);
+        Assert.Equal(4, restored.MtProto.WsPoolSize);
+        Assert.Equal(4, _config.MtProto.WsPoolSize);
     }
 
     /// <summary>
@@ -179,10 +179,10 @@ public sealed class ConfigUpdateServiceTests : IDisposable
         _listener.InProgress = true;
 
         await Assert.ThrowsAsync<ListenerRestartInProgressException>(() =>
-            _service.ApplyAsync(new ConfigDto { WsPoolSize = 8 }, CancellationToken.None));
+            _service.ApplyAsync(new ConfigDto { MtProto = new MtProtoConfigDto { WsPoolSize = 8 } }, CancellationToken.None));
 
         var restored = ConfigFileLoader.Load(_service.Path, isExplicit: true);
-        Assert.Equal(4, restored.WsPoolSize);
+        Assert.Equal(4, restored.MtProto.WsPoolSize);
     }
 
     /// <summary>
@@ -194,16 +194,15 @@ public sealed class ConfigUpdateServiceTests : IDisposable
     {
         var exception = await Assert.ThrowsAsync<StartupOnlyKeysException>(() =>
             _service.ApplyAsync(
-                new ConfigDto { Port = 19999, Host = "0.0.0.0", Verbose = true },
+                new ConfigDto { MtProto = new MtProtoConfigDto { Port = 19999 }, Verbose = true },
                 CancellationToken.None));
 
         Assert.Equal(
-            new[] { "host", "port", "verbose" },
+            new[] { "mtproto.port", "verbose" },
             exception.StartupOnly.OrderBy(key => key));
         Assert.False(_listener.WasCalled);
         Assert.False(File.Exists(_service.Path));
-        Assert.Equal(1443, _config.Port);
-        Assert.Equal("127.0.0.1", _config.Host);
+        Assert.Equal(1443, _config.MtProto.Port);
         Assert.False(_config.Verbose);
     }
 
@@ -215,12 +214,12 @@ public sealed class ConfigUpdateServiceTests : IDisposable
     {
         var exception = await Assert.ThrowsAsync<StartupOnlyKeysException>(() =>
             _service.ApplyAsync(
-                new ConfigDto { MetricsPort = 9999, MetricsHost = "0.0.0.0" },
+                new ConfigDto { EnableSwagger = false },
                 CancellationToken.None));
 
-        Assert.Equal(new[] { "metricsHost", "metricsPort" }, exception.StartupOnly.OrderBy(key => key));
+        Assert.Equal(new[] { "enableSwagger" }, exception.StartupOnly.OrderBy(key => key));
         Assert.False(File.Exists(_service.Path));
-        Assert.Equal(8081, _config.MetricsPort);
+        Assert.True(_config.EnableSwagger);
     }
 
     /// <summary>
@@ -247,9 +246,9 @@ public sealed class ConfigUpdateServiceTests : IDisposable
     public async Task ApplyAsync_InvalidValue_ThrowsAndKeepsFileUntouched()
     {
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            _service.ApplyAsync(new ConfigDto { Port = 70000 }, CancellationToken.None));
+            _service.ApplyAsync(new ConfigDto { MtProto = new MtProtoConfigDto { Port = 70000 } }, CancellationToken.None));
 
-        Assert.Equal(1443, _config.Port);
+        Assert.Equal(1443, _config.MtProto.Port);
         Assert.False(File.Exists(_service.Path));
     }
 
@@ -258,10 +257,10 @@ public sealed class ConfigUpdateServiceTests : IDisposable
     public async Task ApplyAsync_DisabledPerIpStats_ProducesWarning()
     {
         var result = await _service.ApplyAsync(
-            new ConfigDto { EnablePerIpStats = false },
+            new ConfigDto { Stats = new StatsConfigDto { Enabled = false } },
             CancellationToken.None);
 
-        Assert.Contains(result.Warnings, warning => warning.Contains("enablePerIpStats", StringComparison.Ordinal));
+        Assert.Contains(result.Warnings, warning => warning.Contains("stats.enabled", StringComparison.Ordinal));
     }
 
     public void Dispose()

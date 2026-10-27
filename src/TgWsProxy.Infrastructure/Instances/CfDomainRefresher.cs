@@ -35,14 +35,14 @@ internal sealed class CfDomainRefresher(
     /// <param name="cancellationToken">Токен остановки прокси.</param>
     public void Start(CancellationToken cancellationToken)
     {
-        var initial = config.CfProxyDomains.Count > 0 ? config.CfProxyDomains : CfDomains.DefaultDomains;
+        var initial = config.CfProxy.Domains.Count > 0 ? config.CfProxy.Domains : CfDomains.DefaultDomains;
         balancer.UpdateDomains(initial);
         logger.LogInformation(
             "CF proxy domain pool initialized ({Count} domains, source={Source})",
             initial.Count,
-            config.CfProxyDomains.Count > 0 ? "user" : "builtin");
+            config.CfProxy.Domains.Count > 0 ? "user" : "builtin");
 
-        if (config.CfProxyDomains.Count > 0)
+        if (config.CfProxy.Domains.Count > 0)
         {
             // Пользователь задал домены вручную — автообновление не нужно.
             return;

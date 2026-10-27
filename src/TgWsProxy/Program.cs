@@ -1,4 +1,4 @@
-using System.Net;
+using System.Diagnostics;
 using System.Reflection;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -7,18 +7,22 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.OpenApi;
 using Prometheus;
 using Serilog;
+using Serilog.Enrichers.Span;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
+using Serilog.Sinks.OpenTelemetry;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure;
 using TgWsProxy.Infrastructure.Hosting;
+using TgWsProxy.Infrastructure.Logging;
+using TgWsProxy.Logging;
 using TgWsProxy.Web;
 
-// F-1.7: справка и версия обрабатываются до загрузки конфигурации — иначе --help падал бы
-// на отсутствующем config.json. InformationalVersion хранит ровно то, что указано в <Version>.
+// Версия сборки нужна глобальному энричеру Serilog (Version) и Swagger-документу.
+// InformationalVersion хранит ровно то, что указано в <Version>, без суффикса «+hash».
 var appVersion = typeof(Program).Assembly
     .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
     .Split('+')[0] ?? "unknown";
@@ -30,22 +34,10 @@ try
 }
 catch (ArgumentException e)
 {
-    // F-1.10: аргументы конфигурацию не задают, поэтому неизвестный флаг — ошибка, а не
-    // молчаливый старт на умолчаниях. Сообщение уходит в stderr: журнал ещё не поднят.
+    // F-1.10: аргументы конфигурацию не задают, поэтому любая опция, кроме --config,
+    // — ошибка, а не молчаливый старт на умолчаниях. Сообщение уходит в stderr: журнал ещё не поднят.
     Console.Error.WriteLine(e.Message);
     return 1;
-}
-
-if (options.ShowHelp)
-{
-    Console.WriteLine(BootstrapOptions.HelpText);
-    return 0;
-}
-
-if (options.ShowVersion)
-{
-    Console.WriteLine($"tg-ws-proxy {appVersion}");
-    return 0;
 }
 
 // F-2.2: единственный источник параметров — умолчания и config.json.
@@ -65,7 +57,7 @@ try
     tokensBootstrapped = TokenBootstrap.EnsureTokens(cfg);
 
     ConfigValidator.Validate(cfg);
-    dcOpt = ConfigDefaults.ParseDcIpList(cfg.DcIp);
+    dcOpt = ConfigDefaults.ParseDcIpList(cfg.MtProto.DcIp);
 }
 catch (Exception e)
 {
@@ -97,7 +89,15 @@ var levelSwitch = new Serilog.Core.LoggingLevelSwitch(
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [] });
 
-builder.Logging.ClearProviders().AddDebug().AddSerilog(BuildSerilogLogger(cfg, levelSwitch));
+builder.Logging.ClearProviders();
+builder.Services.AddSerilog((services, lc) => ConfigureSerilog(lc, services, cfg, levelSwitch, appVersion));
+
+// Ручной ActivityListener нужен только когда OTel-трассы выключены: иначе сам SDK
+// (AddAspNetCoreInstrumentation) ставит слушателя на "Microsoft.AspNetCore" с сэмплированием.
+if (!(cfg.Otel.Enabled && cfg.Otel.ExportTraces))
+{
+    InstallRequestActivityListener();
+}
 
 builder.Services
     .AddSingleton(cfg)
@@ -110,6 +110,10 @@ builder.Services
 // F-3.1/F-3.4/F-3.10: реестр метрик Prometheus и health checks (liveness — self,
 // readiness — слушатель, конфигурация, реестр статистики).
 builder.Services.AddProxyObservability(cfg);
+
+// OpenTelemetry (OTLP): трассы/метрики — SDK, логи — Serilog.Sinks.OpenTelemetry.
+// При otel.enabled=false это no-op (см. AddProxyOpenTelemetry).
+builder.Services.AddProxyOpenTelemetry(cfg, appVersion);
 
 // F-1.11: OpenAPI. Документ строится по эндпоинтам и XML-комментариям сборки,
 // ключ enableSwagger — только стартовый: маршруты регистрируются до сборки хоста.
@@ -146,27 +150,49 @@ if (cfg.EnableSwagger)
     });
 }
 
-// F-1.4: веб-сервер запускается всегда — это единственный интерфейс управления.
-// ConfigValidator уже гарантировал, что metricsPort лежит в 1..65535.
-var listenUrl = WebApiEndpoints.BuildListenUrl(cfg.MetricsHost, cfg.MetricsPort);
-
 // Панель и bridge (WEB proxy) слушают на разных портах одного Kestrel-хоста. Bridge
-// поднимается только при webProxyEnabled и требует PFX-сертификат (N-W.1, проверен валидатором).
+// поднимается только при webProxy.enabled и требует PFX-сертификат (N-W.1, проверен валидатором).
 builder.WebHost.ConfigureKestrel(kestrel =>
 {
-    ConfigureListener(kestrel, cfg.MetricsHost, cfg.MetricsPort);
+    // Веб-сервер по умолчанию: все интерфейсы, порт 80.
+    kestrel.ListenAnyIP(80);
 
-    if (cfg.WebProxyEnabled)
+    if (cfg.WebProxy.Enabled)
     {
-        ConfigureListener(
-            kestrel,
-            cfg.WebProxyHost,
-            cfg.WebProxyPort,
-            listen => listen.UseHttps(cfg.WebProxyCertPath, cfg.WebProxyCertPassword));
+        kestrel.ListenAnyIP(
+            cfg.WebProxy.Port,
+            listen => listen.UseHttps(cfg.WebProxy.CertPath, cfg.WebProxy.CertPassword));
     }
 });
 
 await using var app = builder.Build();
+
+// Корреляция HTTP-запросов: TraceId/SpanId из Activity (Serilog.Enrichers.Span) +
+// CorrelationId из X-Correlation-Id (CorrelationIdMiddleware). Шумные маршруты
+// (healthz/metrics/swagger/WEB-proxy long-poll) опускаются ниже минимального уровня.
+app.UseSerilogRequestLogging(options =>
+{
+    options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
+    options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+    {
+        diagnosticContext.Set(LoggingConstants.RequestHost, httpContext.Request.Host.Value);
+        diagnosticContext.Set(LoggingConstants.UserAgent, httpContext.Request.Headers.UserAgent.ToString());
+        diagnosticContext.Set(LoggingConstants.TraceId, Activity.Current?.TraceId.ToString() ?? string.Empty);
+        diagnosticContext.Set(LoggingConstants.SpanId, Activity.Current?.SpanId.ToString() ?? string.Empty);
+        if (httpContext.Items.TryGetValue(LoggingConstants.CorrelationIdItemKey, out var correlationId))
+        {
+            diagnosticContext.Set(LoggingConstants.CorrelationIdProperty, correlationId);
+        }
+    };
+    options.GetLevel = (httpContext, _, ex) =>
+        IsRequestLoggingNoise(httpContext.Request)
+            ? LogEventLevel.Verbose
+            : ex is not null || httpContext.Response.StatusCode >= 500
+                ? LogEventLevel.Error
+                : LogEventLevel.Information;
+});
+
+app.UseMiddleware<CorrelationIdMiddleware>();
 
 // F-1.11: Swagger UI на /swagger и документ на /swagger/v1/swagger.json. Оба адреса
 // открыты без токена (F-3.8): спецификация не содержит секретов (N-8).
@@ -182,10 +208,10 @@ if (cfg.EnableSwagger)
 
 // Bridge WEB proxy регистрируется до панели, чтобы перехватывать GET / на bridge-порту
 // раньше UseDefaultFiles панели (разные порты — общий хост).
-WebProxyBridge.Map(app);
-WebApiEndpoints.Map(app);
+app.MapWebProxyBridge();
+app.MapWebApiEndpoints();
 
-var runtimeLoggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
+using var runtimeLoggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
 var runtimeLogger = runtimeLoggerFactory.CreateLogger("runtime");
 
 AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
@@ -211,158 +237,148 @@ var startupLogger = runtimeLoggerFactory.CreateLogger<ILogger<Program>>();
 // F-1.1: прокси запускается как hosted-сервис; точка входа только собирает хост.
 var proxyService = app.Services.GetRequiredService<ProxyHostedService>();
 
-// F-3.7: безопасность обеспечивается loopback-привязкой. Любой другой адрес — осознанное
-// решение, о котором стоит предупредить в журнале.
-if (!ConfigUpdateService.IsLoopback(cfg.MetricsHost))
+// Веб-сервер слушает все интерфейсы (0.0.0.0): всегда доступен извне, поэтому
+// предупреждаем, если не задан webApiToken.
+if (string.IsNullOrWhiteSpace(cfg.WebApiToken))
 {
-    if (string.IsNullOrWhiteSpace(cfg.WebApiToken))
-    {
-        startupLogger.LogWarning(
-            "Web API is bound to {Host}:{Port}, which is not a loopback address, and webApiToken is empty: " +
-            "anyone who can reach this port can read metrics and change the configuration",
-            cfg.MetricsHost,
-            cfg.MetricsPort);
-    }
-    else
+    startupLogger.LogWarning(
+        "Web API is webApiToken is empty: " +
+        "anyone who can reach this port can read metrics and change the configuration");
+}
+else
+{
+    startupLogger.LogInformation(
+        "Web API is requires a bearer token for /api/*");
+}
+
+// «Слушает» логируется только после успешного старта хоста: ApplicationStarted
+// срабатывает после того, как Kestrel привязал порт и hosted-сервисы поднялись (F-1.1).
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    startupLogger.LogInformation("Web API listening");
+
+    if (cfg.WebProxy.Enabled)
     {
         startupLogger.LogInformation(
-            "Web API is bound to {Host}:{Port} and requires a bearer token for /api/*",
-            cfg.MetricsHost,
-            cfg.MetricsPort);
+            "WEB proxy bridge listening on port {Port} (basePath '{BasePath}')",
+            cfg.WebProxy.Port,
+            cfg.WebProxy.BasePath);
     }
-}
+});
 
 try
 {
-    // Хост поднимает и Kestrel, и ProxyHostedService (F-1.1).
-    await app.StartAsync();
-    startupLogger.LogInformation("Web API listening on {Url}", listenUrl);
-
-    if (cfg.WebProxyEnabled)
-    {
-        startupLogger.LogInformation(
-            "WEB proxy bridge listening on https://{Host}:{Port} (basePath '{BasePath}')",
-            cfg.WebProxyHost,
-            cfg.WebProxyPort,
-            cfg.WebProxyBasePath);
-    }
+    // app.RunAsync() — идиоматичный запуск сервиса: стартует Kestrel и hosted-сервисы,
+    // ждёт SIGTERM/Ctrl+C (ConsoleLifetime) и штатно останавливает их в порядке F-1.3.
+    // Авария цикла приёма соединений в ProxyHostedService вызывает StopApplication,
+    // поэтому RunAsync возвращается, и ниже код возврата процесса становится 1.
+    await app.RunAsync();
 }
 catch (Exception ex)
 {
     // F-1.5: без веб-слоя управлять прокси нечем, поэтому отказ привязки фатален.
     // Отказ привязки самого прокси-листенера фатальным не является: его обрабатывает
     // ProxyHostedService, а readiness отдаёт 503.
-    startupLogger.LogCritical(ex, "Failed to start web API on {Url}: the web server is the only interface of this edition", listenUrl);
+    startupLogger.LogCritical(ex, "Failed to start web API: the web server is the only interface of this edition");
     return 1;
 }
-
-// Ctrl+C/SIGTERM обрабатывает ConsoleLifetime хоста: он вызывает StopAsync,
-// который гасит ProxyHostedService в порядке F-1.3.
-await proxyService.Completion;
 
 if (proxyService.Faulted)
 {
     return 1;
 }
 
-try { await app.StopAsync(); } catch (Exception) { }
-
 return 0;
 
-// Собирает конфигурацию Serilog: консоль и, при заданном logPath, файл с ограничением размера.
-// Уровень задаётся переключателем, чтобы его можно было менять на лету.
-static Serilog.ILogger BuildSerilogLogger(Config cfg, Serilog.Core.LoggingLevelSwitch levelSwitch)
+// Собирает конфигурацию Serilog: консоль со структурированной корреляцией и, при заданном
+// logs.path, асинхронный файл с ограничением размера. Уровень задаётся переключателем.
+static void ConfigureSerilog(
+    LoggerConfiguration loggerConfiguration,
+    IServiceProvider services,
+    Config cfg,
+    Serilog.Core.LoggingLevelSwitch levelSwitch,
+    string appVersion)
 {
-    var loggerConfiguration = new LoggerConfiguration()
+    loggerConfiguration
         .MinimumLevel.ControlledBy(levelSwitch)
-        .WriteTo.Console();
+        .ReadFrom.Services(services)
+        .Enrich.FromLogContext()
+        .Enrich.WithMachineName()
+        .Enrich.WithEnvironmentName()
+        .Enrich.WithProperty(LoggingConstants.Application, LoggingConstants.ApplicationName)
+        .Enrich.WithProperty(LoggingConstants.Version, appVersion)
+        .Enrich.WithSpan()
+        .Destructure.With(new SecretMaskingPolicy())
+        .WriteTo.Console(outputTemplate:
+            "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext} {Message:lj} " +
+            $"[{{{LoggingConstants.TraceId}}}] [{{{LoggingConstants.CorrelationIdProperty}}}]" +
+            "{NewLine}{Exception}");
 
-    if (!string.IsNullOrWhiteSpace(cfg.LogPath))
+    if (!string.IsNullOrWhiteSpace(cfg.Logs.Path))
     {
-        if (cfg.LogMaxMegabytes > 0)
+        if (cfg.Logs.MaxMegabytes > 0)
         {
-            var limitBytes = (long)Math.Max(32 * 1024, cfg.LogMaxMegabytes * 1024 * 1024);
+            var limitBytes = (long)Math.Max(32 * 1024, cfg.Logs.MaxMegabytes * 1024 * 1024);
             loggerConfiguration.WriteTo.Async(a => a.File(
                 new CompactJsonFormatter(),
-                cfg.LogPath,
+                cfg.Logs.Path,
                 rollingInterval: RollingInterval.Infinite,
                 fileSizeLimitBytes: limitBytes,
                 rollOnFileSizeLimit: true,
-                retainedFileCountLimit: Math.Max(1, cfg.LogRetainedFileCount + 1)));
+                retainedFileCountLimit: Math.Max(1, cfg.Logs.RetainedFileCount + 1)));
         }
         else
         {
-            loggerConfiguration.WriteTo.Async(a => a.File(new CompactJsonFormatter(), cfg.LogPath, rollingInterval: RollingInterval.Hour));
+            loggerConfiguration.WriteTo.Async(a => a.File(new CompactJsonFormatter(), cfg.Logs.Path, rollingInterval: RollingInterval.Hour));
         }
     }
 
-    return loggerConfiguration.CreateLogger();
+    // Логи в OTLP-совместимый backend для корреляции с трассами (TraceId/SpanId). Синк собирается
+    // один раз при старте; при otel.enabled=false или otel.exportLogs=false не подключается.
+    if (cfg.Otel.Enabled && cfg.Otel.ExportLogs)
+    {
+        loggerConfiguration.WriteTo.OpenTelemetry(options =>
+        {
+            if (!string.IsNullOrWhiteSpace(cfg.Otel.Endpoint))
+            {
+                options.Endpoint = cfg.Otel.Endpoint;
+            }
+
+            options.Protocol = cfg.Otel.Protocol.Trim() switch
+            {
+                "grpc" => OtlpProtocol.Grpc,
+                "http" => OtlpProtocol.HttpProtobuf,
+                _ => options.Protocol,
+            };
+
+            options.ResourceAttributes = new Dictionary<string, object>
+            {
+                ["service.name"] = OpenTelemetryExtensions.ResolveServiceName(cfg),
+                ["service.version"] = appVersion,
+            };
+        });
+    }
 }
 
-// Регистрирует Kestrel-листенер для панели и bridge. Host может быть wildcard (0.0.0.0/*/+),
-// IPv6-литералом, IP-адресом или доменным именем. Configure задаёт TLS для bridge-порта.
-static void ConfigureListener(
-    KestrelServerOptions kestrel,
-    string host,
-    int port,
-    Action<ListenOptions>? configure = null)
+// Маршруты, которые считаются шумом для request-logging: проверки живости/готовности,
+// метрики, Swagger и высокочастотный WEB-proxy long-poll/ws.
+static bool IsRequestLoggingNoise(HttpRequest request)
 {
-    if (string.IsNullOrWhiteSpace(host) || host is "*" or "+" or "0.0.0.0")
+    var path = request.Path.Value ?? string.Empty;
+    return path.StartsWith(LoggingConstants.HealthzPathPrefix, StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith(LoggingConstants.MetricsPathPrefix, StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith(LoggingConstants.SwaggerPathPrefix, StringComparison.OrdinalIgnoreCase)
+        || path.Contains(LoggingConstants.ApiV1PathSegment, StringComparison.OrdinalIgnoreCase);
+}
+
+// Гарантирует создание W3C Activity на каждый HTTP-запрос (TraceId/SpanId) без подключения
+// OpenTelemetry: ASP.NET Core использует ActivitySource "Microsoft.AspNetCore", и без слушателя
+// Activity.Current остаётся пустым, а Serilog.Enrichers.Span не сможет проставить TraceId.
+static void InstallRequestActivityListener()
+{
+    ActivitySource.AddActivityListener(new ActivityListener
     {
-        if (configure is null)
-        {
-            kestrel.ListenAnyIP(port);
-        }
-        else
-        {
-            kestrel.ListenAnyIP(port, configure);
-        }
-
-        return;
-    }
-
-    if (host is "::" or "[::]")
-    {
-        if (configure is null)
-        {
-            kestrel.Listen(IPAddress.IPv6Any, port);
-        }
-        else
-        {
-            kestrel.Listen(IPAddress.IPv6Any, port, configure);
-        }
-
-        return;
-    }
-
-    if (IPAddress.TryParse(host, out var address))
-    {
-        if (configure is null)
-        {
-            kestrel.Listen(address, port);
-        }
-        else
-        {
-            kestrel.Listen(address, port, configure);
-        }
-
-        return;
-    }
-
-    var resolved = Dns.GetHostAddresses(host).FirstOrDefault();
-    if (resolved is not null)
-    {
-        if (configure is null)
-        {
-            kestrel.Listen(resolved, port);
-        }
-        else
-        {
-            kestrel.Listen(resolved, port, configure);
-        }
-
-        return;
-    }
-
-    throw new InvalidOperationException($"Cannot resolve listener host '{host}'.");
+        ShouldListenTo = static source => source.Name == "Microsoft.AspNetCore",
+        Sample = static (ref _) => ActivitySamplingResult.AllDataAndRecorded,
+    });
 }

@@ -18,6 +18,7 @@ using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.Metrics;
 using TgWsProxy.Infrastructure.WebProxy;
+using TgWsProxy.Models;
 
 namespace TgWsProxy.Web;
 
@@ -34,7 +35,7 @@ internal static class WebApiEndpoints
     /// <summary>Календарное время старта процесса (UTC) для поля <c>startedAt</c>.</summary>
     private static readonly DateTimeOffset StartedAt = DateTimeOffset.UtcNow;
 
-    /// <summary>Версия сборки без суффикса «+hash», как в <c>--version</c>.</summary>
+    /// <summary>Версия сборки без суффикса «+hash».</summary>
     private static readonly string Version = typeof(WebApiEndpoints).Assembly
         .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         .Split('+')[0] ?? "unknown";
@@ -67,7 +68,7 @@ internal static class WebApiEndpoints
     /// Регистрирует конвейер и маршруты служебных эндпоинтов в приложении.
     /// </summary>
     /// <param name="app">Построенное веб-приложение.</param>
-    public static void Map(WebApplication app)
+    public static void MapWebApiEndpoints(this WebApplication app)
     {
         // F-1.6: необработанное исключение в обработчике превращается в 500 + ProblemDetails,
         // а не в обрыв соединения. Текст исключения наружу не отдаём: в нём могут быть пути
@@ -181,17 +182,14 @@ internal static class WebApiEndpoints
                 StartedAt,
                 server.IsListening,
                 cfg.H2Enabled,
-                cfg.CfProxyEnabled,
+                cfg.CfProxy.Enabled,
                 !string.IsNullOrWhiteSpace(cfg.FakeTlsDomain),
                 cfg.ProxyProtocol,
-                cfg.MetricsPort,
-                cfg.MetricsHost,
                 cfg.MaxConnections,
                 cfg.RateLimitPerIp,
                 cfg.RateLimitWindowSeconds,
-                cfg.DcIp.Count,
-                cfg.Host,
-                cfg.Port,
+                cfg.MtProto.DcIp.Count,
+                cfg.MtProto.Port,
                 listener.State.ToString().ToLowerInvariant(),
                 listener.RestartCount,
                 listener.LastRestartAt,
@@ -370,7 +368,7 @@ internal static class WebApiEndpoints
 
         // F-5.10: сброс к умолчаниям без записи — пользователь подтверждает его через PUT.
         app.MapPost("/api/config/reset", (ConfigUpdateService configService) =>
-            Results.Json(configService.GetDefaults(), JsonOptions));
+            Results.Json(ConfigUpdateService.GetDefaults(), JsonOptions));
 
         // F-8.8: список токенов доступа прокси. Секреты всегда маскированы (N-8);
         // открытое значение выдаётся только при создании и ротации.
@@ -640,9 +638,9 @@ internal static class WebApiEndpoints
                     token.Name,
                     BuildTelegramLink(cfg, token),
                     token.Secret,
-                    cfg.WebProxyEnabled ? WebProxyLinkBuilder.BuildShareLink(cfg, token) : null,
-                    cfg.WebProxyEnabled ? WebProxyLinkBuilder.BuildDeepLink(cfg, token) : null,
-                    cfg.WebProxyEnabled ? WebProxyLinkBuilder.BuildBridgeUrl(cfg, token) : null),
+                    cfg.WebProxy.Enabled ? WebProxyLinkBuilder.BuildShareLink(cfg, token) : null,
+                    cfg.WebProxy.Enabled ? WebProxyLinkBuilder.BuildDeepLink(cfg, token) : null,
+                    cfg.WebProxy.Enabled ? WebProxyLinkBuilder.BuildBridgeUrl(cfg, token) : null),
                 StatusCodes.Status200OK,
                 JsonContentType,
                 [new KeyValuePair<string, string>("Cache-Control", NoStoreHeader)]);
@@ -702,8 +700,8 @@ internal static class WebApiEndpoints
     /// Собирает базовый адрес Kestrel для заданных хоста и порта.
     /// Поддерживает wildcard-хосты (<c>*</c>, <c>0.0.0.0</c>, <c>::</c>) и IPv6-литералы.
     /// </summary>
-    /// <param name="host">Хост привязки из <c>MetricsHost</c>.</param>
-    /// <param name="port">Порт привязки из <c>MetricsPort</c>.</param>
+    /// <param name="host">Хост привязки.</param>
+    /// <param name="port">Порт привязки.</param>
     /// <returns>URL вида <c>http://host:port</c>.</returns>
     public static string BuildListenUrl(string host, int port)
     {

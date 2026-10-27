@@ -207,7 +207,7 @@ Bridge URL **[выведено]**: `https://host/basePath/?bridge=<capability>`.
 1. **Bridge-страница** — `GET /?bridge=<capability>` (или `GET /basePath/?bridge=…`) отдаёт динамическую
    страницу со встроенным JS-носителем и одноразовым bootstrap-токеном; авторизация по HMAC
    bridge-capability (§ 2.3), иначе HTTP 404.
-2. **Носитель (carrier)** — выбирается ключом `webProxyCarrierMode`, режим подставляется в bridge-страницу
+2. **Носитель (carrier)** — выбирается ключом `webProxy.carrierMode`, режим подставляется в bridge-страницу
    и повторяется в ответе `POST /api/v1/session` заголовком `X-Carrier-Mode`; клиент обязан использовать
    именно его, сессия привязана к своему носителю (запросы «чужого» carrier'а → HTTP 404).
    - **HTTPS long-poll** (`https`, по умолчанию) — `POST /api/v1/session` (bootstrap→session-токен,
@@ -326,7 +326,7 @@ PROXY protocol, Fake TLS) остаётся спецификой TCP-режима
 
 ### 4.4. Решение: транспорт bridge — Kestrel (второй endpoint) vs hand-rolled TLS
 
-Проект уже использует ASP.NET Core/Kestrel для панели (`MetricsHost`/`MetricsPort`), а данные к
+Проект уже использует ASP.NET Core/Kestrel для панели (привязка фиксирована `0.0.0.0:80`), а данные к
 Telegram гонит через hand-rolled `RawWebSocket`/`H2PacketCodec`.
 
 | Критерий | **Kestrel (второй endpoint)** — рекомендуется | Hand-rolled `SslStream` + HTTP/WS |
@@ -336,7 +336,7 @@ Telegram гонит через hand-rolled `RawWebSocket`/`H2PacketCodec`.
 | Производительность | `System.Net.WebSockets.WebSocket`; замеряется | потенциально выше, но не доказано |
 | Привязка | «только старт» — совпадает с § 8.1 действующего контракта | своя, отдельная от Kestrel |
 
-**Рекомендация:** Kestrel-листенер `webProxyHost:webProxyPort` с `UseHttps(сертификат)`;
+**Рекомендация:** Kestrel-листенер на всех интерфейсах (`0.0.0.0`) с портом `webProxy.port` и `UseHttps(сертификат)`;
 маршруты: `GET /?bridge=…` → динамическая bridge-страница (встроенный JS-носитель + bootstrap-токен),
 `{base}api/v1/{session,up,down}` → HTTPS long-poll carrier (с поддержкой `basePath`). Тела `POST /up`
 подаются в `RelayFrameCodec` → `RelayMultiplexer` → `RelayStream` → `MtProtoBridgeEngine`; исходящие
@@ -367,11 +367,11 @@ Bye(0x1F) ─▶ отказ (неверный bridge HMAC / превышение
 
 | ID | Требование | Приоритет |
 |----|-----------|-----------|
-| **F-W.1** | Bridge — отдельный HTTPS-листенер на `webProxyHost:webProxyPort` (по умолчанию порт `443`). Включается ключом `webProxyEnabled` (умолчание `false`). При выключении не занимает порт и не регистрирует маршруты. | Must |
+| **F-W.1** | Bridge — отдельный HTTPS-листенер на всех интерфейсах (`0.0.0.0`) с портом `webProxy.port` (по умолчанию порт `443`). Включается ключом `webProxy.enabled` (умолчание `false`). При выключении не занимает порт и не регистрирует маршруты. | Must |
 | **F-W.2** | `GET /` (или `GET /{basePath}/`) отдаёт bridge-страницу и JS из локальных ресурсов (без внешних CDN). Содержимое — встроенный статический ресурс проекта. | Must |
 | **F-W.3** | `POST {base}api/v1/session` создаёт сессию (bootstrap→session-токен, `HELLO→WELCOME`); `POST {base}api/v1/up` принимает восходящие кадры (`X-Up-Seq`→`X-Up-Ack`); `POST {base}api/v1/down` — long-poll нисходящих кадров (`X-Down-Cursor`); `DELETE {base}api/v1/session` закрывает сессию. Авторизация — `Authorization: Bearer <token>`. | Must |
 | **F-W.4** | `basePath` поддерживается (`v2`-контекст HMAC и путь маршрутов); нормализация — без пустых сегментов/пробелов/точек, ≤ 128 символов (иначе `400`/отказ). | Should |
-| **F-W.5** | Bridge-порт не должен совпадать с `Port` (MTProxy) и `MetricsPort` (панель): `ConfigValidator` отклоняет конфликт. | Must |
+| **F-W.5** | Bridge-порт не должен совпадать с `Port` (MTProxy) и портом панели (`80`): `ConfigValidator` отклоняет конфликт. | Must |
 
 ### 5.2. Авторизация bridge-канала
 
@@ -409,9 +409,9 @@ Bye(0x1F) ─▶ отказ (неверный bridge HMAC / превышение
 | **F-W.20** | Байты web-proxy-потоков учитываются в `IProxyStats`/`IPeerStatsRegistry` по паре (IP, токен); маршрут `route = "web-proxy"` (рядом с `ws`/`fallback`). | Should |
 | **F-W.21** | Живые web-proxy-потоки регистрируются в `IActiveSessionRegistry`; выключение/отзыв токена разрывает их (как F-8.6 существующего контракта). | Should |
 | **F-W.22** | Readiness отражает состояние bridge-листенера; метрики web-proxy (соединения, потоки, байты, отказы HMAC) в `/metrics` и `/api/metrics`. | Should |
-| **F-W.23** | При `webProxyEnabled` в стартовый журнал выводятся ссылка-приглашение `https://t.me/webproxy?server=…&secret=…` и deep-link `tg://webproxy?…`; bridge-URL с capability не печатается (capability не логируется, N-W.4/§3.4). | Could |
-| **F-W.24** | Носитель сессии задаётся ключом `webProxyCarrierMode` (`https`\|`websocket`), подставляется в bridge-страницу и в `X-Carrier-Mode`; сессия обслуживает только свой носитель, запросы другого carrier'а → `404`; в режиме `websocket` — одно соединение `GET …/api/v1/ws` с подпротоколом `tproxy-v1.<token>`. Ключ горячий: новое значение действует на новые сессии. | Must |
-| **F-W.25** | Лимиты ресурсов: `webProxyMaxSessions` (сверх — `503` + `Retry-After`), `webProxyMaxSessionsPerIp` (0 — без ограничения), `webProxyMaxStreamsPerSession` (`Open` сверх лимита → `Close`-кадр), `webProxyMaxStreams` (глобальный бюджет потоков процесса), `webProxyMaxPendingBytesPerSession`/`webProxyMaxPendingItemsPerSession` (переполнение исходящей очереди закрывает сессию, клиент переподключается). Все ключи горячие и валидируются при сохранении. | Must |
+| **F-W.23** | При `webProxy.enabled` в стартовый журнал выводятся ссылка-приглашение `https://t.me/webproxy?server=…&secret=…` и deep-link `tg://webproxy?…`; bridge-URL с capability не печатается (capability не логируется, N-W.4/§3.4). | Could |
+| **F-W.24** | Носитель сессии задаётся ключом `webProxy.carrierMode` (`https`\|`websocket`), подставляется в bridge-страницу и в `X-Carrier-Mode`; сессия обслуживает только свой носитель, запросы другого carrier'а → `404`; в режиме `websocket` — одно соединение `GET …/api/v1/ws` с подпротоколом `tproxy-v1.<token>`. Ключ горячий: новое значение действует на новые сессии. | Must |
+| **F-W.25** | Лимиты ресурсов: `webProxy.maxSessions` (сверх — `503` + `Retry-After`), `webProxy.maxSessionsPerIp` (0 — без ограничения), `webProxy.maxStreamsPerSession` (`Open` сверх лимита → `Close`-кадр), `webProxy.maxStreams` (глобальный бюджет потоков процесса), `webProxy.maxPendingBytesPerSession`/`webProxy.maxPendingItemsPerSession` (переполнение исходящей очереди закрывает сессию, клиент переподключается). Все ключи горячие и валидируются при сохранении. | Must |
 
 ---
 
@@ -435,25 +435,24 @@ Bye(0x1F) ─▶ отказ (неверный bridge HMAC / превышение
 
 | Ключ | Тип | Умолчание | Применение | Описание |
 |---|---|---|---|---|
-| `webProxyEnabled` | bool | `false` | только старт | включить bridge-листенер |
-| `webProxyHost` | string | `"0.0.0.0"` | только старт | адрес привязки bridge |
-| `webProxyPort` | int | `443` | только старт | порт bridge (≠ `Port`, ≠ `MetricsPort`) |
-| `webProxyBasePath` | string | `""` | только старт | путь сайта (`""` → корень, `v1`) |
-| `webProxyPublicHost` | string | `""` | горячо | внешний домен для ссылки и bridge-страницы (только домен: IP и хосты без точки Telegram не принимает) |
-| `webProxyCertPath` | string | `""` | только старт | PFX/сертификат для TLS (обязателен при `webProxyEnabled`) |
-| `webProxyCertPassword` | string | `""` | только старт | пароль PFX (в GET API маскируется) |
-| `webProxyCarrierMode` | string | `"https"` | горячо | носитель сессии: `https` (long-poll) или `websocket` (`GET /api/v1/ws`, подпротокол `tproxy-v1.<token>`); `*-lanes` отклоняются валидацией (F-W.24) |
-| `webProxyMaxSessions` | int | `128` | горячо | предел одновременных сессий (`503` + `Retry-After` сверх лимита) |
-| `webProxyMaxSessionsPerIp` | int | `0` | горячо | предел сессий с одного IP (`0` — без ограничения) |
-| `webProxyMaxStreamsPerSession` | int | `128` | горячо | потоков в сессии; `Open` сверх лимита получает `Close`-кадр |
-| `webProxyMaxStreams` | int | `4096` | горячо | глобальный бюджет relay-потоков процесса |
-| `webProxyMaxPendingBytesPerSession` | int | `33554432` | горячо | объём исходящей очереди сессии (1 … 64 МиБ); переполнение закрывает сессию |
-| `webProxyMaxPendingItemsPerSession` | int | `16384` | горячо | кадров в исходящей очереди сессии |
+| `webProxy.enabled` | bool | `false` | только старт | включить bridge-листенер |
+| `webProxy.port` | int | `443` | только старт | порт bridge (≠ `Port`, ≠ порта панели `80`); адрес привязки всегда все интерфейсы |
+| `webProxy.basePath` | string | `""` | только старт | путь сайта (`""` → корень, `v1`) |
+| `webProxy.publicHost` | string | `""` | горячо | внешний домен для ссылки и bridge-страницы (только домен: IP и хосты без точки Telegram не принимает) |
+| `webProxy.certPath` | string | `""` | только старт | PFX/сертификат для TLS (обязателен при `webProxy.enabled`) |
+| `webProxy.certPassword` | string | `""` | только старт | пароль PFX (в GET API маскируется) |
+| `webProxy.carrierMode` | string | `"https"` | горячо | носитель сессии: `https` (long-poll) или `websocket` (`GET /api/v1/ws`, подпротокол `tproxy-v1.<token>`); `*-lanes` отклоняются валидацией (F-W.24) |
+| `webProxy.maxSessions` | int | `128` | горячо | предел одновременных сессий (`503` + `Retry-After` сверх лимита) |
+| `webProxy.maxSessionsPerIp` | int | `0` | горячо | предел сессий с одного IP (`0` — без ограничения) |
+| `webProxy.maxStreamsPerSession` | int | `128` | горячо | потоков в сессии; `Open` сверх лимита получает `Close`-кадр |
+| `webProxy.maxStreams` | int | `4096` | горячо | глобальный бюджет relay-потоков процесса |
+| `webProxy.maxPendingBytesPerSession` | int | `33554432` | горячо | объём исходящей очереди сессии (1 … 64 МиБ); переполнение закрывает сессию |
+| `webProxy.maxPendingItemsPerSession` | int | `16384` | горячо | кадров в исходящей очереди сессии |
 
 Замечания:
 
-- `webProxyCertPath` обязателен при `webProxyEnabled` — bridge без TLS не имеет смысла (N-W.1).
-- `webProxyCarrierMode` и все лимиты — горячие (F-W.24/F-W.25): новый носитель действует на новые
+- `webProxy.certPath` обязателен при `webProxy.enabled` — bridge без TLS не имеет смысла (N-W.1).
+- `webProxy.carrierMode` и все лимиты — горячие (F-W.24/F-W.25): новый носитель действует на новые
   сессии, уже открытые доживают на прежнем; лимиты перечитываются при каждой проверке.
 - Поддержка TLS-терминации **за** reverse-proxy (nginx отдаёт 443, приложение слушает внутренний
   порт) — отдельный вопрос § 9; на первой итерации реализуется прямая привязка 443 с сертификатом.
@@ -484,7 +483,7 @@ Bye(0x1F) ─▶ отказ (неверный bridge HMAC / превышение
 | 1 | **Фича в `dev`-ветке tdesktop**, контракт может измениться до релиза | протокол «поплывёт» | изолировать за `RelayFrameCodec`/`IWebProxyBridgeServer`; версионировать контекст (`v1`/`v2`) |
 | 2 | **Нет публичной серверной спецификации** — контракт выведен из клиента | риск неверной интерпретации | интеграционные тесты против реального tdesktop dev; следить за коммитами |
 | 3 | **Порт 443** конкурирует с `Port` (MTProxy) и инфраструктурой | конфликт привязки | `ConfigValidator` (F-W.5); reverse-proxy как альтернатива |
-| 4 | TLS-терминация: в приложении vs за nginx | сложность развёртывания | первая итерация — в приложении; далее поддержать `webProxyPublicHost` за прокси |
+| 4 | TLS-терминация: в приложении vs за nginx | сложность развёртывания | первая итерация — в приложении; далее поддержать `webProxy.publicHost` за прокси |
 | 5 | Роль `Hello`/`Welcome`/`AuthChallenge`/`AuthResponse` (0x10–0x13) не до конца ясна | лишняя/недостающая логика | выяснить по bridge-JS tdesktop; на первом шаге обрабатывать как служебные no-op/отказ |
 | 6 | `System.Net.WebSockets` может не дать нужную производительность | просадка throughput | бенчмарк; отложенный план — `SslStream`-реализация (§ 4.4) |
 | 7 | Рефакторинг `ClientSessionHandler` → `MtProtoBridgeEngine` | риск регрессии TCP-режима | полный прогон `TgWsProxy.Test` до/после; поведенческий рефакторинг без изменения контрактов |

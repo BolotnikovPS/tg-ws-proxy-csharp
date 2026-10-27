@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
@@ -33,8 +32,9 @@ public sealed class ConfigUpdateService(
     /// <summary>
     /// Ключи, применяемые к работающим подсистемам без перезапуска слушателя (F-2.11, § 4).
     /// </summary>
-    private static readonly HashSet<string> HotKeys = new(StringComparer.Ordinal)
-    {
+    private static readonly HashSet<string> HotKeys =
+    [
+        with(StringComparer.Ordinal),
         "maxConnections",
         "rateLimitPerIp",
         "rateLimitWindowSeconds",
@@ -42,21 +42,21 @@ public sealed class ConfigUpdateService(
         "denyIp",
         // Токен читается middleware на каждом запросе, поэтому смена действует сразу.
         "webApiToken",
-        "publicHost",
+        "mtproto.publicHost",
         // Внешний домен для bridge-ссылки пересчитывается без перезапуска листенера.
-        "webProxyPublicHost",
+        "webProxy.publicHost",
         // Режим носителя и лимиты ресурсов читаются на каждом запросе carrier/сессии,
         // поэтому применяются к новым сессиям без перезапуска bridge-листенера (F-W.24, F-W.25).
-        "webProxyCarrierMode",
-        "webProxyMaxSessions",
-        "webProxyMaxSessionsPerIp",
-        "webProxyMaxStreamsPerSession",
-        "webProxyMaxStreams",
-        "webProxyMaxPendingBytesPerSession",
-        "webProxyMaxPendingItemsPerSession",
-        "enablePerIpStats",
-        "perIpStatsTtlSeconds",
-        "perIpStatsMaxPeers",
+        "webProxy.carrierMode",
+        "webProxy.maxSessions",
+        "webProxy.maxSessionsPerIp",
+        "webProxy.maxStreamsPerSession",
+        "webProxy.maxStreams",
+        "webProxy.maxPendingBytesPerSession",
+        "webProxy.maxPendingItemsPerSession",
+        "stats.enabled",
+        "stats.ttlSeconds",
+        "stats.maxPeers",
         // F-9.6: предел выгрузки per-IP серий читается при формировании ответа /metrics.
         "prometheusTopPeers",
         "timeseriesWindowSeconds",
@@ -64,57 +64,63 @@ public sealed class ConfigUpdateService(
         // F-8.9: список токенов применяется к живому процессу без перезапуска слушателя —
         // новые handshake сразу используют новый набор, активные сессии сохраняются.
         "tokens",
-    };
+    ];
 
     /// <summary>
     /// Ключи, требующие перезапуска слушателя: смена привязки, DC-адресов, TLS- и CF-настроек
     /// (F-2.11, § 2.7). Активные сессии при этом разрываются (F-7.4).
     /// </summary>
-    private static readonly HashSet<string> ListenerKeys = new(StringComparer.Ordinal)
-    {
+    private static readonly HashSet<string> ListenerKeys =
+    [
+        with(StringComparer.Ordinal),
         "proxyProtocol",
-        "dcIp",
-        "allowInvalidCertificates",
-        "wsMaxFrameBytes",
-        "wsConnectTimeoutSeconds",
-        "socketBufferKb",
-        "wsPoolSize",
+        "mtproto.dcIp",
+        "mtproto.allowInvalidCertificates",
+        "mtproto.wsMaxFrameBytes",
+        "mtproto.wsConnectTimeoutSeconds",
+        "mtproto.socketBufferKb",
+        "mtproto.wsPoolSize",
         "forceTestDc",
         "fakeTlsDomain",
-        "cfProxyEnabled",
-        "cfProxyDomains",
-        "cfProxyWorkerDomains",
-        "cfProxyH2Media",
+        "cfProxy.enabled",
+        "cfProxy.domains",
+        "cfProxy.workerDomains",
+        "cfProxy.h2Media",
         "disableSecure",
-    };
+    ];
 
     /// <summary>
     /// Ключи, читаемые только при запуске процесса (F-2.11, § 4.4). Попытка изменить их через
     /// API отклоняется с <c>409</c> и списком <c>startupOnly</c> (F-2.12).
     /// </summary>
-    private static readonly HashSet<string> StartupOnlyKeys = new(StringComparer.Ordinal)
-    {
+    private static readonly HashSet<string> StartupOnlyKeys =
+    [
+        with(StringComparer.Ordinal),
         // Привязка слушателя и уровень журналирования меняются только файлом: панель
         // показывает их как справочные значения, а API отклоняет правку с 409.
-        "port",
-        "host",
+        "mtproto.port",
         "verbose",
-        "logPath",
-        "logMaxMegabytes",
-        "logRetainedFileCount",
-        "metricsPort",
-        "metricsHost",
+        "logs.path",
+        "logs.maxMegabytes",
+        "logs.retainedFileCount",
         "enableSwagger",
         // Bridge-листенер (Kestrel второй endpoint) привязывается и настраивает TLS только
         // при старте процесса; включение/выключение и адрес порта нельзя применить на лету,
         // поэтому API отклоняет их правку с 409.
-        "webProxyEnabled",
-        "webProxyHost",
-        "webProxyPort",
-        "webProxyBasePath",
-        "webProxyCertPath",
-        "webProxyCertPassword",
-    };
+        "webProxy.enabled",
+        "webProxy.port",
+        "webProxy.basePath",
+        "webProxy.certPath",
+        "webProxy.certPassword",
+        // OpenTelemetry: SDK и синки собираются один раз при старте процесса, на лету не применяются.
+        "otel.enabled",
+        "otel.serviceName",
+        "otel.endpoint",
+        "otel.protocol",
+        "otel.exportTraces",
+        "otel.exportLogs",
+        "otel.exportMetrics",
+    ];
 
     private static readonly JsonSerializerOptions DiffOptions = new()
     {
@@ -133,7 +139,7 @@ public sealed class ConfigUpdateService(
     /// Возвращает конфигурацию по умолчанию для кнопки «Сбросить» (F-5.10). Ничего не пишет:
     /// пользователь должен подтвердить сброс через <c>PUT /api/config</c>.
     /// </summary>
-    public ConfigDto GetDefaults()
+    public static ConfigDto GetDefaults()
     {
         var defaults = new Config();
         ConfigDefaults.Apply(defaults);
@@ -163,9 +169,9 @@ public sealed class ConfigUpdateService(
             patch.WebApiToken = null;
         }
 
-        if (IsMasked(patch.WebProxyCertPassword))
+        if (patch.WebProxy is { } webProxyPatch && IsMasked(webProxyPatch.CertPassword))
         {
-            patch.WebProxyCertPassword = null;
+            webProxyPatch.CertPassword = null;
         }
 
         if (patch.Tokens is { } patchedTokens)
@@ -349,22 +355,22 @@ public sealed class ConfigUpdateService(
                     config.WebApiToken = candidate.WebApiToken;
                     break;
 
-                case "publicHost":
+                case "mtproto.publicHost":
                     // Ссылка t.me/proxy собирается при каждом запросе /api/tokens/{id}/link,
                     // поэтому внешний адрес применяется без перезапуска.
-                    config.PublicHost = candidate.PublicHost;
+                    config.MtProto.PublicHost = candidate.MtProto.PublicHost;
                     break;
 
-                case "enablePerIpStats":
-                    config.EnablePerIpStats = candidate.EnablePerIpStats;
+                case "stats.enabled":
+                    config.Stats.Enabled = candidate.Stats.Enabled;
                     break;
 
-                case "perIpStatsTtlSeconds":
-                    config.PerIpStatsTtlSeconds = candidate.PerIpStatsTtlSeconds;
+                case "stats.ttlSeconds":
+                    config.Stats.TtlSeconds = candidate.Stats.TtlSeconds;
                     break;
 
-                case "perIpStatsMaxPeers":
-                    config.PerIpStatsMaxPeers = candidate.PerIpStatsMaxPeers;
+                case "stats.maxPeers":
+                    config.Stats.MaxPeers = candidate.Stats.MaxPeers;
                     break;
 
                 case "prometheusTopPeers":
@@ -389,41 +395,41 @@ public sealed class ConfigUpdateService(
                     tokenRegistry.Reload();
                     break;
 
-                case "webProxyPublicHost":
+                case "webProxy.publicHost":
                     // Домен попадает и в ссылку t.me/webproxy, и в relayBase bridge-страницы:
                     // обе собираются на каждый запрос, перезапуск не нужен.
-                    config.WebProxyPublicHost = candidate.WebProxyPublicHost;
+                    config.WebProxy.PublicHost = candidate.WebProxy.PublicHost;
                     break;
 
-                case "webProxyCarrierMode":
+                case "webProxy.carrierMode":
                     // Носитель читается при выдаче bridge-страницы и в ответе POST /session,
                     // поэтому смена действует на следующую сессию; открытые сессии сохраняют
                     // режим, с которым были созданы.
-                    config.WebProxyCarrierMode = candidate.WebProxyCarrierMode;
+                    config.WebProxy.CarrierMode = candidate.WebProxy.CarrierMode;
                     break;
 
-                case "webProxyMaxSessions":
-                    config.WebProxyMaxSessions = candidate.WebProxyMaxSessions;
+                case "webProxy.maxSessions":
+                    config.WebProxy.MaxSessions = candidate.WebProxy.MaxSessions;
                     break;
 
-                case "webProxyMaxSessionsPerIp":
-                    config.WebProxyMaxSessionsPerIp = candidate.WebProxyMaxSessionsPerIp;
+                case "webProxy.maxSessionsPerIp":
+                    config.WebProxy.MaxSessionsPerIp = candidate.WebProxy.MaxSessionsPerIp;
                     break;
 
-                case "webProxyMaxStreamsPerSession":
-                    config.WebProxyMaxStreamsPerSession = candidate.WebProxyMaxStreamsPerSession;
+                case "webProxy.maxStreamsPerSession":
+                    config.WebProxy.MaxStreamsPerSession = candidate.WebProxy.MaxStreamsPerSession;
                     break;
 
-                case "webProxyMaxStreams":
-                    config.WebProxyMaxStreams = candidate.WebProxyMaxStreams;
+                case "webProxy.maxStreams":
+                    config.WebProxy.MaxStreams = candidate.WebProxy.MaxStreams;
                     break;
 
-                case "webProxyMaxPendingBytesPerSession":
-                    config.WebProxyMaxPendingBytesPerSession = candidate.WebProxyMaxPendingBytesPerSession;
+                case "webProxy.maxPendingBytesPerSession":
+                    config.WebProxy.MaxPendingBytesPerSession = candidate.WebProxy.MaxPendingBytesPerSession;
                     break;
 
-                case "webProxyMaxPendingItemsPerSession":
-                    config.WebProxyMaxPendingItemsPerSession = candidate.WebProxyMaxPendingItemsPerSession;
+                case "webProxy.maxPendingItemsPerSession":
+                    config.WebProxy.MaxPendingItemsPerSession = candidate.WebProxy.MaxPendingItemsPerSession;
                     break;
             }
         }
@@ -434,16 +440,17 @@ public sealed class ConfigUpdateService(
     {
         var warnings = new List<string>();
 
-        if (string.IsNullOrWhiteSpace(candidate.WebApiToken) && !IsLoopback(candidate.MetricsHost))
+        // Веб-сервер всегда слушает 0.0.0.0:80 (публично), поэтому без webApiToken API
+        // достижим без аутентификации — предупреждаем об этом явно.
+        if (string.IsNullOrWhiteSpace(candidate.WebApiToken))
         {
             warnings.Add(
-                $"metricsHost = {candidate.MetricsHost} is not a loopback address and webApiToken is empty: " +
-                "the Web API will be reachable without authentication.");
+                "webApiToken is empty: the Web API is reachable without authentication.");
         }
 
-        if (!candidate.EnablePerIpStats)
+        if (!candidate.Stats.Enabled)
         {
-            warnings.Add("enablePerIpStats = false: /api/per-ip will return an empty list.");
+            warnings.Add("stats.enabled = false: /api/per-ip will return an empty list.");
         }
 
         if (candidate.RateLimitPerIp > 0 && candidate.RateLimitWindowSeconds <= 0)
@@ -462,7 +469,11 @@ public sealed class ConfigUpdateService(
     {
         var dto = ConfigDtoMapper.FromConfig(source);
         dto.WebApiToken = MaskSecret(source.WebApiToken);
-        dto.WebProxyCertPassword = MaskSecret(source.WebProxyCertPassword);
+        if (dto.WebProxy is { } webProxy)
+        {
+            webProxy.CertPassword = MaskSecret(source.WebProxy.CertPassword);
+        }
+
         if (dto.Tokens is { } tokens)
         {
             foreach (var token in tokens)
@@ -489,25 +500,41 @@ public sealed class ConfigUpdateService(
     /// <summary>Список ключей, значения которых отличаются между двумя DTO.</summary>
     private static List<string> Diff(ConfigDto before, ConfigDto after)
     {
-        var left = JsonSerializer.SerializeToNode(before, DiffOptions) as JsonObject;
-        var right = JsonSerializer.SerializeToNode(after, DiffOptions) as JsonObject;
-
-        if (left is null || right is null)
+        if (JsonSerializer.SerializeToNode(before, DiffOptions) is not JsonObject left || JsonSerializer.SerializeToNode(after, DiffOptions) is not JsonObject right)
         {
             return [];
         }
 
         var changed = new List<string>();
-        foreach (var (key, value) in right)
-        {
-            if (!left.TryGetPropertyValue(key, out var previous) || !JsonNode.DeepEquals(previous, value))
-            {
-                changed.Add(key);
-            }
-        }
-
+        CollectChanges(left, right, "", changed);
         changed.Sort(StringComparer.Ordinal);
         return changed;
+    }
+
+    /// <summary>
+    /// Сравнивает вложенный JSON: объекты (<c>mtproto</c>, <c>stats</c>, <c>otel</c>, <c>webProxy</c>,
+    /// <c>cfProxy</c>) диффятся по точкам (<c>webProxy.carrierMode</c>), чтобы смешанные блоки
+    /// классифицировались на уровне подключа; массивы и скаляры сравниваются целиком как
+    /// верхнеуровневые ключи.
+    /// </summary>
+    private static void CollectChanges(JsonObject left, JsonObject right, string prefix, List<string> changed)
+    {
+        foreach (var (key, value) in right)
+        {
+            var path = prefix.Length == 0 ? key : $"{prefix}.{key}";
+
+            if (value is JsonObject childRight
+                && left.TryGetPropertyValue(key, out var prev) && prev is JsonObject childLeft)
+            {
+                CollectChanges(childLeft, childRight, path, changed);
+                continue;
+            }
+
+            if (!left.TryGetPropertyValue(key, out var previous) || !JsonNode.DeepEquals(previous, value))
+            {
+                changed.Add(path);
+            }
+        }
     }
 
     private static void ReplaceAll(List<string> target, List<string> source)
@@ -517,21 +544,5 @@ public sealed class ConfigUpdateService(
         {
             target.Add(item);
         }
-    }
-
-    /// <summary>Проверяет, что адрес прослушивания — loopback (F-3.7).</summary>
-    public static bool IsLoopback(string? host)
-    {
-        if (string.IsNullOrWhiteSpace(host))
-        {
-            return false;
-        }
-
-        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return IPAddress.TryParse(host.Trim('[', ']'), out var address) && IPAddress.IsLoopback(address);
     }
 }

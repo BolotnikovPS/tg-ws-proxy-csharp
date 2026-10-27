@@ -28,10 +28,9 @@ public static class WebProxyLinkBuilder
     public const int MaxHostLength = 253;
 
     /// <summary>
-    /// Внешний домен для ссылок Telegram: <see cref="Config.WebProxyPublicHost"/>, если задан,
-    /// иначе <see cref="Config.WebProxyHost"/>, приведённый к канонической форме
-    /// (<see cref="NormalizeHost"/>). Служебные адреса (<c>0.0.0.0</c>, <c>::</c>, …) и
-    /// IP-литералы снаружи недостижимы для WEB proxy — возвращается <see langword="null"/>.
+    /// Внешний домен для ссылок Telegram: <see cref="WebProxyConfig.PublicHost"/>.
+    /// Служебные адреса (<c>0.0.0.0</c>, <c>::</c>, …) и IP-литералы снаружи недостижимы
+    /// для WEB proxy — возвращается <see langword="null"/>. Адрес привязки всегда все интерфейсы.
     /// </summary>
     public static string? ResolveHost(Config cfg)
         => NormalizeHost(ResolveConfiguredHost(cfg));
@@ -47,9 +46,8 @@ public static class WebProxyLinkBuilder
 
     private static string? ResolveConfiguredHost(Config cfg)
     {
-        var publicHost = cfg.WebProxyPublicHost?.Trim() ?? "";
-        var source = publicHost.Length > 0 ? publicHost : cfg.WebProxyHost;
-        return PublicEndpoint.TryParse(source, cfg.WebProxyPort, out var endpoint)
+        var publicHost = cfg.WebProxy.PublicHost?.Trim() ?? "";
+        return PublicEndpoint.TryParse(publicHost, cfg.WebProxy.Port, out var endpoint)
             ? endpoint.Host
             : null;
     }
@@ -169,7 +167,7 @@ public static class WebProxyLinkBuilder
             return null;
         }
 
-        var basePath = BridgeCapabilityVerifier.NormalizeBasePath(cfg.WebProxyBasePath);
+        var basePath = BridgeCapabilityVerifier.NormalizeBasePath(cfg.WebProxy.BasePath);
         var capability = BridgeCapabilityVerifier.ComputeCapability(
             Convert.FromHexString(token.Secret), host, basePath);
         var prefix = basePath.Length == 0 ? "" : "/" + basePath;
@@ -183,7 +181,7 @@ public static class WebProxyLinkBuilder
             return null;
         }
 
-        var basePath = BridgeCapabilityVerifier.NormalizeBasePath(cfg.WebProxyBasePath);
+        var basePath = BridgeCapabilityVerifier.NormalizeBasePath(cfg.WebProxy.BasePath);
         var server = basePath.Length == 0 ? host : $"{host}/{basePath}";
         var secret = BuildMarkerSecret(token.Secret, basePath);
         return $"{prefix}?server={Uri.EscapeDataString(server)}&secret={secret}";

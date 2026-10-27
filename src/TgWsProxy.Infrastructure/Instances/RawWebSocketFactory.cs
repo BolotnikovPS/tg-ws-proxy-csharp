@@ -36,9 +36,9 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
         bool secure = true,
         string? sni = null)
     {
-        var handshakeTimeout = timeout ?? TimeSpan.FromSeconds(cfg.WsConnectTimeoutSeconds);
+        var handshakeTimeout = timeout ?? TimeSpan.FromSeconds(cfg.MtProto.WsConnectTimeoutSeconds);
         var establishTimeout = TimeSpan.FromSeconds(Math.Min(handshakeTimeout.TotalSeconds, TcpTlsHandshakeCapSeconds));
-        var socketBuf = Math.Max(4, cfg.SocketBufferKb) * 1024;
+        var socketBuf = Math.Max(4, cfg.MtProto.SocketBufferKb) * 1024;
         var port = secure ? Protocol.WsPort : Protocol.WsPlainPort;
 
         // Upstream отдаёт host прямо в asyncio.open_connection, который резолвит DNS сам.
@@ -86,7 +86,7 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
                 var fronting = sni is not null;
                 var ssl = new SslStream(networkStream, false, (_, _, _, sslPolicyErrors) =>
                 {
-                    if (cfg.AllowInvalidCertificates)
+                    if (cfg.MtProto.AllowInvalidCertificates)
                     {
                         return true;
                     }
@@ -166,7 +166,7 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
                 ? new PrebufferedStream(transport, leftover)
                 : transport;
 
-            return new RawWebSocket(client, wsTransport, scope, logger, cfg.WsMaxFrameBytes);
+            return new RawWebSocket(client, wsTransport, scope, logger, cfg.MtProto.WsMaxFrameBytes);
         }
         catch
         {

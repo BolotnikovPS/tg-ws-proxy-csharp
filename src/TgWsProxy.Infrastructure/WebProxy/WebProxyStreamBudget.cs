@@ -4,7 +4,7 @@ namespace TgWsProxy.Infrastructure.WebProxy;
 
 /// <summary>
 /// Глобальный бюджет одновременных relay-потоков WEB proxy через все сессии
-/// (<c>webProxyMaxStreams</c>, F-W.25). Значение читается из живого конфига на каждой попытке,
+/// (<c>webProxy.maxStreams</c>, F-W.25). Значение читается из живого конфига на каждой попытке,
 /// поэтому горячая правка лимита действует без перезапуска.
 /// </summary>
 public sealed class WebProxyStreamBudget(Config config)
@@ -23,7 +23,7 @@ public sealed class WebProxyStreamBudget(Config config)
         while (true)
         {
             var current = Volatile.Read(ref _active);
-            var limit = config.WebProxyMaxStreams;
+            var limit = config.WebProxy.MaxStreams;
             if (limit > 0 && current >= limit)
             {
                 return false;

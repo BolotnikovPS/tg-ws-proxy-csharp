@@ -24,7 +24,7 @@ public interface IWebProxyWebSocketChannel
 /// <summary>
 /// Носитель <c>websocket</c>: одна WebSocket-сессия на relay-сессию, батчи кадров в обе стороны.
 /// Заменяет long-poll пару <c>POST /api/v1/up</c> + <c>POST /api/v1/down</c> при
-/// <c>webProxyCarrierMode = websocket</c> (F-W.24).
+/// <c>webProxy.carrierMode = websocket</c> (F-W.24).
 /// </summary>
 public static class WebProxyWebSocketCarrier
 {

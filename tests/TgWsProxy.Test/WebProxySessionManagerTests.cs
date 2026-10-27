@@ -106,7 +106,7 @@ public class WebProxySessionManagerTests
     [Fact]
     public void CreateSession_WhenGlobalLimitReached_ReturnsBusy()
     {
-        var manager = CreateManager(config: new Config { WebProxyMaxSessions = 1 });
+        var manager = CreateManager(config: new Config { WebProxy = new WebProxyConfig { MaxSessions = 1 } });
 
         var first = manager.CreateSession(manager.IssueBootstrap(MakeToken()), HelloFrame(), null, "test");
         var second = manager.CreateSession(manager.IssueBootstrap(MakeToken()), HelloFrame(), null, "test");
@@ -123,7 +123,7 @@ public class WebProxySessionManagerTests
     [Fact]
     public void CreateSession_WhenPerIpLimitReached_ReturnsBusy()
     {
-        var manager = CreateManager(config: new Config { WebProxyMaxSessionsPerIp = 1 });
+        var manager = CreateManager(config: new Config { WebProxy = new WebProxyConfig { MaxSessionsPerIp = 1 } });
         var peer = IPAddress.Parse("203.0.113.7");
 
         var first = manager.CreateSession(manager.IssueBootstrap(MakeToken()), HelloFrame(), peer, "test");
@@ -143,7 +143,7 @@ public class WebProxySessionManagerTests
     [Fact]
     public void CreateSession_PerIpLimitZero_MeansUnlimited()
     {
-        var manager = CreateManager(config: new Config { WebProxyMaxSessionsPerIp = 0 });
+        var manager = CreateManager(config: new Config { WebProxy = new WebProxyConfig { MaxSessionsPerIp = 0 } });
         var peer = IPAddress.Loopback;
 
         for (var i = 0; i < 5; i++)
@@ -158,7 +158,7 @@ public class WebProxySessionManagerTests
     [Fact]
     public void CreateSession_ReportsConfiguredCarrierMode()
     {
-        var manager = CreateManager(config: new Config { WebProxyCarrierMode = "websocket" });
+        var manager = CreateManager(config: new Config { WebProxy = new WebProxyConfig { CarrierMode = "websocket" } });
 
         var result = manager.CreateSession(manager.IssueBootstrap(MakeToken()), HelloFrame(), null, "test");
 
@@ -171,7 +171,7 @@ public class WebProxySessionManagerTests
     [Fact]
     public void CurrentCarrierMode_FallsBackToHttps_WhenUnset()
     {
-        var manager = CreateManager(config: new Config { WebProxyCarrierMode = "  " });
+        var manager = CreateManager(config: new Config { WebProxy = new WebProxyConfig { CarrierMode = "  " } });
 
         Assert.Equal("https", manager.CurrentCarrierMode);
     }

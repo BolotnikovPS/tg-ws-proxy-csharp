@@ -42,6 +42,7 @@ public sealed class ProxyHostedService(
     MetricsHistory history,
     Config config,
     Dictionary<int, string> dcOptions,
+    IHostApplicationLifetime lifetime,
     ILogger<ProxyHostedService> logger
     ) : IHostedService, IAsyncDisposable, IListenerController
 {
@@ -60,7 +61,6 @@ public sealed class ProxyHostedService(
 
     private volatile bool _restarting;
     private int _restartCount;
-    private DateTimeOffset? _lastRestartAt;
 
     /// <summary>Признак того, что прокси уже запущен (хостом или вручную).</summary>
     public bool IsStarted => Volatile.Read(ref _started) == 1;
@@ -69,8 +69,9 @@ public sealed class ProxyHostedService(
     public bool Faulted => _faulted;
 
     /// <summary>
-    /// Завершается, когда цикл приёма соединений остановлен. Точка входа ждёт эту задачу,
-    /// чтобы сохранить прежний код возврата процесса.
+    /// Завершается, когда цикл приёма соединений остановлен. После перехода на
+    /// <c>app.RunAsync()</c> точка входа больше не ждёт эту задачу явно, но она остаётся
+    /// точкой наблюдения за жизненным циклом и используется в тестах.
     /// </summary>
     public Task Completion => _runTask ?? Task.CompletedTask;
 
@@ -89,7 +90,7 @@ public sealed class ProxyHostedService(
     public int RestartCount => Volatile.Read(ref _restartCount);
 
     /// <inheritdoc />
-    public DateTimeOffset? LastRestartAt => _lastRestartAt;
+    public DateTimeOffset? LastRestartAt { get; private set; }
 
     /// <inheritdoc />
     public Task StartAsync(CancellationToken cancellationToken)
@@ -164,9 +165,8 @@ public sealed class ProxyHostedService(
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(RestartTimeout);
 
-            var oldHost = config.Host;
-            var oldPort = config.Port;
-            var endpoint = new IPEndPoint(IPAddress.Parse(candidate.Host), candidate.Port);
+            var oldPort = config.MtProto.Port;
+            var endpoint = new IPEndPoint(IPAddress.Any, candidate.MtProto.Port);
             var dropped = 0;
 
             try
@@ -188,8 +188,8 @@ public sealed class ProxyHostedService(
                 // Прежняя привязка восстановлена самим сервером: возвращаем подсистемы в работу,
                 // чтобы прокси не остался без пулов.
                 StartSubsystems(_cts?.Token ?? CancellationToken.None);
-                logger.LogWarning(ex, "Listener rebind to {Host}:{Port} failed, rolled back", candidate.Host, candidate.Port);
-                return ListenerRestartResult.Failed($"Cannot bind {candidate.Host}:{candidate.Port}: {ex.Message}");
+                logger.LogWarning(ex, "Listener rebind to port {Port} failed, rolled back", candidate.MtProto.Port);
+                return ListenerRestartResult.Failed($"Cannot bind port {candidate.MtProto.Port}: {ex.Message}");
             }
             catch (OperationCanceledException)
             {
@@ -206,14 +206,12 @@ public sealed class ProxyHostedService(
             StartSubsystems(_cts?.Token ?? CancellationToken.None);
 
             Interlocked.Increment(ref _restartCount);
-            _lastRestartAt = DateTimeOffset.UtcNow;
+            LastRestartAt = DateTimeOffset.UtcNow;
 
             logger.LogInformation(
-                "Listener restarted: {OldHost}:{OldPort} -> {NewHost}:{NewPort}, {Dropped} session(s) dropped",
-                oldHost,
+                "Listener restarted: {OldPort} -> {NewPort}, {Dropped} session(s) dropped",
                 oldPort,
-                candidate.Host,
-                candidate.Port,
+                candidate.MtProto.Port,
                 dropped);
 
             return ListenerRestartResult.Ok(dropped);
@@ -280,7 +278,7 @@ public sealed class ProxyHostedService(
     {
         ConfigDtoMapper.Apply(ConfigDtoMapper.FromConfig(candidate), config);
 
-        var updated = ConfigDefaults.ParseDcIpList(candidate.DcIp);
+        var updated = ConfigDefaults.ParseDcIpList(candidate.MtProto.DcIp);
         dcOptions.Clear();
         foreach (var (dc, ip) in updated)
         {
@@ -302,6 +300,11 @@ public sealed class ProxyHostedService(
         {
             _faulted = true;
             logger.LogCritical(ex, "Server crashed");
+
+            // Останавливает хост (graceful), чтобы app.RunAsync() вернулся и точка входа
+            // смогла отдать процессу код 1. Без этого веб-слой продолжал бы слушать
+            // после аварии прокси.
+            lifetime.StopApplication();
         }
     }
 

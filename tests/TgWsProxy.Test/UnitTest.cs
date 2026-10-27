@@ -21,15 +21,14 @@ public class UnitTest
         var cfg = new Config();
         ConfigDefaults.Apply(cfg);
 
-        Assert.Equal(1443, cfg.Port);
-        Assert.Equal("127.0.0.1", cfg.Host);
-        Assert.Equal(4, cfg.WsPoolSize);
-        Assert.Equal(5, cfg.LogMaxMegabytes);
-        Assert.Equal(1, cfg.LogRetainedFileCount);
-        Assert.Equal(256, cfg.SocketBufferKb);
-        Assert.True(cfg.CfProxyEnabled);
-        Assert.True(cfg.CfProxyH2Media);
-        Assert.Equal(ConfigDefaults.DefaultDcIp, cfg.DcIp);
+        Assert.Equal(1443, cfg.MtProto.Port);
+        Assert.Equal(4, cfg.MtProto.WsPoolSize);
+        Assert.Equal(5, cfg.Logs.MaxMegabytes);
+        Assert.Equal(1, cfg.Logs.RetainedFileCount);
+        Assert.Equal(256, cfg.MtProto.SocketBufferKb);
+        Assert.True(cfg.CfProxy.Enabled);
+        Assert.True(cfg.CfProxy.H2Media);
+        Assert.Equal(ConfigDefaults.DefaultDcIp, cfg.MtProto.DcIp);
     }
 
     [Fact]
@@ -40,7 +39,7 @@ public class UnitTest
         ConfigDefaults.Apply(cfg);
         ConfigDefaults.Apply(cfg);
 
-        Assert.Equal(ConfigDefaults.DefaultDcIp, cfg.DcIp);
+        Assert.Equal(ConfigDefaults.DefaultDcIp, cfg.MtProto.DcIp);
     }
 
     [Fact]
@@ -66,8 +65,6 @@ public class UnitTest
         var options = BootstrapOptions.Parse([]);
 
         Assert.Null(options.ConfigPath);
-        Assert.False(options.ShowHelp);
-        Assert.False(options.ShowVersion);
     }
 
     [Theory]
@@ -97,46 +94,17 @@ public class UnitTest
     [Theory]
     [InlineData("-h")]
     [InlineData("--help")]
-    public void BootstrapOptions_Help_Flags_Are_Recognized(string flag)
+    [InlineData("--version")]
+    public void BootstrapOptions_Rejects_Info_Flags(string flag)
     {
-        Assert.True(BootstrapOptions.Parse([flag]).ShowHelp);
-    }
-
-    [Fact]
-    public void BootstrapOptions_Version_Flag_Is_Recognized()
-        => Assert.True(BootstrapOptions.Parse(["--version"]).ShowVersion);
-
-    [Fact]
-    public void BootstrapOptions_Help_Text_Documents_Remaining_Options()
-    {
-        // Справка обязана перечислять всё, что парсер ещё понимает.
-        Assert.Contains("--config", BootstrapOptions.HelpText);
-        Assert.Contains("--help", BootstrapOptions.HelpText);
-        Assert.Contains("--version", BootstrapOptions.HelpText);
-    }
-
-    [Fact]
-    public void BootstrapOptions_Help_Text_Does_Not_Advertise_Removed_Flags()
-    {
-        // Конфигурация переехала в config.json (F-1.10): прежние флаги не рекламируются.
-        string[] removed =
-        [
-            "--port", "--host", "--secret", "--dc-ip", "--cfproxy-domain",
-            "--no-cfproxy", "--no-h2", "--no-secure", "--proxy-protocol",
-            "--metrics-port", "--metrics-host", "--verbose"
-        ];
-
-        foreach (var flag in removed)
-        {
-            Assert.DoesNotContain(flag, BootstrapOptions.HelpText);
-        }
+        // Справка и версия удалены: проект — веб-сервис, единственная опция — --config.
+        Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse([flag]));
     }
 
     [Theory]
-    [InlineData("--port", "port")]
+    [InlineData("--port", "mtproto.port")]
     [InlineData("--secret", "tokens")]
-    [InlineData("--dc-ip", "dcIp")]
-    [InlineData("--metrics-port", "metricsPort")]
+    [InlineData("--dc-ip", "mtproto.dcIp")]
     [InlineData("--verbose", "verbose")]
     public void BootstrapOptions_Legacy_Flag_Error_Points_To_Json_Key(string flag, string jsonKey)
     {
@@ -188,39 +156,23 @@ public class UnitTest
     {
         Assert.True(new Config().H2Enabled);
         Assert.False(new Config { DisableSecure = true }.H2Enabled);
-        Assert.False(new Config { CfProxyEnabled = false }.H2Enabled);
+        Assert.False(new Config { CfProxy = new CfProxyConfig { Enabled = false } }.H2Enabled);
         Assert.False(new Config { ForceTestDc = true }.H2Enabled);
-        Assert.False(new Config { CfProxyH2Media = false }.H2Enabled);
+        Assert.False(new Config { CfProxy = new CfProxyConfig { H2Media = false } }.H2Enabled);
     }
 
     [Fact]
     public void ConfigValidator_Rejects_BadPort()
     {
-        var cfg = TestConfig.Create(c => c.Port = 70000);
+        var cfg = TestConfig.Create(c => c.MtProto.Port = 70000);
         Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(cfg));
-    }
-
-    [Fact]
-    public void ConfigValidator_Rejects_Disabled_Web_Port()
-    {
-        // F-1.4: веб-сервер — единственный интерфейс управления, отключить его нулём нельзя.
-        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.MetricsPort = 0)));
-        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.MetricsPort = 70000)));
-        ConfigValidator.Validate(TestConfig.Create(c => c.MetricsPort = 1));
-        ConfigValidator.Validate(TestConfig.Create(c => c.MetricsPort = 65535));
-    }
-
-    [Fact]
-    public void ConfigValidator_Rejects_Empty_MetricsHost()
-    {
-        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.MetricsHost = "  ")));
     }
 
     [Fact]
     public void ConfigValidator_Rejects_WsTimeout_OutOfRange()
     {
-        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.WsConnectTimeoutSeconds = 0)));
-        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.WsConnectTimeoutSeconds = 400)));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.MtProto.WsConnectTimeoutSeconds = 0)));
+        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c => c.MtProto.WsConnectTimeoutSeconds = 400)));
     }
 
     [Fact]
@@ -235,11 +187,11 @@ public class UnitTest
 
     [Fact]
     public void Config_Default_WsTimeout_Is_Ten_Seconds()
-        => Assert.Equal(10, new Config().WsConnectTimeoutSeconds);
+        => Assert.Equal(10, new Config().MtProto.WsConnectTimeoutSeconds);
 
     [Fact]
     public void Config_Default_WsMaxFrame_Is_Sixteen_MiB()
-        => Assert.Equal(16 * 1024 * 1024, new Config().WsMaxFrameBytes);
+        => Assert.Equal(16 * 1024 * 1024, new Config().MtProto.WsMaxFrameBytes);
 
     [Fact]
     public void Config_Default_Has_No_Tokens()

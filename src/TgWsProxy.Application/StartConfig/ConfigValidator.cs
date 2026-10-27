@@ -14,47 +14,42 @@ public static class ConfigValidator
 {
     public static void Validate(Config config)
     {
-        if (config.Port is < 1 or > 65535)
+        if (config.MtProto.Port is < 1 or > 65535)
         {
-            throw new ArgumentException("port must be in range 1..65535");
+            throw new ArgumentException("mtproto.port must be in range 1..65535");
         }
 
-        if (string.IsNullOrWhiteSpace(config.Host))
+        ValidatePublicHost(config.MtProto.PublicHost);
+
+        if (config.MtProto.WsConnectTimeoutSeconds is < 1 or > 300)
         {
-            throw new ArgumentException("host cannot be empty");
+            throw new ArgumentException("mtproto.wsConnectTimeoutSeconds must be in range 1..300");
         }
 
-        ValidatePublicHost(config.PublicHost);
-
-        if (config.WsConnectTimeoutSeconds is < 1 or > 300)
+        if (config.MtProto.SocketBufferKb is < 4 or > 8192)
         {
-            throw new ArgumentException("wsConnectTimeoutSeconds must be in range 1..300");
+            throw new ArgumentException("mtproto.socketBufferKb must be in range 4..8192");
         }
 
-        if (config.SocketBufferKb is < 4 or > 8192)
+        if (config.MtProto.WsPoolSize is < 0 or > 64)
         {
-            throw new ArgumentException("socketBufferKb must be in range 4..8192");
+            throw new ArgumentException("mtproto.wsPoolSize must be in range 0..64");
         }
 
-        if (config.WsPoolSize is < 0 or > 64)
+        if (config.Logs.MaxMegabytes is < 0 or > 4096)
         {
-            throw new ArgumentException("wsPoolSize must be in range 0..64");
-        }
-
-        if (config.LogMaxMegabytes is < 0 or > 4096)
-        {
-            throw new ArgumentException("logMaxMegabytes must be in range 0..4096");
+            throw new ArgumentException("logs.maxMegabytes must be in range 0..4096");
         }
 
         // Ротация по размеру требует минимум один бэкап, иначе размер файла не ограничен.
-        if (config.LogRetainedFileCount is < 1 or > 1000)
+        if (config.Logs.RetainedFileCount is < 1 or > 1000)
         {
-            throw new ArgumentException("logRetainedFileCount must be in range 1..1000");
+            throw new ArgumentException("logs.retainedFileCount must be in range 1..1000");
         }
 
-        if (config.WsMaxFrameBytes is < 1024 or > 64 * 1024 * 1024)
+        if (config.MtProto.WsMaxFrameBytes is < 1024 or > 64 * 1024 * 1024)
         {
-            throw new ArgumentException("wsMaxFrameBytes must be in range 1024..67108864");
+            throw new ArgumentException("mtproto.wsMaxFrameBytes must be in range 1024..67108864");
         }
 
         if (config.MaxConnections is < 0 or > 1_000_000)
@@ -72,27 +67,16 @@ public static class ConfigValidator
             throw new ArgumentException("rateLimitWindowSeconds must be in range 1..86400");
         }
 
-        // F-1.4: веб-сервер запускается всегда, поэтому «выключить его нулём» больше нельзя.
-        if (config.MetricsPort is < 1 or > 65535)
+        // F-1.4: веб-сервер (метрики, панель, API) запускается вместе с приложением, всегда на 0.0.0.0:80.
+
+        if (config.Stats.TtlSeconds is < 0 or > 604_800)
         {
-            throw new ArgumentException(
-                "metricsPort must be in range 1..65535: the web server always runs in this edition, " +
-                "so it cannot be disabled");
+            throw new ArgumentException("stats.ttlSeconds must be in range 0..604800");
         }
 
-        if (string.IsNullOrWhiteSpace(config.MetricsHost))
+        if (config.Stats.MaxPeers is < 1 or > 10_000_000)
         {
-            throw new ArgumentException("metricsHost cannot be empty");
-        }
-
-        if (config.PerIpStatsTtlSeconds is < 0 or > 604_800)
-        {
-            throw new ArgumentException("perIpStatsTtlSeconds must be in range 0..604800");
-        }
-
-        if (config.PerIpStatsMaxPeers is < 1 or > 10_000_000)
-        {
-            throw new ArgumentException("perIpStatsMaxPeers must be in range 1..10000000");
+            throw new ArgumentException("stats.maxPeers must be in range 1..10000000");
         }
 
         if (config.PrometheusTopPeers is < 0 or > 10_000)
@@ -118,6 +102,8 @@ public static class ConfigValidator
         ValidateTokens(config.Tokens);
 
         ValidateWebProxy(config);
+
+        ValidateOpenTelemetry(config);
 
         foreach (var entry in config.AllowIp)
         {
@@ -233,7 +219,7 @@ public static class ConfigValidator
         }
     }
 
-    /// <summary>Максимальная длина <c>webProxyBasePath</c> (совпадает с MaxBasePathLength в verifier).</summary>
+    /// <summary>Максимальная длина <c>webProxy.basePath</c> (совпадает с MaxBasePathLength в verifier).</summary>
     public const int MaxWebProxyBasePathLength = 128;
 
     /// <summary>
@@ -243,54 +229,44 @@ public static class ConfigValidator
     /// </summary>
     private static void ValidateWebProxy(Config config)
     {
-        if (config.WebProxyPort is < 1 or > 65535)
+        if (config.WebProxy.Port is < 1 or > 65535)
         {
-            throw new ArgumentException("webProxyPort must be in range 1..65535");
+            throw new ArgumentException("webProxy.port must be in range 1..65535");
         }
 
-        if (config.WebProxyEnabled)
+        if (config.WebProxy.Enabled)
         {
-            if (string.IsNullOrWhiteSpace(config.WebProxyHost))
+            if (config.WebProxy.Port == config.MtProto.Port)
             {
-                throw new ArgumentException("webProxyHost cannot be empty when webProxyEnabled");
+                throw new ArgumentException("webProxy.port must not equal mtproto.port (MTProxy listener)");
             }
 
-            if (config.WebProxyPort == config.Port)
+            if (string.IsNullOrWhiteSpace(config.WebProxy.CertPath))
             {
-                throw new ArgumentException("webProxyPort must not equal port (MTProxy listener)");
-            }
-
-            if (config.WebProxyPort == config.MetricsPort)
-            {
-                throw new ArgumentException("webProxyPort must not equal metricsPort (panel)");
-            }
-
-            if (string.IsNullOrWhiteSpace(config.WebProxyCertPath))
-            {
-                throw new ArgumentException("webProxyCertPath is required when webProxyEnabled");
+                throw new ArgumentException("webProxy.certPath is required when webProxy.enabled");
             }
         }
 
         // HMAC v2-контекст включает basePath: голый слаг без ведущего/хвостового '/', сегменты
         // [A-Za-z0-9][A-Za-z0-9_-]*, без точек, ≤128 символов (N-W.3, BASE_PATH.md).
-        var basePath = config.WebProxyBasePath?.Trim() ?? "";
+        var basePath = config.WebProxy.BasePath?.Trim() ?? "";
         if (basePath.Length > MaxWebProxyBasePathLength)
         {
-            throw new ArgumentException($"webProxyBasePath must be {MaxWebProxyBasePathLength} characters or fewer");
+            throw new ArgumentException($"webProxy.basePath must be {MaxWebProxyBasePathLength} characters or fewer");
         }
 
         if (basePath.Length > 0 && !IsValidWebProxyBasePath(basePath))
         {
             throw new ArgumentException(
-                "webProxyBasePath must be a bare slug: segments of [A-Za-z0-9][A-Za-z0-9_-]*, no leading/trailing slash, no dots");
+                "webProxy.basePath must be a bare slug: segments of [A-Za-z0-9][A-Za-z0-9_-]*, no leading/trailing slash, no dots");
         }
 
-        ValidateWebProxyPublicHost(config.WebProxyPublicHost);
-        ValidateWebProxyCarrierMode(config.WebProxyCarrierMode);
+        ValidateWebProxyPublicHost(config.WebProxy.PublicHost);
+        ValidateWebProxyCarrierMode(config.WebProxy.CarrierMode);
         ValidateWebProxyLimits(config);
     }
 
-    /// <summary>Допустимые значения <c>webProxyCarrierMode</c> (F-W.24).</summary>
+    /// <summary>Допустимые значения <c>webProxy.carrierMode</c> (F-W.24).</summary>
     public static readonly string[] WebProxyCarrierModes = ["https", "websocket"];
 
     /// <summary>
@@ -303,13 +279,13 @@ public static class ConfigValidator
         var text = value?.Trim() ?? "";
         if (text.Length == 0)
         {
-            throw new ArgumentException("webProxyCarrierMode cannot be empty");
+            throw new ArgumentException("webProxy.carrierMode cannot be empty");
         }
 
         if (!WebProxyCarrierModes.Contains(text, StringComparer.Ordinal))
         {
             throw new ArgumentException(
-                $"webProxyCarrierMode must be one of: {string.Join(", ", WebProxyCarrierModes)}");
+                $"webProxy.carrierMode must be one of: {string.Join(", ", WebProxyCarrierModes)}");
         }
     }
 
@@ -318,47 +294,47 @@ public static class ConfigValidator
 
     /// <summary>
     /// Лимиты ресурсов WEB proxy (F-W.25): сессии, потоки, исходящая очередь. Значения должны
-    /// быть положительными; <c>webProxyMaxSessionsPerIp = 0</c> — без ограничения. Глобальные
+    /// быть положительными; <c>webProxy.maxSessionsPerIp = 0</c> — без ограничения. Глобальные
     /// пределы не могут быть меньше соответствующих локальных, иначе локальные недостижимы.
     /// </summary>
     private static void ValidateWebProxyLimits(Config config)
     {
-        if (config.WebProxyMaxSessions < 1)
+        if (config.WebProxy.MaxSessions < 1)
         {
-            throw new ArgumentException("webProxyMaxSessions must be greater than 0");
+            throw new ArgumentException("webProxy.maxSessions must be greater than 0");
         }
 
-        if (config.WebProxyMaxSessionsPerIp < 0)
+        if (config.WebProxy.MaxSessionsPerIp < 0)
         {
-            throw new ArgumentException("webProxyMaxSessionsPerIp must be 0 (unlimited) or greater");
+            throw new ArgumentException("webProxy.maxSessionsPerIp must be 0 (unlimited) or greater");
         }
 
-        if (config.WebProxyMaxStreamsPerSession < 1)
+        if (config.WebProxy.MaxStreamsPerSession < 1)
         {
-            throw new ArgumentException("webProxyMaxStreamsPerSession must be greater than 0");
+            throw new ArgumentException("webProxy.maxStreamsPerSession must be greater than 0");
         }
 
-        if (config.WebProxyMaxStreams < 1)
+        if (config.WebProxy.MaxStreams < 1)
         {
-            throw new ArgumentException("webProxyMaxStreams must be greater than 0");
+            throw new ArgumentException("webProxy.maxStreams must be greater than 0");
         }
 
-        if (config.WebProxyMaxStreams < config.WebProxyMaxStreamsPerSession)
+        if (config.WebProxy.MaxStreams < config.WebProxy.MaxStreamsPerSession)
         {
             throw new ArgumentException(
-                "webProxyMaxStreams must be greater than or equal to webProxyMaxStreamsPerSession");
+                "webProxy.maxStreams must be greater than or equal to webProxy.maxStreamsPerSession");
         }
 
-        if (config.WebProxyMaxPendingBytesPerSession < 1
-            || config.WebProxyMaxPendingBytesPerSession > MaxWebProxyPendingBytes)
+        if (config.WebProxy.MaxPendingBytesPerSession < 1
+            || config.WebProxy.MaxPendingBytesPerSession > MaxWebProxyPendingBytes)
         {
             throw new ArgumentException(
-                $"webProxyMaxPendingBytesPerSession must be in range 1..{MaxWebProxyPendingBytes}");
+                $"webProxy.maxPendingBytesPerSession must be in range 1..{MaxWebProxyPendingBytes}");
         }
 
-        if (config.WebProxyMaxPendingItemsPerSession < 1)
+        if (config.WebProxy.MaxPendingItemsPerSession < 1)
         {
-            throw new ArgumentException("webProxyMaxPendingItemsPerSession must be greater than 0");
+            throw new ArgumentException("webProxy.maxPendingItemsPerSession must be greater than 0");
         }
     }
 
@@ -399,8 +375,9 @@ public static class ConfigValidator
     }
 
     /// <summary>
-    /// <c>webProxyPublicHost</c> — внешний домен для bridge-ссылки за reverse-proxy. Пусто
-    /// разрешено: тогда берётся <c>webProxyHost</c>. Это домен без порта (bridge всегда на 443).
+    /// <c>webProxy.publicHost</c> — внешний домен для bridge-ссылки за reverse-proxy. Пусто
+    /// разрешено: тогда bridge-ссылка не строится (адрес привязки всегда все интерфейсы).
+    /// Это домен без порта (bridge всегда на 443).
     /// </summary>
     private static void ValidateWebProxyPublicHost(string value)
     {
@@ -412,24 +389,25 @@ public static class ConfigValidator
 
         if (text.Length > 255)
         {
-            throw new ArgumentException("webProxyPublicHost must be 255 characters or fewer");
+            throw new ArgumentException("webProxy.publicHost must be 255 characters or fewer");
         }
 
         if (text.Any(char.IsWhiteSpace))
         {
-            throw new ArgumentException("webProxyPublicHost must not contain whitespace");
+            throw new ArgumentException("webProxy.publicHost must not contain whitespace");
         }
 
         if (PublicEndpoint.IsWildcard(text))
         {
             throw new ArgumentException(
-                "webProxyPublicHost must be the external domain clients connect to, not a wildcard (0.0.0.0, ::)");
+                "webProxy.publicHost must be the external domain clients connect to, not a wildcard (0.0.0.0, ::)");
         }
     }
 
     /// <summary>
-    /// <c>publicHost</c> — внешний адрес для ссылок <c>t.me/proxy</c>. Пусто разрешено:
-    /// тогда берётся <c>host</c>. Служебные адреса запрещены — по ним ссылка нерабочая.
+    /// <c>mtproto.publicHost</c> — внешний адрес для ссылок <c>t.me/proxy</c>. Пусто разрешено:
+    /// тогда ссылка не строится (слушатель всегда привязан ко всем интерфейсам, внешний адрес
+    /// неизвестен). Служебные адреса запрещены — по ним ссылка нерабочая.
     /// </summary>
     private static void ValidatePublicHost(string value)
     {
@@ -441,24 +419,50 @@ public static class ConfigValidator
 
         if (text.Length > 255)
         {
-            throw new ArgumentException("publicHost must be 255 characters or fewer");
+            throw new ArgumentException("mtproto.publicHost must be 255 characters or fewer");
         }
 
         if (text.Any(char.IsWhiteSpace))
         {
-            throw new ArgumentException("publicHost must not contain whitespace");
+            throw new ArgumentException("mtproto.publicHost must not contain whitespace");
         }
 
         if (PublicEndpoint.IsWildcard(text))
         {
             throw new ArgumentException(
-                "publicHost must be the external address clients connect to, not a wildcard (0.0.0.0, ::)");
+                "mtproto.publicHost must be the external address clients connect to, not a wildcard (0.0.0.0, ::)");
         }
 
         if (!PublicEndpoint.TryParse(text, 1443, out _))
         {
             throw new ArgumentException(
-                "publicHost must be a host, host:port or [IPv6]:port with a port in range 1..65535");
+                "mtproto.publicHost must be a host, host:port or [IPv6]:port with a port in range 1..65535");
+        }
+    }
+
+    /// <summary>Допустимые значения <c>otel.protocol</c> (пусто — автоопределение).</summary>
+    public static readonly string[] OtelProtocols = ["grpc", "http"];
+
+    /// <summary>
+    /// Проверяет настройки OpenTelemetry: протокол из фиксированного набора и формат endpoint.
+    /// Пустые значения допустимы — тогда SDK/Serilog используют default либо переменные OTEL_*.
+    /// </summary>
+    private static void ValidateOpenTelemetry(Config config)
+    {
+        var otel = config.Otel;
+        var protocol = otel.Protocol.Trim();
+        if (protocol.Length > 0 && !OtelProtocols.Contains(protocol, StringComparer.Ordinal))
+        {
+            throw new ArgumentException(
+                $"otel.protocol must be one of: {string.Join(", ", OtelProtocols)}, or empty for auto-detection");
+        }
+
+        var endpoint = otel.Endpoint.Trim();
+        if (endpoint.Length > 0
+            && (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)))
+        {
+            throw new ArgumentException("otel.endpoint must be an absolute URL (http:// or https://)");
         }
     }
 }

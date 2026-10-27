@@ -10,7 +10,7 @@ namespace TgWsProxy.Domain.Abstractions;
 /// </summary>
 public interface IPeerStatsRegistry
 {
-    /// <summary>Включён ли учёт (<c>enablePerIpStats</c>).</summary>
+    /// <summary>Включён ли учёт (<c>stats.enabled</c>).</summary>
     bool IsEnabled { get; }
 
     /// <summary>Сколько пар (адрес, токен) сейчас отслеживается.</summary>

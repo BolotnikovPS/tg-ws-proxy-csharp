@@ -9,13 +9,14 @@
 #   sudo chown -R 1654:1654 config
 #
 # Единственный источник настроек — config.json (F-6.9): флаги в command: не передаются,
-# правки делаются на странице панели или в самом файле. В контейнере host и metricsHost
-# должны быть "0.0.0.0", иначе прокси и панель недоступны извне (F-6.4) —
+# правки делаются на странице панели или в самом файле. Слушатели всегда привязаны ко всем
+# интерфейсам (0.0.0.0), поэтому прокси и панель доступны извне (F-6.4) —
 # готовый образец лежит в DockerCompose/config.docker.json.
 #
 # TG_PORT — порт публикации локального MTProto-сервера (по умолчанию 1443, как в upstream).
-# TG_METRICS_PORT — порт публикации Web API и панели (по умолчанию 8081).
-# Порты внутри контейнера задаёт config.json ("port", "metricsPort"); при их изменении
+# TG_WEB_PROXY_PORT — порт публикации WEB proxy наружу (по умолчанию 443; внутри — webProxy.port).
+# Панель (Web API и метрики) всегда слушает все интерфейсы на порту 80, отдельно не настраивается.
+# Порты внутри контейнера задаёт config.json ("port"); при их изменении
 # поправьте правую часть в ports:.
 # При проблемах только в Docker см. README и оверлеи:
 #   docker-compose.mtu.yml | docker-compose.dns.yml | docker-compose.host.yml (Linux)
@@ -23,13 +24,19 @@
 services:
   tg-ws-proxy:
     container_name: tg-ws-proxy
-    image: pboldev/tg-ws-proxy:3.1.0
+    image: pboldev/tg-ws-proxy:3.2.0-beta1
     restart: unless-stopped
     ports:
       - "${TG_PORT:-1443}:1443"
-      # Web API и информационная панель. Публикуйте только вместе с webApiToken,
-      # иначе любой, кто дотянется до порта, сможет читать метрики и менять конфиг.
-      - "${TG_METRICS_PORT:-8081}:8081"
+      # Web API и информационная панель. Слушает все интерфейсы на порту 80.
+      # Публикуйте только вместе с webApiToken, иначе любой, кто дотянется до порта,
+      # сможет читать метрики и менять конфиг.
+      - "80:80"
+      # WEB proxy (browser-relay bridge). Снаружи — стандартный HTTPS 443; внутри
+      # контейнера слушаем непривилегированный 8443, т.к. образ работает под нерутом
+      # (USER $APP_UID) и порты <1024 ему недоступны. Правое число обязано совпадать
+      # с webProxy.port в config.json.
+      - "${TG_WEB_PROXY_PORT:-443}:8443"
     environment:
       TGWS_CONFIG: /app/config/config.json
     volumes:
@@ -38,7 +45,14 @@ services:
       # Альтернатива — именованный том (раскомментируйте и уберите строку выше,
       # если не нужен доступ к файлу с хоста):
       # - tg-ws-proxy-config:/app/config
-    # HEALTHCHECK образа сам обращается к /healthz/ready на порту metricsPort (F-6.5),
+      # Сертификат WEB proxy (pfx), read-only. Путь в config.json: /app/certs/pboldev.pfx.
+      # ./certs — каталог certs в корне репозитория (относительно каталога DockerCompose/).
+      - ./certs:/app/certs:ro
+      # Логи в файл (logs.path). Раскомментируйте, задайте в config.json
+      # "logs": { "path": "/app/log/tgwsproxy.jsonl" } и подготовьте каталог на хосте:
+      #   mkdir -p log && sudo chown -R 1654:1654 log
+      # - ./log:/app/log
+    # HEALTHCHECK образа сам обращается к /healthz/ready на порту 80 (F-6.5),
     # поэтому дополнительных переменных не требуется.
 
 # volumes:

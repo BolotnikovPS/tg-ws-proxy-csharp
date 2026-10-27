@@ -30,7 +30,7 @@ public class ConfigValidatorWebProxyTests
     [InlineData("  websocket  ")]
     public void Validate_AcceptsSupportedCarrierModes(string mode)
     {
-        var config = TestConfig.Create(c => c.WebProxyCarrierMode = mode);
+        var config = TestConfig.Create(c => c.WebProxy.CarrierMode = mode);
         ConfigValidator.Validate(config);
     }
 
@@ -42,31 +42,31 @@ public class ConfigValidatorWebProxyTests
     [InlineData("QUIC")]
     public void Validate_RejectsUnsupportedCarrierModes(string mode)
     {
-        var config = TestConfig.Create(c => c.WebProxyCarrierMode = mode);
+        var config = TestConfig.Create(c => c.WebProxy.CarrierMode = mode);
         var error = Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(config));
-        Assert.Contains("webProxyCarrierMode", error.Message, StringComparison.Ordinal);
+        Assert.Contains("webProxy.carrierMode", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Validate_RejectsNonPositiveSessionLimit()
     {
-        var config = TestConfig.Create(c => c.WebProxyMaxSessions = 0);
+        var config = TestConfig.Create(c => c.WebProxy.MaxSessions = 0);
         var error = Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(config));
-        Assert.Contains("webProxyMaxSessions", error.Message, StringComparison.Ordinal);
+        Assert.Contains("webProxy.maxSessions", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Validate_RejectsNegativePerIpSessionLimit()
     {
-        var config = TestConfig.Create(c => c.WebProxyMaxSessionsPerIp = -1);
+        var config = TestConfig.Create(c => c.WebProxy.MaxSessionsPerIp = -1);
         var error = Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(config));
-        Assert.Contains("webProxyMaxSessionsPerIp", error.Message, StringComparison.Ordinal);
+        Assert.Contains("webProxy.maxSessionsPerIp", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Validate_AllowsZeroPerIpSessionLimit_AsUnlimited()
     {
-        var config = TestConfig.Create(c => c.WebProxyMaxSessionsPerIp = 0);
+        var config = TestConfig.Create(c => c.WebProxy.MaxSessionsPerIp = 0);
         ConfigValidator.Validate(config);
     }
 
@@ -75,21 +75,21 @@ public class ConfigValidatorWebProxyTests
     {
         var config = TestConfig.Create(c =>
         {
-            c.WebProxyMaxStreams = 10;
-            c.WebProxyMaxStreamsPerSession = 128;
+            c.WebProxy.MaxStreams = 10;
+            c.WebProxy.MaxStreamsPerSession = 128;
         });
 
         var error = Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(config));
-        Assert.Contains("webProxyMaxStreams", error.Message, StringComparison.Ordinal);
+        Assert.Contains("webProxy.maxStreams", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Validate_RejectsNonPositiveStreamLimits()
     {
-        var perSession = TestConfig.Create(c => c.WebProxyMaxStreamsPerSession = 0);
+        var perSession = TestConfig.Create(c => c.WebProxy.MaxStreamsPerSession = 0);
         Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(perSession));
 
-        var global = TestConfig.Create(c => c.WebProxyMaxStreams = 0);
+        var global = TestConfig.Create(c => c.WebProxy.MaxStreams = 0);
         Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(global));
     }
 
@@ -97,19 +97,19 @@ public class ConfigValidatorWebProxyTests
     public void Validate_RejectsPendingQueueAboveCap()
     {
         var config = TestConfig.Create(
-            c => c.WebProxyMaxPendingBytesPerSession = ConfigValidator.MaxWebProxyPendingBytes + 1);
+            c => c.WebProxy.MaxPendingBytesPerSession = ConfigValidator.MaxWebProxyPendingBytes + 1);
 
         var error = Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(config));
-        Assert.Contains("webProxyMaxPendingBytesPerSession", error.Message, StringComparison.Ordinal);
+        Assert.Contains("webProxy.maxPendingBytesPerSession", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Validate_RejectsNonPositivePendingQueueLimits()
     {
-        var bytes = TestConfig.Create(c => c.WebProxyMaxPendingBytesPerSession = 0);
+        var bytes = TestConfig.Create(c => c.WebProxy.MaxPendingBytesPerSession = 0);
         Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(bytes));
 
-        var items = TestConfig.Create(c => c.WebProxyMaxPendingItemsPerSession = 0);
+        var items = TestConfig.Create(c => c.WebProxy.MaxPendingItemsPerSession = 0);
         Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(items));
     }
 
@@ -118,13 +118,13 @@ public class ConfigValidatorWebProxyTests
     {
         var config = TestConfig.Create(c =>
         {
-            c.WebProxyCarrierMode = "websocket";
-            c.WebProxyMaxSessions = 128;
-            c.WebProxyMaxSessionsPerIp = 4;
-            c.WebProxyMaxStreamsPerSession = 128;
-            c.WebProxyMaxStreams = 4096;
-            c.WebProxyMaxPendingBytesPerSession = 32 * 1024 * 1024;
-            c.WebProxyMaxPendingItemsPerSession = 16384;
+            c.WebProxy.CarrierMode = "websocket";
+            c.WebProxy.MaxSessions = 128;
+            c.WebProxy.MaxSessionsPerIp = 4;
+            c.WebProxy.MaxStreamsPerSession = 128;
+            c.WebProxy.MaxStreams = 4096;
+            c.WebProxy.MaxPendingBytesPerSession = 32 * 1024 * 1024;
+            c.WebProxy.MaxPendingItemsPerSession = 16384;
         });
 
         ConfigValidator.Validate(config);

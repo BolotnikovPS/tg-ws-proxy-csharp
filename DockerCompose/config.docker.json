@@ -1,28 +1,34 @@
 {
   // Образец конфигурации для Docker Compose (копируется в ./config/config.json).
-  // Отличия от ../config.example.json: host и metricsHost слушают все интерфейсы —
-  // иначе проброшенные порты не доходят до приложения (F-6.4).
+  // Слушатели привязаны ко всем интерфейсам (0.0.0.0) — иначе проброшенные порты
+  // не доходят до приложения (F-6.4). Веб-панель всегда слушает 0.0.0.0:80.
   // Флаги в command: compose больше не передаёт (F-6.9), всё задаётся здесь
   // или на странице панели.
 
-  "port": 1443,
-  "host": "0.0.0.0",
+  "mtproto": {
+    // Порт принимаемых подключений (адрес — всегда все интерфейсы). Стартовый ключ.
+    "port": 1443,
 
-  // Внешний адрес для ссылок t.me/proxy (F-8.8). В контейнере host служебный
-  // (0.0.0.0), поэтому без этого ключа ссылка не строится. Укажите домен или
-  // публичный IP хоста и опубликованный порт (TG_PORT, по умолчанию 1443):
-  // "proxy.example.com:1443". Меняется и на странице панели — применяется сразу.
-  "publicHost": "",
-  "dcIp": ["2:149.154.167.220", "4:149.154.167.220"],
+    // Внешний адрес для ссылок t.me/proxy (F-8.8). Слушатель привязан ко всем
+    // интерфейсам, поэтому без этого ключа ссылка не строится. Укажите домен или
+    // публичный IP хоста и опубликованный порт (TG_PORT, по умолчанию 1443):
+    // "proxy.example.com:1443". Меняется и на странице панели — применяется сразу.
+    "publicHost": "",
+    "dcIp": ["2:149.154.167.220", "4:149.154.167.220"],
+
+    "wsConnectTimeoutSeconds": 10,
+    "wsMaxFrameBytes": 16777216,
+    "socketBufferKb": 256,
+    "wsPoolSize": 4,
+
+    // Разрешить самоподписанные сертификаты upstream.
+    "allowInvalidCertificates": false
+  },
 
   // Пустой массив — при старте создаётся токен "default" (F-8.3).
-  // Дальше токены удобнее добавлять на странице панели.
+  // Дальше токены удобнее добавлять на странице панели. Токены общие
+  // для MTProto и WEB proxy.
   "tokens": [],
-
-  "wsConnectTimeoutSeconds": 10,
-  "wsMaxFrameBytes": 16777216,
-  "socketBufferKb": 256,
-  "wsPoolSize": 4,
 
   "maxConnections": 0,
   "rateLimitPerIp": 0,
@@ -30,33 +36,78 @@
   "allowIp": [],
   "denyIp": [],
 
-  "metricsPort": 8081,
-  "metricsHost": "0.0.0.0",
-  // Порт панели опубликован наружу — задайте токен, иначе /api/* открыт всем.
+  // Панель опубликована наружу (0.0.0.0:80) — задайте токен, иначе /api/* открыт всем.
   "webApiToken": "",
   "enableSwagger": true,
 
-  "enablePerIpStats": true,
-  "perIpStatsTtlSeconds": 1800,
-  "perIpStatsMaxPeers": 100000,
+  // Статистика по источникам трафика — пары «IP + токен» (§ 2.9).
+  // Все ключи блока — «горячо»: правка применяется на лету, без перезапуска.
+  "stats": {
+    "enabled": true,
+    "ttlSeconds": 1800,
+    "maxPeers": 100000
+  },
   "prometheusTopPeers": 200,
 
   "timeseriesWindowSeconds": 900,
   "timeseriesStepSeconds": 5,
 
   "verbose": false,
-  "logPath": "",
-  "logMaxMegabytes": 5,
-  "logRetainedFileCount": 1,
+  // Пусто — логи только в stdout (docker compose logs -f). Чтобы писать в файл, задайте путь
+  // внутри контейнера, например "/app/log/tgwsproxy.jsonl", и смонтируйте каталог ./log:/app/log
+  // (см. docker-compose.yml). Ключи logs.* — «только старт»: правка применяется после рестарта.
+  "logs": {
+    "path": "",
+    "maxMegabytes": 5,
+    "retainedFileCount": 1
+  },
 
-  "cfProxyEnabled": true,
-  "cfProxyH2Media": true,
-  "cfProxyDomains": [],
-  "cfProxyWorkerDomains": [],
+  "cfProxy": {
+    "enabled": true,
+    "h2Media": true,
+    "domains": [],
+    "workerDomains": []
+  },
 
   "disableSecure": false,
   "fakeTlsDomain": "",
   "proxyProtocol": false,
   "forceTestDc": false,
-  "allowInvalidCertificates": false
+
+  // WEB proxy (browser-relay bridge) — необязательный мост для браузерных клиентов
+  // Telegram Desktop: отдельный HTTPS-листенер на всех интерфейсах:webProxy.port.
+  // Образ работает под нерутом (USER $APP_UID), поэтому порты <1024 внутри контейнера
+  // недоступны: слушайте непривилегированный порт (например 8443), а наружу публикуйте
+  // 443 через ports: (см. docker-compose.yml). В t.me-ссылке порт не участвует (всегда 443).
+  "webProxy": {
+    "enabled": false,
+    "port": 8443,
+    "basePath": "v1",
+    "publicHost": "example.com",
+    // Путь внутри контейнера: сертификат монтируется как /app/certs (см. volumes в compose).
+    // example.com — плейсхолдер: замените на ваш домен и имя вашего сертификата.
+    "certPath": "/app/certs/example.com.pfx",
+    "certPassword": "",
+    "carrierMode": "https",
+    "maxSessions": 128,
+    "maxSessionsPerIp": 0,
+    "maxStreamsPerSession": 128,
+    "maxStreams": 4096,
+    "maxPendingBytesPerSession": 33554432,
+    "maxPendingItemsPerSession": 16384
+  },
+
+  // OpenTelemetry: OTLP-экспорт телеметрии. Трассы и метрики — OpenTelemetry SDK,
+  // логи — Serilog.Sinks.OpenTelemetry (в тот же backend). Все ключи — «только старт».
+  // В Compose endpoint обычно оставляют пустым и задают через env (OTEL_EXPORTER_OTLP_ENDPOINT)
+  // либо указывают URL коллектора: http://otel-collector:4318 (http) / :4317 (grpc).
+  "otel": {
+    "enabled": false,
+    "serviceName": "tg-ws-proxy",
+    "endpoint": "",
+    "protocol": "",
+    "exportTraces": true,
+    "exportLogs": true,
+    "exportMetrics": false
+  }
 }

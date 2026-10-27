@@ -31,6 +31,14 @@ public static class ConfigFileLoader
     public const string LegacySecretKey = "secret";
 
     /// <summary>
+    /// Плоские ключи логов прежних версий, перенесённые во вложенный блок <c>logs</c>.
+    /// Принимаются при чтении и переносятся в <c>logs</c>; при записи больше не создаются.
+    /// </summary>
+    private const string LegacyLogPathKey = "logPath";
+    private const string LegacyLogMaxMegabytesKey = "logMaxMegabytes";
+    private const string LegacyLogRetainedFileCountKey = "logRetainedFileCount";
+
+    /// <summary>
     /// Разрешает путь к файлу конфигурации.
     /// Явно указанный путь (CLI или <c>TGWS_CONFIG</c>) используется как есть, без проверки
     /// существования: вызывающая сторона решает, ошибка это или нет.
@@ -138,10 +146,18 @@ public static class ConfigFileLoader
                 // F-8.3: прежний единственный ключ secret переносится в список токенов.
                 // Миграция выполняется при чтении, а не отдельным шагом: иначе пришлось бы
                 // держать в модели два источника правды и решать, какой из них главнее.
+                // Токены теперь на верхнем уровне конфигурации (общие для MTProto и webProxy).
                 if (dto.Tokens is null or { Count: 0 }
                     && TryReadLegacySecret(document.RootElement, out var legacySecret))
                 {
                     dto.Tokens = [TokenBootstrap.CreateDefaultToken(legacySecret)];
+                }
+
+                // Плоские лог-ключи прежних версий переносятся во вложенный блок logs.
+                // Новый блок logs имеет приоритет: если он уже задан, плоские ключи игнорируются.
+                if (dto.Logs is null)
+                {
+                    dto.Logs = TryReadLegacyLogs(document.RootElement);
                 }
 
                 return dto;
@@ -253,6 +269,38 @@ public static class ConfigFileLoader
     }
 
     /// <summary>
+    /// Читает плоские лог-ключи прежних версий из корня файла и собирает из них блок <c>logs</c>.
+    /// Возвращает <see langword="null"/>, если ни один из ключей не присутствует.
+    /// </summary>
+    private static LogsConfigDto? TryReadLegacyLogs(JsonElement root)
+    {
+        LogsConfigDto? result = null;
+        foreach (var property in root.EnumerateObject())
+        {
+            if (string.Equals(property.Name, LegacyLogPathKey, StringComparison.OrdinalIgnoreCase)
+                && property.Value.ValueKind == JsonValueKind.String)
+            {
+                result ??= new LogsConfigDto();
+                result.Path = property.Value.GetString();
+            }
+            else if (string.Equals(property.Name, LegacyLogMaxMegabytesKey, StringComparison.OrdinalIgnoreCase)
+                && property.Value.TryGetDouble(out var maxMegabytes))
+            {
+                result ??= new LogsConfigDto();
+                result.MaxMegabytes = maxMegabytes;
+            }
+            else if (string.Equals(property.Name, LegacyLogRetainedFileCountKey, StringComparison.OrdinalIgnoreCase)
+                && property.Value.TryGetInt32(out var retainedFileCount))
+            {
+                result ??= new LogsConfigDto();
+                result.RetainedFileCount = retainedFileCount;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Проверяет, что каждый ключ верхнего уровня известен DTO.
     /// Проверка выполняется по именам свойств DTO, поэтому список ключей не дублируется вручную
     /// и не рассинхронизируется при добавлении новых параметров.
@@ -271,6 +319,12 @@ public static class ConfigFileLoader
         // F-8.3: secret убран из модели, но файл с ним обязан читаться — иначе обновление
         // версии падало бы на «Unknown config key» вместо тихой миграции.
         known.Add(LegacySecretKey);
+
+        // Плоские лог-ключи прежних версий (logPath/logMaxMegabytes/logRetainedFileCount)
+        // тоже принимаются при чтении и переносятся в блок logs.
+        known.Add(LegacyLogPathKey);
+        known.Add(LegacyLogMaxMegabytesKey);
+        known.Add(LegacyLogRetainedFileCountKey);
 
         List<string>? unknown = null;
         foreach (var property in root.EnumerateObject())

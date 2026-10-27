@@ -21,7 +21,8 @@ internal sealed class ProxyServer(
     IPeerStatsRegistry peerStats,
     IActiveSessionRegistry activeSessions,
     IProxyStats stats,
-    ILogger<ProxyServer> logger) : IProxyServer
+    ILogger<ProxyServer> logger
+    ) : IProxyServer
 {
     /// <summary>Период проверки живости слушающего сокета (порт upstream <c>LISTENER_CHECK_INTERVAL</c>).</summary>
     private const double ListenerCheckIntervalSeconds = 5.0;
@@ -61,7 +62,7 @@ internal sealed class ProxyServer(
     {
         await LogLinks();
 
-        var endpoint = new IPEndPoint(IPAddress.Parse(cfg.Host), cfg.Port);
+        var endpoint = new IPEndPoint(IPAddress.Any, cfg.MtProto.Port);
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -504,7 +505,7 @@ internal sealed class ProxyServer(
     /// </summary>
     internal Task LogLinks()
     {
-        var linkHost = GetLinkHost(cfg.Host);
+        var linkHost = GetLinkHost();
         var ftls = cfg.FakeTlsDomain;
         var domainHex = "";
         if (!string.IsNullOrWhiteSpace(ftls))
@@ -514,7 +515,7 @@ internal sealed class ProxyServer(
 
         logger.LogInformation("{Sep}", new string('=', 60));
         logger.LogInformation("  Telegram MTProto WS Bridge Proxy");
-        logger.LogInformation("  Listening on   {Host}:{Port}", cfg.Host, cfg.Port);
+        logger.LogInformation("  Listening on port {Port}", cfg.MtProto.Port);
 
         var enabled = cfg.Tokens.Where(static t => t.Enabled).ToList();
         logger.LogInformation("  Tokens:        {Enabled} enabled of {Total}", enabled.Count, cfg.Tokens.Count);
@@ -522,23 +523,23 @@ internal sealed class ProxyServer(
         // WEB proxy: ссылка-приглашение строится только для доменного имени —
         // клиент Telegram отвергает IP, хост без точки и wildcard. Если внешний
         // адрес не подходит, ссылки не будет: сообщаем явно, чтобы не молчать.
-        if (cfg.WebProxyEnabled && WebProxyLinkBuilder.ResolveHost(cfg) is null)
+        if (cfg.WebProxy.Enabled && WebProxyLinkBuilder.ResolveHost(cfg) is null)
         {
-            var configured = string.IsNullOrWhiteSpace(cfg.WebProxyPublicHost) ? cfg.WebProxyHost : cfg.WebProxyPublicHost;
+            var configured = cfg.WebProxy.PublicHost;
             logger.LogWarning(
-                "  WEB proxy: ссылка для Telegram не строится — нужен домен в webProxyPublicHost (сейчас '{Host}'); " +
+                "  WEB proxy: ссылка для Telegram не строится — нужен домен в webProxy.publicHost (сейчас '{Host}'); " +
                 "bridge-страница при этом доступна по этому же адресу",
                 configured);
         }
 
         foreach (var token in enabled)
         {
-            var ddLink = $"tg://proxy?server={linkHost}&port={cfg.Port}&secret=dd{token.Secret}";
+            var ddLink = $"tg://proxy?server={linkHost}&port={cfg.MtProto.Port}&secret=dd{token.Secret}";
             logger.LogInformation("  [{Name}] secret={Masked}", token.Name, SecretMask.Mask(token.Secret));
             logger.LogInformation("  [{Name}] dd: {Link}", token.Name, ddLink);
             if (domainHex.Length > 0)
             {
-                var eeLink = $"tg://proxy?server={linkHost}&port={cfg.Port}&secret=ee{token.Secret}{domainHex}";
+                var eeLink = $"tg://proxy?server={linkHost}&port={cfg.MtProto.Port}&secret=ee{token.Secret}{domainHex}";
                 logger.LogInformation("  [{Name}] ee: {Link}", token.Name, eeLink);
             }
 
@@ -547,7 +548,7 @@ internal sealed class ProxyServer(
             // deep-link tg://webproxy печатается рядом, чтобы клиент можно было открыть
             // напрямую, пока маршрут t.me/webproxy не зарегистрирован. Bridge-URL
             // (с capability) в лог не попадает: capability не логируется (N-W.4/§3.4).
-            if (cfg.WebProxyEnabled)
+            if (cfg.WebProxy.Enabled)
             {
                 var webLink = WebProxyLinkBuilder.BuildShareLink(cfg, token);
                 if (webLink is not null)
@@ -572,15 +573,15 @@ internal sealed class ProxyServer(
             logger.LogInformation("    DC{Dc}: {Ip}", dc, dcOpt[dc]);
         }
 
-        if (cfg.CfProxyEnabled)
+        if (cfg.CfProxy.Enabled)
         {
-            var userDomains = cfg.CfProxyDomains.Count > 0 ? string.Join(", ", cfg.CfProxyDomains) : "auto";
+            var userDomains = cfg.CfProxy.Domains.Count > 0 ? string.Join(", ", cfg.CfProxy.Domains) : "auto";
             logger.LogInformation("  CF proxy:      enabled ({Domains})", userDomains);
         }
 
-        if (cfg.CfProxyWorkerDomains.Count > 0)
+        if (cfg.CfProxy.WorkerDomains.Count > 0)
         {
-            logger.LogInformation("  CF worker:     enabled ({Domains})", string.Join(", ", cfg.CfProxyWorkerDomains));
+            logger.LogInformation("  CF worker:     enabled ({Domains})", string.Join(", ", cfg.CfProxy.WorkerDomains));
         }
 
         if (cfg.H2Enabled)
@@ -615,16 +616,11 @@ internal sealed class ProxyServer(
     }
 
     /// <summary>
-    /// Подбирает адрес для ссылки подключения: при прослушивании 0.0.0.0 определяется
-    /// исходящий локальный IP (порт upstream <c>get_link_host</c>).
+    /// Подбирает адрес для ссылки подключения: слушатель всегда привязан ко всем
+    /// интерфейсам, поэтому определяется исходящий локальный IP (порт upstream <c>get_link_host</c>).
     /// </summary>
-    private static string GetLinkHost(string host)
+    private static string GetLinkHost()
     {
-        if (host != "0.0.0.0")
-        {
-            return host;
-        }
-
         try
         {
             using var probe = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);

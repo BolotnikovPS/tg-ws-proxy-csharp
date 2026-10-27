@@ -164,8 +164,8 @@ internal sealed class TcpBridgeService(
     {
         var ipTable = request.IsTestDc ? Protocol.DcTestIps : Protocol.DcDefaultIps;
         var fallbackDst = ipTable.GetValueOrDefault(request.Dc);
-        var useCf = config.CfProxyEnabled && !request.IsTestDc;
-        var workerDomains = config.CfProxyWorkerDomains;
+        var useCf = config.CfProxy.Enabled && !request.IsTestDc;
+        var workerDomains = config.CfProxy.WorkerDomains;
 
         var methods = new List<string>(3);
         if (workerDomains.Count > 0 && fallbackDst is not null)
@@ -277,7 +277,7 @@ internal sealed class TcpBridgeService(
         string fallbackDst,
         CancellationToken cancellationToken)
     {
-        var workerDomains = config.CfProxyWorkerDomains;
+        var workerDomains = config.CfProxy.WorkerDomains;
         if (workerDomains.Count == 0)
         {
             return false;

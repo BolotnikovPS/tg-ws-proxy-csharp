@@ -19,17 +19,17 @@
 
 | Ключ | По умолчанию | Описание |
 |---|---|---|
-| `publicHost` | пусто | Внешний адрес для ссылок `t.me/proxy`: `host`, `host:port`, `[IPv6]:port`. Пусто — берутся `host` и `port`. Нужен, когда `host` служебный (`0.0.0.0` в контейнере) или прокси за NAT. |
-| `webProxyPublicHost` | пусто | Внешний домен для ссылок и bridge-страницы WEB proxy (если bridge за reverse-proxy). Пусто — используется `webProxyHost`. Только домен: IP-адреса и хосты без точки Telegram не принимает, и ссылка не строится. |
+| `publicHost` | пусто | Внешний адрес для ссылок `t.me/proxy`: `host`, `host:port`, `[IPv6]:port`. Слушатель всегда привязан ко всем интерфейсам (`0.0.0.0`), поэтому внешний адрес подставить невозможно. Пусто — ссылка не строится. |
+| `webProxy.publicHost` | пусто | Внешний домен для ссылок и bridge-страницы WEB proxy (если bridge за reverse-proxy). Слушатель всегда привязан ко всем интерфейсам, пусто — ссылка не строится. Только домен: IP-адреса и хосты без точки Telegram не принимает. |
 | `webApiToken` | пусто | Bearer-токен для `/api/*`. Пусто — аутентификации нет (допустимо только на loopback). |
 | `tokens` | `[]` → создаётся `default` | Токены доступа прокси, 1…64: `{id, name, secret (32 hex), enabled, createdAt, lastUsedAt}`. |
 | `maxConnections` | `0` | Максимум одновременных сессий; `0` — без лимита. |
 | `rateLimitPerIp` | `0` | Лимит новых подключений с одного IP за окно; `0` — выключено. |
 | `rateLimitWindowSeconds` | `60` | Длина окна rate limit. |
 | `allowIp` / `denyIp` | `[]` | Списки IP/CIDR; `deny` приоритетнее `allow`. |
-| `enablePerIpStats` | `true` | Учёт статистики по парам «IP + токен». |
-| `perIpStatsTtlSeconds` | `1800` | Время жизни простаивающей записи; `0` — не удалять. |
-| `perIpStatsMaxPeers` | `100000` | Максимум отслеживаемых источников; сверх лимита растёт `peerTrackingOverflow`. |
+| `stats.enabled` | `true` | Учёт статистики по парам «IP + токен». |
+| `stats.ttlSeconds` | `1800` | Время жизни простаивающей записи; `0` — не удалять. |
+| `stats.maxPeers` | `100000` | Максимум отслеживаемых источников; сверх лимита растёт `peerTrackingOverflow`. |
 | `prometheusTopPeers` | `200` | Сколько источников отдавать в `/metrics` отдельными сериями (`0` — ни одной). |
 | `timeseriesWindowSeconds` | `900` | Окно графика по умолчанию для `/api/metrics/timeseries`. |
 | `timeseriesStepSeconds` | `5` | Шаг записи в кольцевой буфер и выборки истории. |
@@ -45,8 +45,8 @@
 | `wsConnectTimeoutSeconds` | `10` | Таймаут WS-рукопожатия; этапы TCP/TLS — не больше 10 с. |
 | `wsMaxFrameBytes` | `16777216` | Максимальный payload WS-фрейма (защита от DoS). |
 | `socketBufferKb` | `256` | `SO_RCVBUF`/`SO_SNDBUF` клиентского и исходящего сокета. |
-| `cfProxyEnabled` / `cfProxyH2Media` | `true` / `true` | Cloudflare fallback и H2-мультиплексирование media. |
-| `cfProxyDomains` / `cfProxyWorkerDomains` | `[]` | Свои CF-proxy и CF Worker домены (пусто — встроенный список). |
+| `cfProxy.enabled` / `cfProxy.h2Media` | `true` / `true` | Cloudflare fallback и H2-мультиплексирование media. |
+| `cfProxy.domains` / `cfProxy.workerDomains` | `[]` | Свои CF-proxy и CF Worker домены (пусто — встроенный список). |
 | `disableSecure` | `false` | Использовать порт 80 вместо 443 для Cloudflare. |
 | `fakeTlsDomain` | пусто | Включает Fake TLS (`ee…`) маскировку под указанный домен. |
 | `proxyProtocol` | `false` | Принимать PROXY protocol v1. |
@@ -59,41 +59,51 @@
 
 | Ключ | По умолчанию | Описание |
 |---|---|---|
-| `port` | `1443` | Порт локального MTProto-сервера. |
-| `host` | `127.0.0.1` | Адрес прослушивания прокси. |
-| `metricsHost` | `127.0.0.1` | Адрес привязки Web API и панели. |
-| `metricsPort` | `8081` | Порт Web API и панели, диапазон `1…65535`. Выключить Web-часть нельзя. |
+| `port` | `1443` | Порт локального MTProto-сервера. Слушатель всегда привязан ко всем интерфейсам (`0.0.0.0`). |
 | `enableSwagger` | `true` | Swagger UI (`/swagger`) и `/swagger/v1/swagger.json`. |
 | `verbose` | `false` | Подробное логирование (`Debug`). Уровень фиксируется при сборке логгера. |
-| `logPath` | пусто | Файл лога с ротацией; пусто — только консоль. |
-| `logMaxMegabytes` / `logRetainedFileCount` | `5` / `1` | Лимит размера файла и число архивов. |
+| `logs.path` | пусто | Файл лога с ротацией; пусто — только консоль. |
+| `logs.maxMegabytes` / `logs.retainedFileCount` | `5` / `1` | Лимит размера файла и число архивов. |
 
-## WEB proxy (browser-relay bridge) — alfa
+### OpenTelemetry (OTLP)
 
-> **Статус: alfa.** Возможность работает и покрыта тестами, но контракт ещё сверяется с Telegram Desktop, поведение и формат ссылок могут меняться между версиями. В панели кнопка помечена как «Ссылка Web (alfa)».
-
-Опциональный bridge для WEB proxy из Telegram Desktop: браузер подключается к серверу по HTTPS и ретранслирует MTProto в Telegram DC. Включается `webProxyEnabled`; по умолчанию выключен и порт не занимает.
+Опциональный экспорт телеметрии по OTLP в любой совместимый backend (Jaeger, Grafana/Tempo, SigNoz, Aspire Dashboard и т.п.). Трассы и метрики — через OpenTelemetry SDK, логи — через `Serilog.Sinks.OpenTelemetry` в тот же endpoint. Настройки свёрнуты во вложенный блок `otel`; по умолчанию выключено (`"otel": { "enabled": false }`) и на работу не влияет. Все ключи — «только старт» (SDK и синки собираются один раз при старте процесса).
 
 | Ключ | По умолчанию | Категория | Описание |
 |---|---|---|---|
-| `webProxyEnabled` | `false` | только старт | Включить bridge-листенер. |
-| `webProxyHost` | `0.0.0.0` | только старт | Адрес привязки bridge. |
-| `webProxyPort` | `443` | только старт | Порт bridge (должен отличаться от `port` и `metricsPort`). |
-| `webProxyBasePath` | пусто | только старт | Путь сайта — голый слаг (`""` → корень, иначе `slug`). |
-| `webProxyPublicHost` | пусто | горячо | Внешний домен для ссылок и bridge-страницы (только домен, не IP). |
-| `webProxyCertPath` | пусто | только старт | PFX/сертификат для TLS (обязателен при `webProxyEnabled`). |
-| `webProxyCertPassword` | пусто | только старт | Пароль PFX (в GET API маскируется). |
-| `webProxyCarrierMode` | `https` | горячо | Носитель bridge-сессии: `https` (long-poll `POST /api/v1/{session,up,down}`) или `websocket` (одно соединение `GET /api/v1/ws` на сессию). Режимы `https-lanes`/`websocket-lanes` не поддержаны и отклоняются валидацией. |
-| `webProxyMaxSessions` | `128` | горячо | Предел одновременных bridge-сессий; сверх лимита создание отвечает `503` + `Retry-After`. |
-| `webProxyMaxSessionsPerIp` | `0` | горячо | Предел сессий с одного IP (`0` — без ограничения). |
-| `webProxyMaxStreamsPerSession` | `128` | горячо | Потоков relay в одной сессии; `OPEN` сверх лимита получает `CLOSE`. |
-| `webProxyMaxStreams` | `4096` | горячо | Глобальный предел relay-потоков на процесс. |
-| `webProxyMaxPendingBytesPerSession` | `33554432` | горячо | Объём исходящей очереди одной сессии (32 МиБ; допустимо 1 … 64 МиБ). Переполнение закрывает сессию — клиент переподключается. |
-| `webProxyMaxPendingItemsPerSession` | `16384` | горячо | Кадров в исходящей очереди одной сессии. |
+| `otel.enabled` | `false` | только старт | Включает экспорт телеметрии по OTLP. |
+| `otel.serviceName` | `tg-ws-proxy` | только старт | Значение `service.name` в ресурсе OTel. |
+| `otel.endpoint` | пусто | только старт | OTLP-endpoint (`http(s)://…`). Пусто — default SDK или переменная окружения `OTEL_EXPORTER_OTLP_ENDPOINT`. |
+| `otel.protocol` | пусто | только старт | Транспорт к коллектору: `grpc` (4317) или `http` (4318); пусто — автоопределение. |
+| `otel.exportTraces` | `true` | только старт | Экспортировать трассы (`AspNetCore` + `HttpClient` instrumentation). |
+| `otel.exportLogs` | `true` | только старт | Экспортировать логи через `Serilog.Sinks.OpenTelemetry` в тот же backend. |
+| `otel.exportMetrics` | `false` | только старт | Экспортировать метрики (`AspNetCore` + `Runtime`). Отдельно от встроенных Prometheus-метрик панели. |
 
-Bridge слушает `https://webProxyHost:webProxyPort` с путём `webProxyBasePath`: корень `GET /?bridge=<capability>` отдаёт динамическую bridge-страницу со встроенным JS-носителем и одноразовым bootstrap-токеном (авторизация по HMAC-SHA256 секрета токена), а `…/api/v1/{session,up,down}` — HTTPS long-poll carrier с заголовком `Authorization: Bearer <token>`.
+## WEB proxy (browser-relay bridge)
 
-Носитель выбирает сервер: режим из `webProxyCarrierMode` подставляется в bridge-страницу и повторяется в ответе `POST /api/v1/session` заголовком `X-Carrier-Mode`; клиент обязан использовать именно его. В режиме `websocket` тот же поток кадров идёт через `GET …/api/v1/ws` с подпротоколом `tproxy-v1.<token>` (одно соединение на сессию). Сессия привязана к своему носителю: запросы «чужого» carrier'а (например `POST /up` при `carrier=websocket`) получают `404`. Ключи `webProxyEnabled`/`Host`/`Port`/`BasePath`/`CertPath`/`CertPassword` применяются только перезапуском; `webProxyPublicHost`, `webProxyCarrierMode` и все лимиты — горячие (новый носитель действует на новые сессии, уже открытые доживают на прежнем).
+Опциональный bridge для WEB proxy из Telegram Desktop: браузер подключается к серверу по HTTPS и ретранслирует MTProto в Telegram DC. Настройки свёрнуты во вложенный блок `webProxy`; включается `"webProxy": { "enabled": true }`, по умолчанию выключен и порт не занимает.
+
+| Ключ | По умолчанию | Категория | Описание |
+|---|---|---|---|
+| `webProxy.enabled` | `false` | только старт | Включить bridge-листенер. |
+| `webProxy.port` | `443` | только старт | Порт bridge (должен отличаться от `port`). Слушатель всегда привязан ко всем интерфейсам. |
+| `webProxy.basePath` | пусто | только старт | Путь сайта — голый слаг (`""` → корень, иначе `slug`). |
+| `webProxy.publicHost` | пусто | горячо | Внешний домен для ссылок и bridge-страницы (только домен, не IP). |
+| `webProxy.certPath` | пусто | только старт | PFX/сертификат для TLS (обязателен при `webProxy.enabled`). |
+| `webProxy.certPassword` | пусто | только старт | Пароль PFX (в GET API маскируется). |
+| `webProxy.carrierMode` | `https` | горячо | Носитель bridge-сессии: `https` (long-poll `POST /api/v1/{session,up,down}`) или `websocket` (одно соединение `GET /api/v1/ws` на сессию). Режимы `https-lanes`/`websocket-lanes` не поддержаны и отклоняются валидацией. |
+| `webProxy.maxSessions` | `128` | горячо | Предел одновременных bridge-сессий; сверх лимита создание отвечает `503` + `Retry-After`. |
+| `webProxy.maxSessionsPerIp` | `0` | горячо | Предел сессий с одного IP (`0` — без ограничения). |
+| `webProxy.maxStreamsPerSession` | `128` | горячо | Потоков relay в одной сессии; `OPEN` сверх лимита получает `CLOSE`. |
+| `webProxy.maxStreams` | `4096` | горячо | Глобальный предел relay-потоков на процесс. |
+| `webProxy.maxPendingBytesPerSession` | `33554432` | горячо | Объём исходящей очереди одной сессии (32 МиБ; допустимо 1 … 64 МиБ). Переполнение закрывает сессию — клиент переподключается. |
+| `webProxy.maxPendingItemsPerSession` | `16384` | горячо | Кадров в исходящей очереди одной сессии. |
+
+Bridge слушает `https://0.0.0.0:webProxy.port` с путём `webProxy.basePath`: корень `GET /?bridge=<capability>` отдаёт динамическую bridge-страницу со встроенным JS-носителем и одноразовым bootstrap-токеном (авторизация по HMAC-SHA256 секрета токена), а `…/api/v1/{session,up,down}` — HTTPS long-poll carrier с заголовком `Authorization: Bearer <token>`.
+
+Носитель выбирает сервер: режим из `webProxy.carrierMode` подставляется в bridge-страницу и повторяется в ответе `POST /api/v1/session` заголовком `X-Carrier-Mode`; клиент обязан использовать именно его. В режиме `websocket` тот же поток кадров идёт через `GET …/api/v1/ws` с подпротоколом `tproxy-v1.<token>` (одно соединение на сессию). Сессия привязана к своему носителю: запросы «чужого» carrier'а (например `POST /up` при `carrier=websocket`) получают `404`. Ключи `webProxy.enabled`/`port`/`basePath`/`certPath`/`certPassword` применяются только перезапуском; `webProxy.publicHost`, `webProxy.carrierMode` и все лимиты — горячие (новый носитель действует на новые сессии, уже открытые доживают на прежнем).
+
+> **Docker.** Образ работает не от root, поэтому `webProxy.port: 443` внутри контейнера недоступен — задайте порт `≥1024` (например `8443`) и опубликуйте наружу как `443` через `ports:` compose. `webProxy.certPath` указывает путь внутри контейнера (сертификат монтируется томом). Слушатель всегда привязан ко всем интерфейсам (`0.0.0.0`). Подробнее — [Docker](docker.md).
 
 Проверить bridge без клиента можно смоук-скриптом [`tools/web-proxy-smoke.mjs`](../tools/web-proxy-smoke.mjs) (Node.js ≥ 18, без зависимостей) — он эмулирует bridge-клиента: `GET /?bridge=…` (bootstrap) → `POST /api/v1/session` (`HELLO→WELCOME`) → носитель (`POST /api/v1/up` + `/down` либо `GET /api/v1/ws`) → `DELETE /api/v1/session`. Транспортный режим детерминирован и не требует доступа к Telegram DC:
 

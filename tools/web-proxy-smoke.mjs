@@ -533,7 +533,7 @@ async function main() {
 
   const carrier = args.carrier === 'auto' ? carrierMode : args.carrier;
   if (carrier !== carrierMode) {
-    fail(`запрошен носитель "${carrier}", а сервер выдал "${carrierMode}" (webProxyCarrierMode)`);
+    fail(`запрошен носитель "${carrier}", а сервер выдал "${carrierMode}" (webProxy.carrierMode)`);
   }
 
   // Транспортный режим: намеренно невалидный init (мост честно прочитает и закроет поток).

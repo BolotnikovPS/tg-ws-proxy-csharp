@@ -1,37 +1,42 @@
 {
   // Файл — единственный источник конфигурации (F-2.1). Аргументы командной строки
   // больше не перекрывают ключи: остались только --config, --help, --version.
-  // Файл можно менять на странице панели (http://<host>:<metricsPort>/), изменения
+  // Файл можно менять на странице панели (http://<host>/, порт 80), изменения
   // применяются в работающем процессе: горячо или перезапуском слушателя (F-2.8, F-2.9).
 
-  // Адрес и порт, на которых принимаются подключения клиентов. Ключи «только старт»:
-  // меняются лишь при перезапуске процесса, PUT /api/config отклоняет их с 409 (F-2.12),
-  // в панели они показаны справочно, без полей ввода (F-5.23).
-  "port": 1443,
-  "host": "127.0.0.1",
+  // Ядро MTProto-прокси. Слушатель привязан ко всем интерфейсам (0.0.0.0),
+  // порт — ключ «только старт»: меняется лишь при перезапуске процесса, PUT /api/config
+  // отклоняет его с 409 (F-2.12), в панели он показан справочно, без полей ввода (F-5.23).
+  "mtproto": {
+    "port": 1443,
 
-  // Внешний адрес для ссылок t.me/proxy (F-8.8): то, по чему клиенты подключаются
-  // снаружи. Нужен, когда host — служебный адрес (0.0.0.0 в контейнере) или за NAT.
-  // Форматы: "proxy.example.com", "proxy.example.com:1443", "[2001:db8::1]:1443".
-  // Пусто — берётся host и port. Меняется на лету, без перезапуска.
-  "publicHost": "",
+    // Внешний адрес для ссылок t.me/proxy (F-8.8): то, по чему клиенты подключаются
+    // снаружи. Нужен всегда — слушатель привязан ко всем интерфейсам (0.0.0.0), внешний
+    // адрес подставить невозможно. Форматы: "proxy.example.com", "proxy.example.com:1443",
+    // "[2001:db8::1]:1443". Пусто — ссылка не строится. Меняется на лету, без перезапуска.
+    "publicHost": "",
 
-  // DC-редиректы upstream в формате "N:IP". Пустой массив отключает WS-пул.
-  "dcIp": ["2:149.154.167.220", "4:149.154.167.220"],
+    // DC-редиректы upstream в формате "N:IP". Пустой массив отключает WS-пул.
+    "dcIp": ["2:149.154.167.220", "4:149.154.167.220"],
 
-  // Токены доступа прокси (MTProto secret, 32 hex). Каждое устройство или группа
-  // получает свой секрет и свою tg://-ссылку; трафик считается по паре «IP + токен» (§ 2.8).
+    // Таймауты и буферы.
+    "wsConnectTimeoutSeconds": 10,
+    "wsMaxFrameBytes": 16777216,
+    "socketBufferKb": 256,
+    "wsPoolSize": 4,
+
+    // Разрешить самоподписанные сертификаты upstream.
+    "allowInvalidCertificates": false
+  },
+
+  // Токены доступа прокси (MTProto secret, 32 hex) — общие для MTProto и WEB proxy.
+  // Каждое устройство или группа получает свой секрет и свою tg://-ссылку;
+  // трафик считается по паре «IP + токен» (§ 2.8).
   // Пустой массив — при старте будет создан токен "default" (F-8.3); файл при этом
   // перезаписывается приложением, и комментарии из него исчезают — держите копию.
   // Список удобнее вести на странице панели: в ответах API секреты маскируются,
   // кроме создания токена и ротации (тогда ответ приходит с Cache-Control: no-store).
   "tokens": [],
-
-  // Таймауты и буферы.
-  "wsConnectTimeoutSeconds": 10,
-  "wsMaxFrameBytes": 16777216,
-  "socketBufferKb": 256,
-  "wsPoolSize": 4,
 
   // Ограничения доступа.
   "maxConnections": 0,
@@ -40,23 +45,24 @@
   "allowIp": [],
   "denyIp": [],
 
-  // Web API и информационная панель. Веб-сервер запускается всегда (F-1.4):
-  // допустимый диапазон metricsPort — 1…65535, значения «выключить» больше нет.
-  "metricsPort": 8081,
-  "metricsHost": "127.0.0.1",
+  // Web API и информационная панель. Веб-сервер запускается вместе с приложением
+  // без отдельной настройки адреса и порта: слушает все интерфейсы на порту 80 (F-1.4).
   // Bearer-токен для /api/*. Пусто — аутентификации нет.
-  // Обязателен, если metricsHost не loopback и порт доступен извне.
+  // Обязателен при работе панелью, доступной извне.
   // Это токен панели, он не связан с токенами доступа прокси выше (F-3.8).
   "webApiToken": "",
   // Swagger/OpenAPI: /swagger и /swagger/v1/swagger.json. Ключ только для старта.
   "enableSwagger": true,
 
   // Статистика по источникам трафика — пары «IP + токен» (§ 2.9).
-  "enablePerIpStats": true,
-  // Время жизни записи без активных соединений, секунды. 0 — не удалять.
-  "perIpStatsTtlSeconds": 1800,
-  // Верхняя граница числа отслеживаемых источников.
-  "perIpStatsMaxPeers": 100000,
+  // Все ключи блока — «горячо»: правка применяется на лету, без перезапуска.
+  "stats": {
+    "enabled": true,
+    // Время жизни записи без активных соединений, секунды. 0 — не удалять.
+    "ttlSeconds": 1800,
+    // Верхняя граница числа отслеживаемых источников.
+    "maxPeers": 100000
+  },
   // Сколько источников отдавать в /metrics отдельными сериями (0 — ни одной).
   "prometheusTopPeers": 200,
 
@@ -67,43 +73,63 @@
   // Журналирование. Ключи «только старт»: уровень логирования задаётся при сборке
   // логгера, синки создаются один раз — меняйте здесь и перезапускайте процесс (F-5.16).
   "verbose": false,
-  "logPath": "",
-  "logMaxMegabytes": 5,
-  "logRetainedFileCount": 1,
+  "logs": {
+    // Файл лога с ротацией; пусто — только консоль.
+    "path": "",
+    // Лимит размера файла, МБ; 0 — почасовая ротация.
+    "maxMegabytes": 5,
+    // Число архивов (1..1000).
+    "retainedFileCount": 1
+  },
 
-  // Cloudflare fallback.
-  "cfProxyEnabled": true,
-  "cfProxyH2Media": true,
-  "cfProxyDomains": [],
-  "cfProxyWorkerDomains": [],
+  // Cloudflare fallback. Все ключи блока — «слушатель»: правка применяется на лету,
+  // но требует перезапуска слушателя (активные сессии рвутся, F-2.11).
+  "cfProxy": {
+    "enabled": true,
+    "h2Media": true,
+    "domains": [],
+    "workerDomains": []
+  },
 
   // Транспорт и протокол.
   "disableSecure": false,
   "fakeTlsDomain": "",
   "proxyProtocol": false,
   "forceTestDc": false,
-  "allowInvalidCertificates": false,
 
   // WEB proxy (browser-relay bridge) — опциональный мост для браузерных клиентов
   // Telegram Desktop. По умолчанию выключен и порт не занимает.
-  // Bridge слушает HTTPS на webProxyHost:webProxyPort; GET /?bridge=<capability>
+  // Bridge слушает HTTPS на всех интерфейсах:webProxy.port; GET /?bridge=<capability>
   // отдаёт динамическую bridge-страницу (bootstrap-токен), а …/api/v1/* — носитель
   // сессии: https — long-poll POST /{session,up,down} (Authorization: Bearer <token>),
   // websocket — одно соединение GET /api/v1/ws (подпротокол tproxy-v1.<token>).
-  // webProxyEnabled/Host/Port/BasePath/CertPath/CertPassword — «только старт»,
-  // webProxyPublicHost, webProxyCarrierMode и все лимиты — «горячо».
-  "webProxyEnabled": false,
-  "webProxyHost": "0.0.0.0",
-  "webProxyPort": 443,
-  "webProxyBasePath": "",
-  "webProxyPublicHost": "",
-  "webProxyCertPath": "",
-  "webProxyCertPassword": "",
-  "webProxyCarrierMode": "https",
-  "webProxyMaxSessions": 128,
-  "webProxyMaxSessionsPerIp": 0,
-  "webProxyMaxStreamsPerSession": 128,
-  "webProxyMaxStreams": 4096,
-  "webProxyMaxPendingBytesPerSession": 33554432,
-  "webProxyMaxPendingItemsPerSession": 16384
+  // enabled/port/basePath/certPath/certPassword — «только старт»,
+  // publicHost, carrierMode и все лимиты — «горячо».
+  "webProxy": {
+    "enabled": false,
+    "port": 443,
+    "basePath": "",
+    "publicHost": "",
+    "certPath": "",
+    "certPassword": "",
+    "carrierMode": "https",
+    "maxSessions": 128,
+    "maxSessionsPerIp": 0,
+    "maxStreamsPerSession": 128,
+    "maxStreams": 4096,
+    "maxPendingBytesPerSession": 33554432,
+    "maxPendingItemsPerSession": 16384
+  },
+
+  // OpenTelemetry: OTLP-экспорт телеметрии. Трассы и метрики — OpenTelemetry SDK,
+  // логи — Serilog.Sinks.OpenTelemetry (в тот же backend). Все ключи — «только старт».
+  "otel": {
+    "enabled": false,
+    "serviceName": "tg-ws-proxy",
+    "endpoint": "",
+    "protocol": "",
+    "exportTraces": true,
+    "exportLogs": true,
+    "exportMetrics": false
+  }
 }

@@ -100,13 +100,10 @@ public sealed class WebApiEndpointsTests
         Assert.True(dto.GetProperty("listening").GetBoolean());
         Assert.False(string.IsNullOrWhiteSpace(dto.GetProperty("version").GetString()));
         Assert.True(dto.GetProperty("startedAt").GetDateTimeOffset() <= DateTimeOffset.UtcNow);
-        Assert.Equal(8081, dto.GetProperty("metricsPort").GetInt32());
-        Assert.Equal("127.0.0.1", dto.GetProperty("metricsHost").GetString());
         // Config по умолчанию: пул DC из пяти записей (DC1..DC5), маскировка выключена.
         Assert.Equal(5, dto.GetProperty("dcCount").GetInt32());
         Assert.False(dto.GetProperty("maskingConfigured").GetBoolean());
-        // F-7.8: текущая привязка слушателя, состояние и статистика перезапусков видны через /api/info.
-        Assert.Equal("127.0.0.1", dto.GetProperty("listenerHost").GetString());
+        // F-7.8: порт слушателя, состояние и статистика перезапусков видны через /api/info.
         Assert.Equal(1443, dto.GetProperty("listenerPort").GetInt32());
         Assert.Equal("listening", dto.GetProperty("listenerState").GetString());
         Assert.Equal(2, dto.GetProperty("listenerRestarts").GetInt32());
@@ -337,7 +334,9 @@ public sealed class WebApiEndpointsTests
     [Fact]
     public async Task ApiTokens_Link_Returns_TelegramLink_Without_Caching()
     {
-        await using var app = await StartAppAsync(listening: true, TestConfig.Create());
+        await using var app = await StartAppAsync(
+            listening: true,
+            TestConfig.Create(c => c.MtProto.PublicHost = "proxy.example.com"));
 
         var response = await app.Client.GetAsync("/api/tokens/default/link");
 
@@ -349,15 +348,15 @@ public sealed class WebApiEndpointsTests
         Assert.Equal("default", dto.GetProperty("name").GetString());
         Assert.Equal(TestConfig.TokenSecret, dto.GetProperty("secret").GetString());
         Assert.Equal(
-            $"https://t.me/proxy?server=127.0.0.1&port=1443&secret=dd{TestConfig.TokenSecret}",
+            $"https://t.me/proxy?server=proxy.example.com&port=1443&secret=dd{TestConfig.TokenSecret}",
             dto.GetProperty("link").GetString());
     }
 
-    // Служебный адрес снаружи недостижим — ссылку не строим, но секрет отдаём.
+    // Без внешнего адреса ссылку не строим, но секрет отдаём (F-8.8).
     [Fact]
-    public async Task ApiTokens_Link_Omits_Link_For_Wildcard_Host()
+    public async Task ApiTokens_Link_Omits_Link_When_PublicHost_Missing()
     {
-        var config = TestConfig.Create(c => c.Host = "0.0.0.0");
+        var config = TestConfig.Create();
 
         await using var app = await StartAppAsync(listening: true, config);
 
@@ -367,15 +366,11 @@ public sealed class WebApiEndpointsTests
         Assert.Equal(TestConfig.TokenSecret, dto.GetProperty("secret").GetString());
     }
 
-    // publicHost перекрывает служебный host: ссылка строится по внешнему адресу.
+    // Ссылка строится по внешнему адресу publicHost.
     [Fact]
-    public async Task ApiTokens_Link_Uses_PublicHost_Over_Wildcard_Host()
+    public async Task ApiTokens_Link_Uses_PublicHost()
     {
-        var config = TestConfig.Create(c =>
-        {
-            c.Host = "0.0.0.0";
-            c.PublicHost = "proxy.example.com";
-        });
+        var config = TestConfig.Create(c => c.MtProto.PublicHost = "proxy.example.com");
 
         await using var app = await StartAppAsync(listening: true, config);
 
@@ -390,7 +385,7 @@ public sealed class WebApiEndpointsTests
     [Fact]
     public async Task ApiTokens_Link_Honours_Port_From_PublicHost()
     {
-        var config = TestConfig.Create(c => c.PublicHost = "proxy.example.com:2443");
+        var config = TestConfig.Create(c => c.MtProto.PublicHost = "proxy.example.com:2443");
 
         await using var app = await StartAppAsync(listening: true, config);
 
@@ -602,7 +597,7 @@ public sealed class WebApiEndpointsTests
         builder.Services.AddProxyObservability(cfg);
 
         var app = builder.Build();
-        WebApiEndpoints.Map(app);
+        WebApiEndpoints.MapWebApiEndpoints(app);
         await app.StartAsync();
 
         var addresses = app.Services.GetRequiredService<IServer>()

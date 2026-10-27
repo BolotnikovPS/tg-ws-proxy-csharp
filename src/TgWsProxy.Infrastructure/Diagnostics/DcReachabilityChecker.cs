@@ -28,20 +28,20 @@ internal sealed class DcReachabilityChecker(Config cfg) : IDcReachabilityChecker
     /// <summary>Таймаут одной попытки соединения (TCP+TLS+WS-апгрейд).</summary>
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(3);
 
-    /// <summary>Сколько доменов встроенного пула пробовать, когда cfProxyDomains пуст.</summary>
+    /// <summary>Сколько доменов встроенного пула пробовать, когда cfProxy.domains пуст.</summary>
     private const int BuiltinCfProxySample = 3;
 
     public async Task<DcCheckReport> CheckAsync(CancellationToken ct = default)
     {
-        var cfProxyDomains = cfg.CfProxyDomains.Count > 0
-            ? cfg.CfProxyDomains
+        var cfProxyDomains = cfg.CfProxy.Domains.Count > 0
+            ? cfg.CfProxy.Domains
             : [.. CfDomains.DefaultDomains.Take(BuiltinCfProxySample)];
 
-        var workerDomains = cfg.CfProxyWorkerDomains;
+        var workerDomains = cfg.CfProxy.WorkerDomains;
 
         // «Прямой TCP» проверяет IP из настройки DC → IP, а если DC там нет — дефолтный IP Telegram.
-        var configuredDcIp = cfg.DcIp.Count > 0
-            ? ConfigDefaults.ParseDcIpList(cfg.DcIp)
+        var configuredDcIp = cfg.MtProto.DcIp.Count > 0
+            ? ConfigDefaults.ParseDcIpList(cfg.MtProto.DcIp)
             : [];
 
         var directWs = BuildRouteAsync("directWs", "Прямой WebSocket", ProbeDirectWsAsync, null, ct);
@@ -55,7 +55,7 @@ internal sealed class DcReachabilityChecker(Config cfg) : IDcReachabilityChecker
             "cfProxy",
             "Cloudflare-фронтинг",
             (dc, c) => ProbeAnyHostAsync(dc, [.. cfProxyDomains.Select(d => $"kws{dc}.{d}")], c),
-            cfg.CfProxyDomains.Count == 0 ? "использован встроенный пул (сэмпл из 3)" : null,
+            cfg.CfProxy.Domains.Count == 0 ? "использован встроенный пул (сэмпл из 3)" : null,
             ct);
         var cfWorker = BuildRouteAsync(
             "cfWorker",
@@ -155,7 +155,7 @@ internal sealed class DcReachabilityChecker(Config cfg) : IDcReachabilityChecker
             ssl = new SslStream(
                 tcp.GetStream(),
                 false,
-                (_, _, _, errors) => cfg.AllowInvalidCertificates || errors == SslPolicyErrors.None);
+                (_, _, _, errors) => cfg.MtProto.AllowInvalidCertificates || errors == SslPolicyErrors.None);
             await ssl.AuthenticateAsClientAsync(
                 new SslClientAuthenticationOptions
                 {

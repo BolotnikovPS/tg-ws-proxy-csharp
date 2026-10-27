@@ -41,6 +41,10 @@ internal sealed class ClientSessionHandler(
         stats.IncConnectionsActive();
         using var _ = client;
 
+        // Структурированная корреляция сессии: ConnectionId/Peer попадают во все события
+        // сессии, включая те, куда scope не передаётся явно.
+        using var sessionLog = SessionLogScope.Begin(logger, context);
+
         var stopwatch = Stopwatch.StartNew();
         CountingStream? countingStream = null;
         int? sessionDc = null;
@@ -53,7 +57,7 @@ internal sealed class ClientSessionHandler(
         try
         {
             client.NoDelay = true;
-            var sockBuf = Math.Max(4, cfg.SocketBufferKb) * 1024;
+            var sockBuf = Math.Max(4, cfg.MtProto.SocketBufferKb) * 1024;
             client.ReceiveBufferSize = sockBuf;
             client.SendBufferSize = sockBuf;
             await using var stream = new NetworkStream(client);
@@ -124,6 +128,9 @@ internal sealed class ClientSessionHandler(
 
             sessionDc = hs.Dc >= 10000 ? hs.Dc - 10000 : hs.Dc;
             sessionMedia = hs.IsMedia;
+
+            // Токен/DC/media известны только после handshake — дополняем scoped-свойства.
+            using var routeLog = SessionLogScope.BeginRoute(logger, token.Id, sessionDc, sessionMedia);
 
             // Фаза «после handshake» (relay init → криптоконтекст → WS-пул/fallback) общая для
             // TCP-режима и web-proxy — вынесена в MtProtoBridgeEngine поверх произвольного Stream.

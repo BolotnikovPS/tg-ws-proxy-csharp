@@ -34,9 +34,9 @@ public sealed class PeerStatsRegistry : IPeerStatsRegistry
     /// </param>
     public PeerStatsRegistry(Config config, IProxyTokenRegistry? tokens = null)
         : this(
-            config.EnablePerIpStats,
-            config.PerIpStatsTtlSeconds,
-            config.PerIpStatsMaxPeers,
+            config.Stats.Enabled,
+            config.Stats.TtlSeconds,
+            config.Stats.MaxPeers,
             static () => Environment.TickCount64 / 1000.0,
             static () => DateTimeOffset.UtcNow,
             tokens)

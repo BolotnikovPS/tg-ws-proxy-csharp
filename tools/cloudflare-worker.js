@@ -17,7 +17,7 @@
 // Развёртывание (Cloudflare → Workers & Pages → Create → Worker):
 //   1) вставить этот код, нажать Deploy;
 //   2) запомнить URL вида https://<name>.<subdomain>.workers.dev;
-//   3) в config.json добавить hostname (без схемы и пути) в cfProxyWorkerDomains.
+//   3) в config.json добавить hostname (без схемы и пути) в cfProxy.workerDomains.
 //
 // Требование: disableSecure должен быть false (воркер слушает только HTTPS/443).
 

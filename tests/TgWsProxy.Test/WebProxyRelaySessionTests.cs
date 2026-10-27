@@ -50,7 +50,7 @@ public class WebProxyRelaySessionTests
     public void ResolveToken_V2Context_MatchesBasePath()
     {
         // Голый слаг basePath даёт v2-контекст "…\nproxy.example.com\ndobry-cola-super-app".
-        var cfg = new Config { WebProxyBasePath = "dobry-cola-super-app" };
+        var cfg = new Config { WebProxy = new WebProxyConfig { BasePath = "dobry-cola-super-app" } };
         var session = CreateSession(cfg, Token("a", Secret));
 
         var resolved = session.ResolveToken("proxy.example.com", V2Capability);

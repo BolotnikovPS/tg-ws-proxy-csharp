@@ -246,7 +246,6 @@ function listenerNote(info) {
   if (!info) return 'нет данных';
   const restarts = info.listenerRestarts || 0;
   const parts = [];
-  if (info.listenerHost && info.listenerPort) parts.push(`${info.listenerHost}:${info.listenerPort}`);
   parts.push((LISTENER_STATES[info.listenerState] || { note: 'состояние неизвестно' }).note);
   parts.push(restarts > 0 ? `перезапусков ${fmtNum(restarts)}` : 'без перезапусков');
   if (restarts > 0 && info.lastListenerRestart) parts.push(`последний ${fmtTime(info.lastListenerRestart)}`);
@@ -532,7 +531,7 @@ async function refresh() {
       showBanner('Прокси не принимает соединения: слушатель остановлен. Метрики могут быть устаревшими.', 'error');
     }
 
-    // Текущая привязка слушателя нужна для ссылок tg:// у токенов.
+    // Состояние слушателя нужно для индикаторов; ссылки tg:// у токенов строятся из конфига (mtproto.publicHost).
     state.info = info;
 
     renderOverview(metrics, info);
@@ -587,13 +586,12 @@ function stopPolling() {
 
 const CONFIG_GROUPS = [
   {
-    // Блок справочный: адрес Web API и Swagger меняются только в config.json,
-    // API отклоняет их правку с 409 (F-2.12, F-5.16).
+    // Блок справочный: Swagger меняется только в config.json,
+    // API отклоняет его правку с 409 (F-2.12, F-5.16).
+    // Адрес и порт Web API фиксированы (0.0.0.0:80) и не настраиваются.
     legend: 'Web API',
     info: true,
     fields: [
-      { key: 'metricsPort', label: 'Порт Web API', type: 'number', startup: true, hint: 'В этой редакции Web API запускается всегда' },
-      { key: 'metricsHost', label: 'Адрес Web API', type: 'text', startup: true, hint: 'По умолчанию только 127.0.0.1' },
       { key: 'enableSwagger', label: 'Swagger (/swagger)', type: 'bool', startup: true, hint: 'Маршруты регистрируются при старте' },
     ],
   },
@@ -607,24 +605,22 @@ const CONFIG_GROUPS = [
       {
         title: 'MTPROTO',
         fields: [
-          { key: 'port', label: 'Порт прокси', type: 'number', startup: true },
-          { key: 'host', label: 'Адрес прослушивания', type: 'text', startup: true },
+          { section: 'mtproto', key: 'port', label: 'Порт прокси', type: 'number', startup: true },
         ],
       },
       {
         title: 'WebProxy',
         fields: [
-          { key: 'webProxyEnabled', label: 'WEB proxy включён', type: 'bool' },
-          { key: 'webProxyHost', label: 'Адрес привязки', type: 'text', startup: true },
-          { key: 'webProxyPort', label: 'Порт bridge', type: 'number', startup: true },
-          { key: 'webProxyBasePath', label: 'Base path', type: 'text', startup: true },
-          { key: 'webProxyPublicHost', label: 'Публичный домен', type: 'text', hint: 'Домен для ссылок t.me/webproxy (IP не принимается)' },
-          { key: 'webProxyCarrierMode', label: 'Носитель', type: 'text', hint: 'https (long-poll) или websocket' },
-          { key: 'webProxyCertPath', label: 'Сертификат (PFX)', type: 'text', startup: true },
-          { key: 'webProxyMaxSessions', label: 'Максимум сессий', type: 'number' },
-          { key: 'webProxyMaxSessionsPerIp', label: 'Сессий на IP', type: 'number', hint: '0 — без ограничения' },
-          { key: 'webProxyMaxStreamsPerSession', label: 'Потоков на сессию', type: 'number' },
-          { key: 'webProxyMaxStreams', label: 'Потоков всего', type: 'number' },
+          { section: 'webProxy', key: 'enabled', label: 'WEB proxy включён', type: 'bool' },
+          { section: 'webProxy', key: 'port', label: 'Порт bridge', type: 'number', startup: true },
+          { section: 'webProxy', key: 'basePath', label: 'Base path', type: 'text', startup: true },
+          { section: 'webProxy', key: 'publicHost', label: 'Публичный домен', type: 'text', hint: 'Домен для ссылок t.me/webproxy (IP не принимается)' },
+          { section: 'webProxy', key: 'carrierMode', label: 'Носитель', type: 'text', hint: 'https (long-poll) или websocket' },
+          { section: 'webProxy', key: 'certPath', label: 'Сертификат (PFX)', type: 'text', startup: true },
+          { section: 'webProxy', key: 'maxSessions', label: 'Максимум сессий', type: 'number' },
+          { section: 'webProxy', key: 'maxSessionsPerIp', label: 'Сессий на IP', type: 'number', hint: '0 — без ограничения' },
+          { section: 'webProxy', key: 'maxStreamsPerSession', label: 'Потоков на сессию', type: 'number' },
+          { section: 'webProxy', key: 'maxStreams', label: 'Потоков всего', type: 'number' },
         ],
       },
     ],
@@ -635,21 +631,22 @@ const CONFIG_GROUPS = [
     info: true,
     fields: [
       { key: 'verbose', label: 'Подробный лог (verbose)', type: 'bool', startup: true },
-      { key: 'logPath', label: 'Файл журнала', type: 'text', startup: true, hint: 'Пусто — только консоль' },
-      { key: 'logMaxMegabytes', label: 'Размер файла, МБ', type: 'number', min: 0, max: 4096, step: 0.1, startup: true, hint: '0 — ротация по часам' },
-      { key: 'logRetainedFileCount', label: 'Хранить файлов', type: 'number', min: 1, max: 1000, startup: true },
+      { section: 'logs', key: 'path', label: 'Файл журнала', type: 'text', startup: true, hint: 'Пусто — только консоль' },
+      { section: 'logs', key: 'maxMegabytes', label: 'Размер файла, МБ', type: 'number', min: 0, max: 4096, step: 0.1, startup: true, hint: '0 — ротация по часам' },
+      { section: 'logs', key: 'retainedFileCount', label: 'Хранить файлов', type: 'number', min: 1, max: 1000, startup: true },
     ],
   },
   {
-    // Внешний адрес нужен только для ссылок t.me/proxy: в контейнере host = 0.0.0.0,
-    // и по нему клиент не подключится. Меняется на лету.
+    // Внешний адрес нужен только для ссылок t.me/proxy: слушатель всегда привязан ко всем
+    // интерфейсам (0.0.0.0), и по нему клиент не подключится. Меняется на лету.
     legend: 'Ссылки Telegram',
     fields: [
       {
+        section: 'mtproto',
         key: 'publicHost',
         label: 'Внешний адрес прокси',
         type: 'text',
-        hint: 'Адрес и порт, по которым клиенты подключаются снаружи: proxy.example.com, proxy.example.com:1443 или [2001:db8::1]:1443. Порт можно не указывать — возьмётся порт прокси. Пусто — берётся «Адрес прослушивания», а если он служебный (0.0.0.0) — ссылка не строится',
+        hint: 'Адрес и порт, по которым клиенты подключаются снаружи: proxy.example.com, proxy.example.com:1443 или [2001:db8::1]:1443. Порт можно не указывать — возьмётся порт прокси. Пусто — ссылка не строится (слушатель всегда привязан ко всем интерфейсам 0.0.0.0)',
       },
     ],
   },
@@ -662,7 +659,7 @@ const CONFIG_GROUPS = [
       { key: 'allowIp', label: 'Разрешённые IP / CIDR', type: 'list', hint: 'Список адресов: по одному в строке (можно через запятую или точку с запятой). Одиночный адрес — 203.0.113.7, подсеть — 198.51.100.0/24, IPv6 — 2001:db8::/32. Пусто — разрешены все адреса' },
       { key: 'denyIp', label: 'Запрещённые IP / CIDR', type: 'list', hint: 'Тот же формат: адрес или подсеть, по одному в строке. Запрет проверяется первым и важнее allowIp, поэтому адрес из обоих списков будет отклонён' },
       { key: 'disableSecure', label: 'Отключить Secure (fake-TLS)', type: 'bool', listener: true },
-      { key: 'allowInvalidCertificates', label: 'Принимать недействительные сертификаты', type: 'bool', listener: true },
+      { section: 'mtproto', key: 'allowInvalidCertificates', label: 'Принимать недействительные сертификаты', type: 'bool', listener: true },
       { key: 'fakeTlsDomain', label: 'Домен fake-TLS', type: 'text', listener: true },
       { key: 'proxyProtocol', label: 'PROXY protocol', type: 'bool', listener: true },
       { key: 'forceTestDc', label: 'Тестовые DC', type: 'bool', listener: true },
@@ -671,11 +668,11 @@ const CONFIG_GROUPS = [
   {
     legend: 'DC и пул WebSocket',
     fields: [
-      { key: 'dcIp', label: 'DC → IP', type: 'list', listener: true, hint: 'Формат DC:IP, по одному в строке; пусто — пул WS отключён' },
-      { key: 'wsPoolSize', label: 'Размер пула WS', type: 'number', min: 0, max: 64, listener: true },
-      { key: 'wsMaxFrameBytes', label: 'Максимальный кадр WS, байт', type: 'number', min: 1024, max: 67108864, listener: true },
-      { key: 'wsConnectTimeoutSeconds', label: 'Таймаут подключения WS, с', type: 'number', min: 1, max: 300, listener: true },
-      { key: 'socketBufferKb', label: 'Буфер сокета, КБ', type: 'number', min: 4, max: 8192, listener: true },
+      { section: 'mtproto', key: 'dcIp', label: 'DC → IP', type: 'list', listener: true, hint: 'Формат DC:IP, по одному в строке; пусто — пул WS отключён' },
+      { section: 'mtproto', key: 'wsPoolSize', label: 'Размер пула WS', type: 'number', min: 0, max: 64, listener: true },
+      { section: 'mtproto', key: 'wsMaxFrameBytes', label: 'Максимальный кадр WS, байт', type: 'number', min: 1024, max: 67108864, listener: true },
+      { section: 'mtproto', key: 'wsConnectTimeoutSeconds', label: 'Таймаут подключения WS, с', type: 'number', min: 1, max: 300, listener: true },
+      { section: 'mtproto', key: 'socketBufferKb', label: 'Буфер сокета, КБ', type: 'number', min: 4, max: 8192, listener: true },
     ],
   },
   {
@@ -689,18 +686,18 @@ const CONFIG_GROUPS = [
   {
     legend: 'Cloudflare',
     fields: [
-      { key: 'cfProxyEnabled', label: 'CF proxy включён', type: 'bool', listener: true },
-      { key: 'cfProxyH2Media', label: 'CF HTTP/2 для медиа', type: 'bool', listener: true },
-      { key: 'cfProxyDomains', label: 'Домены CF proxy', type: 'list', listener: true, hint: 'По одному в строке' },
-      { key: 'cfProxyWorkerDomains', label: 'Домены CF worker', type: 'list', listener: true, hint: 'По одному в строке' },
+      { section: 'cfProxy', key: 'enabled', label: 'CF proxy включён', type: 'bool', listener: true },
+      { section: 'cfProxy', key: 'h2Media', label: 'CF HTTP/2 для медиа', type: 'bool', listener: true },
+      { section: 'cfProxy', key: 'domains', label: 'Домены CF proxy', type: 'list', listener: true, hint: 'По одному в строке' },
+      { section: 'cfProxy', key: 'workerDomains', label: 'Домены CF worker', type: 'list', listener: true, hint: 'По одному в строке' },
     ],
   },
   {
     legend: 'Мониторинг',
     fields: [
-      { key: 'enablePerIpStats', label: 'Статистика по IP', type: 'bool' },
-      { key: 'perIpStatsTtlSeconds', label: 'TTL записи IP, с', type: 'number', min: 0, max: 604800, hint: '0 — не удалять' },
-      { key: 'perIpStatsMaxPeers', label: 'Максимум отслеживаемых IP', type: 'number', min: 1, max: 10000000 },
+      { section: 'stats', key: 'enabled', label: 'Статистика по IP', type: 'bool' },
+      { section: 'stats', key: 'ttlSeconds', label: 'TTL записи IP, с', type: 'number', min: 0, max: 604800, hint: '0 — не удалять' },
+      { section: 'stats', key: 'maxPeers', label: 'Максимум отслеживаемых IP', type: 'number', min: 1, max: 10000000 },
       { key: 'prometheusTopPeers', label: 'Источников в /metrics', type: 'number', min: 0, max: 10000, hint: 'Сколько пар «IP + токен» отдавать в Prometheus; 0 — ни одной' },
       { key: 'timeseriesWindowSeconds', label: 'Окно графика, с', type: 'number', min: 60, max: 86400, hint: 'История графика сбрасывается' },
       { key: 'timeseriesStepSeconds', label: 'Шаг графика, с', type: 'number', min: 1, max: 3600, hint: 'История графика сбрасывается' },
@@ -714,6 +711,32 @@ const SECRET = /^[0-9a-fA-F]{32}$/;
 
 function fieldId(key) {
   return `cfg-${key}`;
+}
+
+/**
+ * Полный путь поля в JSON-конфигурации: у вложенных блоков (otel/webProxy/cfProxy)
+ * это «section.key», у плоских ключей — просто key.
+ */
+function fieldPath(field) {
+  return field.section ? `${field.section}.${field.key}` : field.key;
+}
+
+/** Читает значение по пути «a.b.c», возвращая undefined при обрыве цепочки. */
+function readPath(obj, path) {
+  if (obj == null) return undefined;
+  return String(path).split('.').reduce((acc, part) => (acc == null ? undefined : acc[part]), obj);
+}
+
+/** Записывает значение по пути «a.b.c», создавая промежуточные объекты. */
+function writePath(obj, path, value) {
+  const parts = String(path).split('.');
+  let cursor = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (cursor[part] == null || typeof cursor[part] !== 'object') cursor[part] = {};
+    cursor = cursor[part];
+  }
+  cursor[parts[parts.length - 1]] = value;
 }
 
 /**
@@ -758,7 +781,7 @@ function buildForm() {
  */
 function buildInfoRow(field) {
   const wrapper = el('div', 'field field--info');
-  wrapper.dataset.key = field.key;
+  wrapper.dataset.key = fieldPath(field);
   wrapper.dataset.category = 'startup';
 
   wrapper.append(el('span', 'field__label', field.label));
@@ -773,7 +796,7 @@ function buildInfoRow(field) {
  * пустые — как прочерк, чтобы строка не выглядела незаполненной.
  */
 function infoValue(field, config) {
-  const raw = config ? config[field.key] : undefined;
+  const raw = config ? readPath(config, fieldPath(field)) : undefined;
 
   if (field.type === 'bool') return raw ? 'включено' : 'выключено';
   if (field.type === 'list') return Array.isArray(raw) && raw.length > 0 ? raw.join(', ') : '—';
@@ -807,9 +830,9 @@ function categoryBadge(field) {
 }
 
 function buildField(field) {
-  const id = fieldId(field.key);
+  const id = fieldId(fieldPath(field));
   const wrapper = el('div', 'field');
-  wrapper.dataset.key = field.key;
+  wrapper.dataset.key = fieldPath(field);
 
   const category = fieldCategory(field);
   wrapper.dataset.category = category;
@@ -896,7 +919,7 @@ function buildField(field) {
 }
 
 function fieldValue(field, config) {
-  const raw = config ? config[field.key] : undefined;
+  const raw = config ? readPath(config, fieldPath(field)) : undefined;
   if (field.type === 'bool') return Boolean(raw);
   if (field.type === 'list') return Array.isArray(raw) ? raw.join('\n') : '';
   if (raw === null || raw === undefined) return '';
@@ -908,7 +931,7 @@ function fillForm(config) {
 
   for (const group of CONFIG_GROUPS) {
     for (const field of groupFields(group)) {
-      const wrapper = document.querySelector(`.field[data-key="${field.key}"]`);
+      const wrapper = document.querySelector(`.field[data-key="${fieldPath(field)}"]`);
       if (!wrapper) continue;
 
       if (group.info) {
@@ -917,7 +940,7 @@ function fillForm(config) {
         continue;
       }
 
-      const input = $(fieldId(field.key));
+      const input = $(fieldId(fieldPath(field)));
       if (!input) continue;
 
       wrapper.classList.remove('field--invalid');
@@ -941,23 +964,25 @@ function collectForm() {
     if (group.info) continue;
 
     for (const field of group.fields) {
-      const input = $(fieldId(field.key));
+      const input = $(fieldId(fieldPath(field)));
       if (!input) continue;
 
+      let value;
       if (field.type === 'bool') {
-        payload[field.key] = input.checked;
+        value = input.checked;
       } else if (field.type === 'list') {
-        payload[field.key] = input.value
+        value = input.value
           .split(/[\n,;]+/)
           .map((item) => item.trim())
           .filter((item) => item.length > 0);
       } else if (field.type === 'number') {
-        payload[field.key] = input.value === '' ? null : Number(input.value);
+        value = input.value === '' ? null : Number(input.value);
       } else {
-        const value = input.value.trim();
+        const text = input.value.trim();
         // Маскированный секрет (abcd…ef01) не должен попасть в файл вместо настоящего.
-        payload[field.key] = field.type === 'secret' && (value.includes('…') || value.includes('*')) ? null : value;
+        value = field.type === 'secret' && (text.includes('…') || text.includes('*')) ? null : text;
       }
+      writePath(payload, fieldPath(field), value);
     }
   }
 
@@ -972,31 +997,31 @@ function validate(payload) {
     if (group.info) continue;
 
     for (const field of group.fields) {
-      const value = payload[field.key];
+      const value = readPath(payload, fieldPath(field));
 
       if (field.required && (value === null || value === undefined || String(value).trim() === '')) {
-        errors[field.key] = 'Обязательное поле';
+        errors[fieldPath(field)] = 'Обязательное поле';
         continue;
       }
 
       if (field.type === 'number' && value !== null && value !== undefined) {
         if (Number.isNaN(value)) {
-          errors[field.key] = 'Ожидается число';
+          errors[fieldPath(field)] = 'Ожидается число';
         } else if (field.min !== undefined && value < field.min) {
-          errors[field.key] = `Минимум ${field.min}`;
+          errors[fieldPath(field)] = `Минимум ${field.min}`;
         } else if (field.max !== undefined && value > field.max) {
-          errors[field.key] = `Максимум ${field.max}`;
+          errors[fieldPath(field)] = `Максимум ${field.max}`;
         }
       }
 
       if (field.key === 'dcIp' && Array.isArray(value)) {
         const bad = value.find((item) => !DC_ENTRY.test(item));
-        if (bad) errors[field.key] = `Неверный формат «${bad}» — ожидается DC:IP`;
+        if (bad) errors[fieldPath(field)] = `Неверный формат «${bad}» — ожидается DC:IP`;
       }
 
       if ((field.key === 'allowIp' || field.key === 'denyIp') && Array.isArray(value)) {
         const bad = value.find((item) => !IP_ENTRY.test(item));
-        if (bad) errors[field.key] = `Неверный адрес «${bad}» — ожидается IP или CIDR`;
+        if (bad) errors[fieldPath(field)] = `Неверный адрес «${bad}» — ожидается IP или CIDR`;
       }
     }
   }
@@ -1008,18 +1033,13 @@ function validate(payload) {
     errors.timeseriesStepSeconds = 'Шаг не может превышать окно';
   }
 
-  // metricsHost обязателен: Web API в этой редакции запускается всегда (F-1.4).
-  if (payload.metricsPort !== null && payload.metricsPort !== undefined && !String(payload.metricsHost || '').trim()) {
-    errors.metricsHost = 'Нужен адрес, пока Web API включён';
-  }
-
   return errors;
 }
 
 function findField(key) {
   for (const group of CONFIG_GROUPS) {
     for (const field of groupFields(group)) {
-      if (field.key === key) return field;
+      if (fieldPath(field) === key) return field;
     }
   }
   return null;
@@ -1038,16 +1058,21 @@ function changedKeys(payload) {
   const keys = [];
 
   for (const group of CONFIG_GROUPS) {
-    for (const field of groupFields(group)) {
-      if (!(field.key in payload)) continue;
+    // Справочные блоки в payload не попадают — сверять их не с чем.
+    if (group.info) continue;
 
-      const before = loaded[field.key];
+    for (const field of groupFields(group)) {
+      const path = fieldPath(field);
+      const value = readPath(payload, path);
+      if (value === undefined) continue;
+
+      const before = readPath(loaded, path);
       const isMasked = field.type === 'secret'
         && typeof before === 'string'
         && (before.includes('…') || before.includes('*'));
 
-      if (isMasked || sameValue(payload[field.key], before)) continue;
-      keys.push(field.key);
+      if (isMasked || sameValue(value, before)) continue;
+      keys.push(path);
     }
   }
 
@@ -1072,9 +1097,9 @@ function refreshCategoryBadges() {
   for (const group of CONFIG_GROUPS) {
     for (const field of groupFields(group)) {
       if (fieldCategory(field) !== 'listener') continue;
-      const wrapper = document.querySelector(`.field[data-key="${field.key}"]`);
+      const wrapper = document.querySelector(`.field[data-key="${fieldPath(field)}"]`);
       const badge = wrapper ? wrapper.querySelector('.field__restart') : null;
-      if (badge) badge.hidden = !changed.has(field.key);
+      if (badge) badge.hidden = !changed.has(fieldPath(field));
     }
   }
 }
@@ -1082,15 +1107,15 @@ function refreshCategoryBadges() {
 function showValidation(errors) {
   for (const group of CONFIG_GROUPS) {
     for (const field of groupFields(group)) {
-      const wrapper = document.querySelector(`.field[data-key="${field.key}"]`);
+      const wrapper = document.querySelector(`.field[data-key="${fieldPath(field)}"]`);
       if (!wrapper) continue;
 
-      const message = errors[field.key];
+      const message = errors[fieldPath(field)];
       wrapper.classList.toggle('field--invalid', Boolean(message));
       const hint = wrapper.querySelector('.field__error');
       if (hint) hint.textContent = message || '';
 
-      const input = $(fieldId(field.key));
+      const input = $(fieldId(fieldPath(field)));
       if (input) {
         if (message) input.setAttribute('aria-invalid', 'true');
         else input.removeAttribute('aria-invalid');
@@ -1252,11 +1277,27 @@ function jsonRequest(method, payload) {
 }
 
 function tokenLink(secret) {
-  const info = state.info || {};
-  const host = info.listenerHost;
-  const port = info.listenerPort;
-  // 0.0.0.0 и :: — это не адрес, по которому пойдёт клиент.
-  if (!host || !port || host === '0.0.0.0' || host === '::' || host === '[::]') return null;
+  const mt = (state.config && state.config.mtproto) || {};
+  const publicHost = (mt.publicHost || '').trim();
+  if (!publicHost) return null;
+  let host = publicHost;
+  let port = mt.port || 1443;
+  // Внешний адрес может быть host, host:port или [IPv6]:port.
+  if (publicHost.startsWith('[')) {
+    const m = publicHost.match(/^\[([^\]]+)\](?::(\d+))?$/);
+    if (!m) return null;
+    host = m[1];
+    if (m[2]) port = Number(m[2]);
+  } else if (publicHost.includes(':')) {
+    const i = publicHost.indexOf(':');
+    if (i === publicHost.lastIndexOf(':')) {
+      const maybePort = publicHost.slice(i + 1);
+      if (/^\d+$/.test(maybePort)) {
+        host = publicHost.slice(0, i);
+        port = Number(maybePort);
+      }
+    }
+  }
   return `tg://proxy?server=${host}&port=${port}&secret=dd${secret}`;
 }
 
@@ -1289,15 +1330,48 @@ function actionButton(label, handler, extraClass = '') {
   return button;
 }
 
-// Копирование в буфер обмена: Clipboard API доступен только в защищённом контексте,
-// поэтому при отказе браузера текст возвращается вызывающему коду для показа вручную.
+// Копирование в буфер обмена. Clipboard API доступен только в защищённом контексте
+// (https/локальный адрес), поэтому при его недоступности копируем через запасной путь
+// document.execCommand('copy') с временной textarea — работает и на обычном http.
 async function copyText(text) {
   try {
-    await navigator.clipboard.writeText(text);
-    return true;
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
   } catch {
-    return false;
+    // переходим к запасному пути ниже
   }
+  return copyTextFallback(text);
+}
+
+function copyTextFallback(text) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.top = '-9999px';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+
+  const selection = document.getSelection();
+  const savedRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch {
+    copied = false;
+  }
+
+  document.body.removeChild(textarea);
+  if (savedRange && selection) {
+    selection.removeAllRanges();
+    selection.addRange(savedRange);
+  }
+  return copied;
 }
 
 // Кнопка «Ссылка MTProto»: берёт у сервера полный секрет и копирует готовую ссылку для
@@ -1324,19 +1398,18 @@ async function copyTokenLink(token) {
   }
 }
 
-// Кнопка «Ссылка Web (alfa)»: копирует ссылку-приглашение WEB proxy по каноническому
+// Кнопка «Ссылка Web»: копирует ссылку-приглашение WEB proxy по каноническому
 // шаблону Telegram — https://t.me/webproxy?server=<host>[/<basePath>]&secret=<secret>.
 // Секрет в ссылке: обычный 32-hex для корня и base64url(0x70‖secret) при заданном
 // basePath. Bridge-URL (адрес страницы-носителя с HMAC capability) в буфер не попадает:
-// это отладочный адрес, а не ссылка для Telegram. Возможность помечена как alfa:
-// контракт сверяется с Telegram Desktop, поведение может меняться.
+// это отладочный адрес, а не ссылка для Telegram.
 async function copyWebProxyLink(token) {
   try {
     const result = await apiJson(`/api/tokens/${encodeURIComponent(token.id)}/link`);
     if (!result.webProxyLink) {
       tokenStatus(
-        'WEB proxy ссылка не строится: включите webProxyEnabled и задайте внешний домен '
-          + '(webProxyPublicHost). Тип WEB proxy работает только с доменом — IP-адрес '
+        'WEB proxy ссылка не строится: включите webProxy.enabled и задайте внешний домен '
+          + '(webProxy.publicHost). Тип WEB proxy работает только с доменом — IP-адрес '
           + 'Telegram не принимает.',
         'warn');
       return;
@@ -1389,7 +1462,7 @@ function renderTokens() {
     const actions = el('td');
     const group = el('span', 'table__actions');
     group.append(actionButton('Ссылка MTProto', () => copyTokenLink(token)));
-    group.append(actionButton('Ссылка Web (alfa)', () => copyWebProxyLink(token)));
+    group.append(actionButton('Ссылка Web', () => copyWebProxyLink(token)));
     group.append(actionButton('Изменить', () => startTokenEdit(token)));
     group.append(actionButton('Ротация', () => rotateToken(token)));
     group.append(actionButton(token.enabled ? 'Отключить' : 'Включить', () => toggleToken(token)));

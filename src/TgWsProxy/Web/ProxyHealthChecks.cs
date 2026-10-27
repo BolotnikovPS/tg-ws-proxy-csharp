@@ -138,17 +138,13 @@ public sealed class WebProxyHealthCheck(Config config) : IHealthCheck
     public Task<HealthCheckResult> CheckHealthAsync(
         HealthCheckContext context, CancellationToken cancellationToken = default)
     {
-        if (!config.WebProxyEnabled)
+        if (!config.WebProxy.Enabled)
         {
             return Task.FromResult(HealthCheckResult.Healthy("web-proxy bridge is disabled"));
         }
 
-        var host = string.IsNullOrEmpty(config.WebProxyPublicHost)
-            ? config.WebProxyHost
-            : config.WebProxyPublicHost;
-
         return Task.FromResult(HealthCheckResult.Healthy(
-            $"web-proxy bridge listening on https://{host}:{config.WebProxyPort}{config.WebProxyBasePath}"));
+            $"web-proxy bridge listening on local port {config.WebProxy.Port}, public host{config.WebProxy.PublicHost}, base path {config.WebProxy.BasePath}"));
     }
 }
 

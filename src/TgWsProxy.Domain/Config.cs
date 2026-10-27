@@ -2,24 +2,21 @@ namespace TgWsProxy.Domain;
 
 public sealed class Config
 {
-    public int Port { get; set; } = 1443;
-    public string Host { get; set; } = "127.0.0.1";
+    /// <summary>
+    /// Ядро MTProto-прокси (вложенный блок <c>mtproto</c>): привязка слушателя, внешний адрес
+    /// ссылок <c>t.me/proxy</c>, DC-апстримы и транспорт WSS-пула.
+    /// Категории ключей блока см. <see cref="MtProtoConfig"/>.
+    /// </summary>
+    public MtProtoConfig MtProto { get; set; } = new MtProtoConfig();
 
     /// <summary>
-    /// Внешний адрес прокси для ссылок <c>https://t.me/proxy</c> (F-8.8). Нужен, когда
-    /// <see cref="Host"/> — служебный адрес: в контейнере это <c>0.0.0.0</c>, снаружи такой
-    /// адрес недостижим, и ссылку не из чего собрать. Допускается форма <c>host</c>,
-    /// <c>host:port</c> и <c>[IPv6]:port</c>. Пусто — берётся <see cref="Host"/> и
-    /// <see cref="Port"/>. На привязку слушателя не влияет.
+    /// Токены доступа прокси (F-8.1): именованные MTProto-секреты по одному на устройство или
+    /// группу устройств. Вынесены на верхний уровень конфигурации (ключ <c>tokens</c>), т.к.
+    /// применяются и в MTProto-прокси, и в WEB proxy (browser-relay). Горячий ключ — новый набор
+    /// применяется без перезапуска слушателя (F-8.9). Коллекция только для чтения: список
+    /// заменяется целиком.
     /// </summary>
-    public string PublicHost { get; set; } = "";
-
-    /// <summary>
-    /// Целевые IP для DC в формате DC:IP. Пусто — используются дефолты upstream
-    /// (2:149.154.167.220, 4:149.154.167.220). Явное указание --dc-ip без значения очищает список,
-    /// что полностью отключает WS-пул.
-    /// </summary>
-    public List<string> DcIp { get; } = [];
+    public List<ProxyToken> Tokens { get; } = [];
 
     /// <summary>
     /// Разрешённые IP/CIDR клиентов. Пусто — пускаем всех. Расширение порта, в upstream отсутствует.
@@ -33,42 +30,6 @@ public sealed class Config
     public List<string> DenyIp { get; } = [];
 
     public bool Verbose { get; set; }
-
-    /// <summary>
-    /// Путь к файлу лога с ротацией. Пусто — только консоль.
-    /// Инициализируется пустой строкой, иначе значение остаётся <c>null</c> и
-    /// <c>GET /api/config</c> отдаёт <c>logPath: null</c>, а <c>PUT /api/config</c>
-    /// видит ложное изменение «null → ""» и требует перезапуск (F-2.11).
-    /// </summary>
-    public string LogPath { get; set; } = "";
-
-    /// <summary>
-    /// Разрешает TLS-подключение к серверам с невалидным сертификатом. По умолчанию выключено
-    /// (безопасно). Использовать только для диагностики. Расширение порта, в upstream отсутствует.
-    /// </summary>
-    public bool AllowInvalidCertificates { get; set; }
-
-    /// <summary>
-    /// Максимальный размер полезной нагрузки одного WebSocket-фрейма (в байтах). Используется для
-    /// защиты от DoS при чтении фреймов. Расширение порта, в upstream отсутствует.
-    /// </summary>
-    public int WsMaxFrameBytes { get; set; } = 16 * 1024 * 1024; // 16 MiB
-
-    /// <summary>
-    /// Таймаут чтения HTTP-ответа рукопожатия WebSocket (секунды). TCP+TLS ограничены
-    /// default(значение, 10). Расширение порта, в upstream отсутствует.
-    /// </summary>
-    public int WsConnectTimeoutSeconds { get; set; } = 10;
-
-    /// <summary>
-    /// Размер SO_RCVBUF/SO_SNDBUF для клиентского сокета и исходящего WSS (килобайты, минимум 4).
-    /// </summary>
-    public int SocketBufferKb { get; set; } = 256;
-
-    /// <summary>
-    /// Максимум заранее открытых WS на пару (DC, media); 0 отключает пул прямых WS-соединений.
-    /// </summary>
-    public int WsPoolSize { get; set; } = 4;
 
     /// <summary>
     /// Максимум одновременных клиентских сессий. 0 — без ограничения. Защита от исчерпания
@@ -90,44 +51,16 @@ public sealed class Config
     public int RateLimitWindowSeconds { get; set; } = 60;
 
     /// <summary>
-    /// Порт HTTP-сервера служебных эндпоинтов <c>/metrics</c> (Prometheus) и <c>/healthz</c>.
-    /// 0 — сервер мониторинга выключен. Расширение порта, в upstream отсутствует.
-    /// </summary>
-    public int MetricsPort { get; set; } = 8081;
-
-    /// <summary>
-    /// Адрес прослушивания сервера мониторинга. По умолчанию только loopback: эндпоинты не
-    /// аутентифицированы, поэтому наружу их следует выставлять осознанно.
-    /// Расширение порта, в upstream отсутствует.
-    /// </summary>
-    public string MetricsHost { get; set; } = "127.0.0.1";
-
-    /// <summary>
     /// Bearer-токен для служебного Web API. Пусто — аутентификация выключена и эндпоинты
-    /// открыты всем, кто может достучаться до <see cref="MetricsHost"/> (по умолчанию loopback).
-    /// Расширение порта, в upstream отсутствует.
+    /// открыты всем, кто может достучаться до веб-сервера. Расширение порта, в upstream отсутствует.
     /// </summary>
     public string WebApiToken { get; set; } = "";
 
     /// <summary>
-    /// Включает учёт статистики по каждому IP-адресу (требование F-4). Выключение экономит
-    /// память на инсталляциях с большим числом адресов: <c>/api/per-ip</c> вернёт пустой список.
-    /// Расширение порта, в upstream отсутствует.
+    /// Статистика по источникам трафика — пары «IP + токен» (вложенный блок <c>stats</c>, F-4).
+    /// Все ключи блока — «горячо»; см. <see cref="StatsConfig"/>.
     /// </summary>
-    public bool EnablePerIpStats { get; set; } = true;
-
-    /// <summary>
-    /// Время жизни записи per-IP в секундах: записи без активных соединений удаляются фоновой
-    /// очисткой. 0 — записи живут до перезапуска. Расширение порта, в upstream отсутствует.
-    /// </summary>
-    public int PerIpStatsTtlSeconds { get; set; } = 1800;
-
-    /// <summary>
-    /// Верхняя граница числа отслеживаемых адресов в реестре per-IP статистики. Новые адреса
-    /// сверх предела не учитываются (растёт <c>peerTrackingOverflow</c>) — защита от сканирования портов.
-    /// Расширение порта, в upstream отсутствует.
-    /// </summary>
-    public int PerIpStatsMaxPeers { get; set; } = 100_000;
+    public StatsConfig Stats { get; set; } = new StatsConfig();
 
     /// <summary>
     /// Сколько пар (IP, токен) выгружать в Prometheus per-IP серии: отбираются по суммарному
@@ -158,35 +91,16 @@ public sealed class Config
     public int TimeseriesStepSeconds { get; set; } = 5;
 
     /// <summary>
-    /// При записи в файл: лимит размера одного файла в МБ перед ротацией (минимум 32 КБ).
+    /// Настройки записи лога в файл (вложенный блок <c>logs</c>). Все ключи блока — «только старт»:
+    /// конвейер Serilog собирается один раз при запуске процесса и на лету не перенастраивается.
     /// </summary>
-    public double LogMaxMegabytes { get; set; } = 5;
+    public LogsConfig Logs { get; set; } = new LogsConfig();
 
     /// <summary>
-    /// Число архивных лог-файлов при ротации (минимум 1 — ротация без бэкапа не ограничивает размер).
+    /// Настройки fallback через Cloudflare (вложенный блок <c>cfProxy</c>). Все ключи блока —
+    /// категория «слушатель»: изменение требует перезапуска слушателя (F-2.11).
     /// </summary>
-    public int LogRetainedFileCount { get; set; } = 1;
-
-    /// <summary>
-    /// Разрешает fallback через Cloudflare-proxied WebSocket домены.
-    /// </summary>
-    public bool CfProxyEnabled { get; set; } = true;
-
-    /// <summary>
-    /// Пользовательские CF-proxy домены для H2 media и WS fallback. Пусто — используется
-    /// встроенный пул с периодическим обновлением с GitHub.
-    /// </summary>
-    public List<string> CfProxyDomains { get; } = [];
-
-    /// <summary>
-    /// Домены Cloudflare Worker (пробуются раньше остальных методов fallback).
-    /// </summary>
-    public List<string> CfProxyWorkerDomains { get; } = [];
-
-    /// <summary>
-    /// HTTP/2 мультиплексирование media-трафика через Cloudflare (по умолчанию включено).
-    /// </summary>
-    public bool CfProxyH2Media { get; set; } = true;
+    public CfProxyConfig CfProxy { get; set; } = new CfProxyConfig();
 
     /// <summary>
     /// Использовать порт 80 вместо 443 для CF-proxy и CF-worker соединений.
@@ -209,118 +123,37 @@ public sealed class Config
     public bool ForceTestDc { get; set; }
 
     /// <summary>
-    /// Токены доступа прокси (F-8.1): именованные MTProto-секреты, по одному на устройство или
-    /// группу устройств. Заменяют единственный <c>secret</c> прежних версий, который переносится
-    /// сюда при первом запуске (F-8.3). Коллекция только для чтения: список заменяется целиком,
-    /// чтобы ссылка на конфигурацию не менялась — так же устроены остальные коллекции.
+    /// Настройки WEB proxy (browser-relay) bridge-листенера (вложенный блок <c>webProxy</c>).
+    /// Часть ключей — «только старт» (привязка и TLS), часть — «горячо» (домен ссылки, носитель,
+    /// лимиты ресурсов); см. <see cref="WebProxyConfig"/>.
     /// </summary>
-    public List<ProxyToken> Tokens { get; } = [];
+    public WebProxyConfig WebProxy { get; set; } = new WebProxyConfig();
 
     /// <summary>
-    /// Включает WEB proxy (browser-relay) bridge-листенер (F-W.1). По умолчанию выключен:
-    /// при выключении bridge не занимает порт и не регистрирует маршруты.
-    /// Категория «слушатель»: изменение требует перепривязки bridge-листенера.
+    /// Настройки OpenTelemetry (OTLP): трассы и метрики — через OpenTelemetry SDK, логи — через
+    /// <c>Serilog.Sinks.OpenTelemetry</c>. Вложенный блок <c>otel</c> в config.json. По умолчанию
+    /// выключено и не влияет на поведение. Все ключи блока — «только старт».
     /// </summary>
-    public bool WebProxyEnabled { get; set; }
-
-    /// <summary>
-    /// Адрес привязки bridge-листенера (HTTPS/WS). По умолчанию все интерфейсы: bridge
-    /// обслуживает публичный браузерный трафик, а не только loopback. Стартовый ключ.
-    /// </summary>
-    public string WebProxyHost { get; set; } = "0.0.0.0";
-
-    /// <summary>
-    /// Порт bridge-листенера (HTTPS). Должен отличаться от <see cref="Port"/> (MTProxy)
-    /// и <see cref="MetricsPort"/> (панель) — F-W.5. Стартовый ключ.
-    /// </summary>
-    public int WebProxyPort { get; set; } = 443;
-
-    /// <summary>
-    /// Базовый путь bridge-сайта: пусто — корень, иначе префикс вида «v1». Участвует в
-    /// контексте HMAC bridge-capability (v2). Стартовый ключ.
-    /// </summary>
-    public string WebProxyBasePath { get; set; } = "";
-
-    /// <summary>
-    /// Внешний домен для bridge-ссылки, когда TLS терминируется за reverse-proxy.
-    /// Пусто — используется <see cref="WebProxyHost"/>. Горячий ключ.
-    /// </summary>
-    public string WebProxyPublicHost { get; set; } = "";
-
-    /// <summary>
-    /// Путь к PFX/сертификату для TLS bridge-листенера. Обязателен при
-    /// <see cref="WebProxyEnabled"/> (N-W.1). Стартовый ключ.
-    /// </summary>
-    public string WebProxyCertPath { get; set; } = "";
-
-    /// <summary>
-    /// Пароль PFX-сертификата bridge. Пусто — сертификат без пароля. В <c>GET /api/config</c>
-    /// маскируется. Стартовый ключ.
-    /// </summary>
-    public string WebProxyCertPassword { get; set; } = "";
-
-    /// <summary>
-    /// Носитель (carrier) bridge-сессии: <c>https</c> — HTTPS long-poll (<c>POST /api/v1/up</c> и
-    /// <c>POST /api/v1/down</c>), <c>websocket</c> — один WebSocket <c>GET /api/v1/ws</c> с
-    /// подпротоколом <c>tproxy-v1.&lt;token&gt;</c>. Значение попадает в bridge-страницу и в
-    /// заголовок <c>X-Carrier-Mode</c>; клиент обязан использовать именно этот режим (F-W.24).
-    /// Горячий ключ.
-    /// </summary>
-    public string WebProxyCarrierMode { get; set; } = "https";
-
-    /// <summary>
-    /// Предел одновременных relay-сессий WEB proxy. Сверх предела <c>POST /api/v1/session</c>
-    /// отвечает <c>503</c> с <c>Retry-After</c>. Горячий ключ.
-    /// </summary>
-    public int WebProxyMaxSessions { get; set; } = 128;
-
-    /// <summary>
-    /// Предел одновременных relay-сессий с одного IP клиента. <c>0</c> — без ограничения.
-    /// Горячий ключ.
-    /// </summary>
-    public int WebProxyMaxSessionsPerIp { get; set; }
-
-    /// <summary>
-    /// Предел одновременно открытых потоков (stream) в одной relay-сессии. OPEN сверх предела
-    /// отклоняется кадром <c>CLOSE</c>. Горячий ключ.
-    /// </summary>
-    public int WebProxyMaxStreamsPerSession { get; set; } = 128;
-
-    /// <summary>
-    /// Предел одновременно открытых потоков во всех relay-сессиях WEB proxy. Горячий ключ.
-    /// </summary>
-    public int WebProxyMaxStreams { get; set; } = 4096;
-
-    /// <summary>
-    /// Предел объёма исходящей очереди одной сессии (несобранные батчи). При превышении сессия
-    /// закрывается: клиент обязан забирать нисходящие батчи. Горячий ключ.
-    /// </summary>
-    public int WebProxyMaxPendingBytesPerSession { get; set; } = 32 * 1024 * 1024;
-
-    /// <summary>
-    /// Предел числа кадров в исходящей очереди одной сессии. Горячий ключ.
-    /// </summary>
-    public int WebProxyMaxPendingItemsPerSession { get; set; } = 16384;
+    public OtelConfig Otel { get; set; } = new OtelConfig();
 
     /// <summary>
     /// HTTP/2 доступен только при включённом CF fallback, secure-соединениях и без test DC.
     /// </summary>
-    public bool H2Enabled => CfProxyH2Media && CfProxyEnabled && !DisableSecure && !ForceTestDc;
+    public bool H2Enabled => CfProxy.H2Media && CfProxy.Enabled && !DisableSecure && !ForceTestDc;
 
     /// <summary>
-    /// Точка доступа для ссылок <c>t.me/proxy</c>: <see cref="PublicHost"/>, если он задан,
-    /// иначе <see cref="Host"/>. <c>null</c> — внешний адрес не определён: служебный
-    /// <see cref="Host"/> (<c>0.0.0.0</c>, <c>::</c>) без явного <see cref="PublicHost"/>
-    /// либо некорректный <see cref="PublicHost"/> (валидатор такой конфиг не пропустит).
+    /// Точка доступа для ссылок <c>t.me/proxy</c>: только <see cref="MtProtoConfig.PublicHost"/> —
+    /// слушатель всегда привязан ко всем интерфейсам, поэтому служебный адрес больше не хранится.
+    /// <c>null</c> — <see cref="MtProtoConfig.PublicHost"/> не задан или некорректен
+    /// (валидатор такой конфиг не пропустит).
     /// </summary>
     public PublicEndpoint? ResolvePublicEndpoint()
     {
-        var configured = PublicHost?.Trim() ?? "";
-        if (configured.Length > 0)
-        {
-            return PublicEndpoint.TryParse(configured, Port, out var endpoint) ? endpoint : null;
-        }
-
-        return PublicEndpoint.TryParse(Host, Port, out var fallback) ? fallback : null;
+        var mt = MtProto;
+        var configured = mt.PublicHost?.Trim() ?? "";
+        return configured.Length > 0
+            && PublicEndpoint.TryParse(configured, mt.Port, out var endpoint)
+                ? endpoint
+                : null;
     }
 }

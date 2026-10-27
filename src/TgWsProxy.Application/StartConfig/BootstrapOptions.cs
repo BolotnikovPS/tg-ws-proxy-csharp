@@ -4,7 +4,7 @@ namespace TgWsProxy.Application.StartConfig;
 /// Аргументы командной строки в режиме «только веб» (F-1.9, F-1.10).
 ///
 /// Конфигурация задаётся исключительно файлом <c>config.json</c> и страницей настроек,
-/// поэтому от CLI остались только bootstrap-опции: путь к файлу, справка и версия.
+/// поэтому от CLI осталась единственная bootstrap-опция — путь к файлу конфигурации.
 ///
 /// Любой другой аргумент — ошибка, а не молчаливое игнорирование: опечатка вида
 /// <c>--prot 1443</c> иначе привела бы к старту на умолчаниях и к путанице «почему не
@@ -17,12 +17,6 @@ public sealed record BootstrapOptions
 
     /// <summary>Путь к файлу конфигурации; <c>null</c> — искать по умолчанию (F-2.3).</summary>
     public string? ConfigPath { get; init; }
-
-    /// <summary>Запрошена справка (<c>-h</c>/<c>--help</c>).</summary>
-    public bool ShowHelp { get; init; }
-
-    /// <summary>Запрошена версия (<c>--version</c>).</summary>
-    public bool ShowVersion { get; init; }
 
     /// <summary>
     /// Разбирает аргументы командной строки.
@@ -39,8 +33,6 @@ public sealed record BootstrapOptions
         ArgumentNullException.ThrowIfNull(args);
 
         string? configPath = null;
-        var showHelp = false;
-        var showVersion = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -63,26 +55,12 @@ public sealed record BootstrapOptions
                     configPath = RequirePath(args[++i], ConfigFlag);
                     break;
 
-                case "-h":
-                case "--help":
-                    showHelp = true;
-                    break;
-
-                case "--version":
-                    showVersion = true;
-                    break;
-
                 default:
                     throw new ArgumentException(BuildUnknownArgumentMessage(arg));
             }
         }
 
-        return new BootstrapOptions
-        {
-            ConfigPath = configPath,
-            ShowHelp = showHelp,
-            ShowVersion = showVersion,
-        };
+        return new BootstrapOptions { ConfigPath = configPath };
     }
 
     /// <summary>Проверяет, что значение пути не пустое.</summary>
@@ -114,12 +92,11 @@ public sealed record BootstrapOptions
         if (LegacyFlags.TryGetValue(name, out var jsonKey))
         {
             return $"Unknown argument: {name}. Command-line configuration was removed: " +
-                   $"the proxy is configured by config.json only, use the \"{jsonKey}\" key there " +
-                   "(see --help).";
+                   $"the proxy is configured by config.json only, use the \"{jsonKey}\" key there.";
         }
 
         return $"Unknown argument: {arg}. The proxy is configured by config.json only; " +
-               "run with --help to see the remaining bootstrap arguments.";
+               $"the only supported argument is {ConfigFlag} <path>.";
     }
 
     /// <summary>
@@ -128,70 +105,40 @@ public sealed record BootstrapOptions
     /// </summary>
     private static readonly Dictionary<string, string> LegacyFlags = new(StringComparer.Ordinal)
     {
-        ["--port"] = "port",
-        ["--host"] = "host",
+        ["--port"] = "mtproto.port",
         ["--secret"] = "tokens",
-        ["--dc-ip"] = "dcIp",
-        ["--cfproxy-domain"] = "cfProxyDomains",
-        ["--cfproxy-worker-domain"] = "cfProxyWorkerDomains",
-        ["--no-cfproxy"] = "cfProxyEnabled",
-        ["--no-h2"] = "cfProxyH2Media",
-        ["--cfproxy-h2-media"] = "cfProxyH2Media",
+        ["--dc-ip"] = "mtproto.dcIp",
+        ["--cfproxy-domain"] = "cfProxy.domains",
+        ["--cfproxy-worker-domain"] = "cfProxy.workerDomains",
+        ["--no-cfproxy"] = "cfProxy.enabled",
+        ["--no-h2"] = "cfProxy.h2Media",
+        ["--cfproxy-h2-media"] = "cfProxy.h2Media",
         ["--no-secure"] = "disableSecure",
         ["--fake-tls-domain"] = "fakeTlsDomain",
         ["--force-test-dc"] = "forceTestDc",
         ["--proxy-protocol"] = "proxyProtocol",
         ["-v"] = "verbose",
         ["--verbose"] = "verbose",
-        ["--log-file"] = "logPath",
-        ["--log-path"] = "logPath",
-        ["--log-max-mb"] = "logMaxMegabytes",
-        ["--log-backups"] = "logRetainedFileCount",
-        ["--buf-kb"] = "socketBufferKb",
-        ["--pool-size"] = "wsPoolSize",
-        ["--ws-timeout"] = "wsConnectTimeoutSeconds",
-        ["--ws-max-frame-bytes"] = "wsMaxFrameBytes",
-        ["--allow-invalid-certs"] = "allowInvalidCertificates",
+        ["--log-file"] = "logs.path",
+        ["--log-path"] = "logs.path",
+        ["--log-max-mb"] = "logs.maxMegabytes",
+        ["--log-backups"] = "logs.retainedFileCount",
+        ["--buf-kb"] = "mtproto.socketBufferKb",
+        ["--pool-size"] = "mtproto.wsPoolSize",
+        ["--ws-timeout"] = "mtproto.wsConnectTimeoutSeconds",
+        ["--ws-max-frame-bytes"] = "mtproto.wsMaxFrameBytes",
+        ["--allow-invalid-certs"] = "mtproto.allowInvalidCertificates",
         ["--allow-ip"] = "allowIp",
         ["--deny-ip"] = "denyIp",
         ["--max-connections"] = "maxConnections",
         ["--rate-limit"] = "rateLimitPerIp",
         ["--rate-limit-window"] = "rateLimitWindowSeconds",
-        ["--metrics-port"] = "metricsPort",
-        ["--metrics-host"] = "metricsHost",
         ["--web-api-token"] = "webApiToken",
-        ["--enable-per-ip-stats"] = "enablePerIpStats",
-        ["--no-per-ip-stats"] = "enablePerIpStats",
-        ["--per-ip-stats-ttl"] = "perIpStatsTtlSeconds",
-        ["--per-ip-stats-max-peers"] = "perIpStatsMaxPeers",
+        ["--enable-per-ip-stats"] = "stats.enabled",
+        ["--no-per-ip-stats"] = "stats.enabled",
+        ["--per-ip-stats-ttl"] = "stats.ttlSeconds",
+        ["--per-ip-stats-max-peers"] = "stats.maxPeers",
         ["--timeseries-window"] = "timeseriesWindowSeconds",
         ["--timeseries-step"] = "timeseriesStepSeconds",
     };
-
-    /// <summary>Справка по оставшимся bootstrap-опциям (F-1.7).</summary>
-    public const string HelpText =
-        """
-        usage: TgWsProxy [--config PATH] [-h|--help] [--version]
-
-        Telegram MTProto WebSocket Bridge Proxy — web-only edition.
-
-        The proxy always runs as a web application: it serves metrics, health
-        checks and the settings page over HTTP. Every proxy setting (listener,
-        tokens, limits, statistics) lives in config.json and is edited on the
-        settings page — the command line only points to the file.
-
-        options:
-          --config PATH   путь к файлу конфигурации (также --config=PATH).
-                          По умолчанию: переменная окружения TGWS_CONFIG,
-                          затем ./config.json в рабочей директории
-                          (в контейнере — /app/config/config.json)
-          -h, --help      показать эту справку и выйти
-          --version       показать версию и выйти
-
-        Настройки и мониторинг доступны на странице:
-          http://<metricsHost>:<metricsPort>/
-
-        Отсутствующий файл конфигурации — не ошибка: применяются умолчания,
-        а файл создаётся при первом сохранении из панели.
-        """;
 }

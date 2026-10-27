@@ -106,10 +106,10 @@ if ($Trust) {
 }
 Write-Host ""
 Write-Host "В config.json укажи:"
-Write-Host "  webProxyCertPath     = $pfxPath"
-Write-Host "  webProxyCertPassword = $Password"
+Write-Host "  webProxy.certPath    = $pfxPath"
+Write-Host "  webProxy.certPassword = $Password"
 if ($Local) {
-    Write-Host "  webProxyPublicHost   = lvh.me      (домен, а не IP: Telegram не принимает IP)"
+    Write-Host "  webProxy.publicHost  = lvh.me      (домен, а не IP: Telegram не принимает IP)"
     Write-Host ""
     Write-Host "Локальная проверка (сервер и клиент на одной машине):" -ForegroundColor Cyan
     Write-Host "  dotnet run --project src/TgWsProxy -- --config config.json"

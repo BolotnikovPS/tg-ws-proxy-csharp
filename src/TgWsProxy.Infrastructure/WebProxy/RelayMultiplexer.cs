@@ -27,11 +27,11 @@ public sealed class RelayMultiplexer : IAsyncDisposable
     /// <param name="startBridge">Запуск моста для открытого потока.</param>
     /// <param name="initialSendWindow">Начальный кредит отправки потока.</param>
     /// <param name="maxStreams">
-    /// Предел одновременных потоков в сессии (<c>webProxyMaxStreamsPerSession</c>); <c>0</c> — без
+    /// Предел одновременных потоков в сессии (<c>webProxy.maxStreamsPerSession</c>); <c>0</c> — без
     /// ограничения. OPEN сверх предела отклоняется кадром <c>CLOSE</c> (F-W.25).
     /// </param>
     /// <param name="tryAcquireGlobalStream">
-    /// Резерв слота в глобальном бюджете потоков (<c>webProxyMaxStreams</c>); <c>null</c> — бюджет
+    /// Резерв слота в глобальном бюджете потоков (<c>webProxy.maxStreams</c>); <c>null</c> — бюджет
     /// не ведётся. Отказ также отклоняет OPEN кадром <c>CLOSE</c>.
     /// </param>
     /// <param name="releaseGlobalStream">Возврат ранее зарезервированного глобального слота.</param>

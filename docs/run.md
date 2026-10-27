@@ -11,7 +11,5 @@ dotnet TgWsProxy.dll --config /etc/tg-ws-proxy/config.json
 | Аргумент | Описание |
 |---|---|
 | `--config <PATH>` | Путь к файлу конфигурации (алиас `--config=PATH`). Также читается из `TGWS_CONFIG`. По умолчанию `./config.json`. |
-| `-h`, `--help` | Справка по bootstrap-аргументам и ключам `config.json`; выход с кодом `0`. |
-| `--version` | Версия (`tg-ws-proxy <версия>`); выход с кодом `0`. |
 
-Любой другой флаг (`--port`, `--secret`, `--metrics-port`, `--verbose`…) завершает работу с кодом `1` и подсказкой, какой ключ `config.json` соответствует старому флагу (например `--port` → `"port"`).
+Любой другой флаг (`--port`, `--secret`, `--verbose`…) завершает работу с кодом `1` и подсказкой, какой ключ `config.json` соответствует старому флагу (например `--port` → `"mtproto.port"`, `--secret` → `"tokens"`).

@@ -18,59 +18,88 @@ public static class ConfigDtoMapper
         ArgumentNullException.ThrowIfNull(dto);
         ArgumentNullException.ThrowIfNull(target);
 
-        if (dto.Port is { } port) target.Port = port;
-        if (dto.Host is { } host) target.Host = host;
-        if (dto.PublicHost is { } publicHost) target.PublicHost = publicHost.Trim();
+        if (dto.MtProto is { } mt)
+        {
+            if (mt.Port is { } port) target.MtProto.Port = port;
+            if (mt.PublicHost is { } publicHost) target.MtProto.PublicHost = publicHost.Trim();
+            if (mt.AllowInvalidCertificates is { } allowInvalid) target.MtProto.AllowInvalidCertificates = allowInvalid;
+            if (mt.WsMaxFrameBytes is { } wsMaxFrameBytes) target.MtProto.WsMaxFrameBytes = wsMaxFrameBytes;
+            if (mt.WsConnectTimeoutSeconds is { } wsTimeout) target.MtProto.WsConnectTimeoutSeconds = wsTimeout;
+            if (mt.SocketBufferKb is { } socketBufferKb) target.MtProto.SocketBufferKb = socketBufferKb;
+            if (mt.WsPoolSize is { } wsPoolSize) target.MtProto.WsPoolSize = wsPoolSize;
+            if (mt.DcIp is { } dcIp) Replace(target.MtProto.DcIp, dcIp);
+        }
+
+        if (dto.Tokens is { } tokens) ReplaceTokens(target.Tokens, tokens);
+
+        if (dto.Stats is { } stats)
+        {
+            if (stats.Enabled is { } enabled) target.Stats.Enabled = enabled;
+            if (stats.TtlSeconds is { } ttl) target.Stats.TtlSeconds = ttl;
+            if (stats.MaxPeers is { } maxPeers) target.Stats.MaxPeers = maxPeers;
+        }
+
         if (dto.Verbose is { } verbose) target.Verbose = verbose;
-        if (dto.LogPath is { } logPath) target.LogPath = logPath;
-        if (dto.AllowInvalidCertificates is { } allowInvalid) target.AllowInvalidCertificates = allowInvalid;
-        if (dto.WsMaxFrameBytes is { } wsMaxFrameBytes) target.WsMaxFrameBytes = wsMaxFrameBytes;
-        if (dto.WsConnectTimeoutSeconds is { } wsTimeout) target.WsConnectTimeoutSeconds = wsTimeout;
-        if (dto.SocketBufferKb is { } socketBufferKb) target.SocketBufferKb = socketBufferKb;
-        if (dto.WsPoolSize is { } wsPoolSize) target.WsPoolSize = wsPoolSize;
         if (dto.MaxConnections is { } maxConnections) target.MaxConnections = maxConnections;
         if (dto.RateLimitPerIp is { } rateLimitPerIp) target.RateLimitPerIp = rateLimitPerIp;
         if (dto.RateLimitWindowSeconds is { } rateLimitWindow) target.RateLimitWindowSeconds = rateLimitWindow;
-        if (dto.MetricsPort is { } metricsPort) target.MetricsPort = metricsPort;
-        if (dto.MetricsHost is { } metricsHost) target.MetricsHost = metricsHost;
         if (dto.WebApiToken is { } webApiToken) target.WebApiToken = webApiToken;
-        if (dto.EnablePerIpStats is { } enablePerIpStats) target.EnablePerIpStats = enablePerIpStats;
-        if (dto.PerIpStatsTtlSeconds is { } perIpTtl) target.PerIpStatsTtlSeconds = perIpTtl;
-        if (dto.PerIpStatsMaxPeers is { } perIpMaxPeers) target.PerIpStatsMaxPeers = perIpMaxPeers;
         if (dto.PrometheusTopPeers is { } prometheusTopPeers) target.PrometheusTopPeers = prometheusTopPeers;
 
         if (dto.EnableSwagger is { } enableSwagger) target.EnableSwagger = enableSwagger;
         if (dto.TimeseriesWindowSeconds is { } tsWindow) target.TimeseriesWindowSeconds = tsWindow;
         if (dto.TimeseriesStepSeconds is { } tsStep) target.TimeseriesStepSeconds = tsStep;
-        if (dto.LogMaxMegabytes is { } logMaxMegabytes) target.LogMaxMegabytes = logMaxMegabytes;
-        if (dto.LogRetainedFileCount is { } logRetainedFileCount) target.LogRetainedFileCount = logRetainedFileCount;
-        if (dto.CfProxyEnabled is { } cfProxyEnabled) target.CfProxyEnabled = cfProxyEnabled;
-        if (dto.CfProxyH2Media is { } cfProxyH2Media) target.CfProxyH2Media = cfProxyH2Media;
+
+        if (dto.Logs is { } logs)
+        {
+            if (logs.Path is { } path) target.Logs.Path = path;
+            if (logs.MaxMegabytes is { } maxMegabytes) target.Logs.MaxMegabytes = maxMegabytes;
+            if (logs.RetainedFileCount is { } retainedFileCount) target.Logs.RetainedFileCount = retainedFileCount;
+        }
+
+        if (dto.CfProxy is { } cf)
+        {
+            if (cf.Enabled is { } cfEnabled) target.CfProxy.Enabled = cfEnabled;
+            if (cf.H2Media is { } cfH2Media) target.CfProxy.H2Media = cfH2Media;
+            if (cf.Domains is { } cfDomains) Replace(target.CfProxy.Domains, cfDomains);
+            if (cf.WorkerDomains is { } cfWorkerDomains) Replace(target.CfProxy.WorkerDomains, cfWorkerDomains);
+        }
+
         if (dto.DisableSecure is { } disableSecure) target.DisableSecure = disableSecure;
         if (dto.FakeTlsDomain is { } fakeTlsDomain) target.FakeTlsDomain = fakeTlsDomain;
         if (dto.ProxyProtocol is { } proxyProtocol) target.ProxyProtocol = proxyProtocol;
         if (dto.ForceTestDc is { } forceTestDc) target.ForceTestDc = forceTestDc;
-        if (dto.WebProxyEnabled is { } webProxyEnabled) target.WebProxyEnabled = webProxyEnabled;
-        if (dto.WebProxyHost is { } webProxyHost) target.WebProxyHost = webProxyHost;
-        if (dto.WebProxyPort is { } webProxyPort) target.WebProxyPort = webProxyPort;
-        if (dto.WebProxyBasePath is { } webProxyBasePath) target.WebProxyBasePath = webProxyBasePath;
-        if (dto.WebProxyPublicHost is { } webProxyPublicHost) target.WebProxyPublicHost = webProxyPublicHost.Trim();
-        if (dto.WebProxyCertPath is { } webProxyCertPath) target.WebProxyCertPath = webProxyCertPath;
-        if (dto.WebProxyCertPassword is { } webProxyCertPassword) target.WebProxyCertPassword = webProxyCertPassword;
-        if (dto.WebProxyCarrierMode is { } webProxyCarrierMode) target.WebProxyCarrierMode = webProxyCarrierMode.Trim();
-        if (dto.WebProxyMaxSessions is { } webProxyMaxSessions) target.WebProxyMaxSessions = webProxyMaxSessions;
-        if (dto.WebProxyMaxSessionsPerIp is { } webProxyMaxSessionsPerIp) target.WebProxyMaxSessionsPerIp = webProxyMaxSessionsPerIp;
-        if (dto.WebProxyMaxStreamsPerSession is { } webProxyMaxStreamsPerSession) target.WebProxyMaxStreamsPerSession = webProxyMaxStreamsPerSession;
-        if (dto.WebProxyMaxStreams is { } webProxyMaxStreams) target.WebProxyMaxStreams = webProxyMaxStreams;
-        if (dto.WebProxyMaxPendingBytesPerSession is { } webProxyMaxPendingBytes) target.WebProxyMaxPendingBytesPerSession = webProxyMaxPendingBytes;
-        if (dto.WebProxyMaxPendingItemsPerSession is { } webProxyMaxPendingItems) target.WebProxyMaxPendingItemsPerSession = webProxyMaxPendingItems;
 
-        if (dto.DcIp is { } dcIp) Replace(target.DcIp, dcIp);
+        if (dto.WebProxy is { } wp)
+        {
+            if (wp.Enabled is { } wpEnabled) target.WebProxy.Enabled = wpEnabled;
+            if (wp.Port is { } wpPort) target.WebProxy.Port = wpPort;
+            if (wp.BasePath is { } wpBasePath) target.WebProxy.BasePath = wpBasePath;
+            if (wp.PublicHost is { } wpPublicHost) target.WebProxy.PublicHost = wpPublicHost.Trim();
+            if (wp.CertPath is { } wpCertPath) target.WebProxy.CertPath = wpCertPath;
+            if (wp.CertPassword is { } wpCertPassword) target.WebProxy.CertPassword = wpCertPassword;
+            if (wp.CarrierMode is { } wpCarrierMode) target.WebProxy.CarrierMode = wpCarrierMode.Trim();
+            if (wp.MaxSessions is { } wpMaxSessions) target.WebProxy.MaxSessions = wpMaxSessions;
+            if (wp.MaxSessionsPerIp is { } wpMaxSessionsPerIp) target.WebProxy.MaxSessionsPerIp = wpMaxSessionsPerIp;
+            if (wp.MaxStreamsPerSession is { } wpMaxStreamsPerSession) target.WebProxy.MaxStreamsPerSession = wpMaxStreamsPerSession;
+            if (wp.MaxStreams is { } wpMaxStreams) target.WebProxy.MaxStreams = wpMaxStreams;
+            if (wp.MaxPendingBytesPerSession is { } wpMaxPendingBytes) target.WebProxy.MaxPendingBytesPerSession = wpMaxPendingBytes;
+            if (wp.MaxPendingItemsPerSession is { } wpMaxPendingItems) target.WebProxy.MaxPendingItemsPerSession = wpMaxPendingItems;
+        }
+
+        if (dto.Otel is { } otel)
+        {
+            if (otel.Enabled is { } enabled) target.Otel.Enabled = enabled;
+            if (otel.ServiceName is { } serviceName) target.Otel.ServiceName = serviceName.Trim();
+            if (otel.Endpoint is { } endpoint) target.Otel.Endpoint = endpoint.Trim();
+            if (otel.Protocol is { } protocol) target.Otel.Protocol = protocol.Trim();
+            if (otel.ExportTraces is { } exportTraces) target.Otel.ExportTraces = exportTraces;
+            if (otel.ExportLogs is { } exportLogs) target.Otel.ExportLogs = exportLogs;
+            if (otel.ExportMetrics is { } exportMetrics) target.Otel.ExportMetrics = exportMetrics;
+        }
+
         if (dto.AllowIp is { } allowIp) Replace(target.AllowIp, allowIp);
         if (dto.DenyIp is { } denyIp) Replace(target.DenyIp, denyIp);
-        if (dto.CfProxyDomains is { } cfProxyDomains) Replace(target.CfProxyDomains, cfProxyDomains);
-        if (dto.CfProxyWorkerDomains is { } cfWorkerDomains) Replace(target.CfProxyWorkerDomains, cfWorkerDomains);
-        if (dto.Tokens is { } tokens) ReplaceTokens(target.Tokens, tokens);
     }
 
     /// <summary>
@@ -83,57 +112,78 @@ public static class ConfigDtoMapper
 
         return new ConfigDto
         {
-            Port = config.Port,
-            Host = config.Host,
-            PublicHost = config.PublicHost,
-            DcIp = [.. config.DcIp],
+            MtProto = new MtProtoConfigDto
+            {
+                Port = config.MtProto.Port,
+                PublicHost = config.MtProto.PublicHost,
+                DcIp = [.. config.MtProto.DcIp],
+                AllowInvalidCertificates = config.MtProto.AllowInvalidCertificates,
+                WsMaxFrameBytes = config.MtProto.WsMaxFrameBytes,
+                WsConnectTimeoutSeconds = config.MtProto.WsConnectTimeoutSeconds,
+                SocketBufferKb = config.MtProto.SocketBufferKb,
+                WsPoolSize = config.MtProto.WsPoolSize,
+            },
+            Tokens = [.. config.Tokens.Select(static token => token.Clone())],
             AllowIp = [.. config.AllowIp],
             DenyIp = [.. config.DenyIp],
             Verbose = config.Verbose,
-            LogPath = config.LogPath,
-            AllowInvalidCertificates = config.AllowInvalidCertificates,
-            WsMaxFrameBytes = config.WsMaxFrameBytes,
-            WsConnectTimeoutSeconds = config.WsConnectTimeoutSeconds,
-            SocketBufferKb = config.SocketBufferKb,
-            WsPoolSize = config.WsPoolSize,
             MaxConnections = config.MaxConnections,
             RateLimitPerIp = config.RateLimitPerIp,
             RateLimitWindowSeconds = config.RateLimitWindowSeconds,
-            MetricsPort = config.MetricsPort,
-            MetricsHost = config.MetricsHost,
             WebApiToken = config.WebApiToken,
-            EnablePerIpStats = config.EnablePerIpStats,
-            PerIpStatsTtlSeconds = config.PerIpStatsTtlSeconds,
-            PerIpStatsMaxPeers = config.PerIpStatsMaxPeers,
+            Stats = new StatsConfigDto
+            {
+                Enabled = config.Stats.Enabled,
+                TtlSeconds = config.Stats.TtlSeconds,
+                MaxPeers = config.Stats.MaxPeers,
+            },
             PrometheusTopPeers = config.PrometheusTopPeers,
             EnableSwagger = config.EnableSwagger,
             TimeseriesWindowSeconds = config.TimeseriesWindowSeconds,
             TimeseriesStepSeconds = config.TimeseriesStepSeconds,
-            LogMaxMegabytes = config.LogMaxMegabytes,
-            LogRetainedFileCount = config.LogRetainedFileCount,
-            CfProxyEnabled = config.CfProxyEnabled,
-            CfProxyDomains = [.. config.CfProxyDomains],
-            CfProxyWorkerDomains = [.. config.CfProxyWorkerDomains],
-            CfProxyH2Media = config.CfProxyH2Media,
+            Logs = new LogsConfigDto
+            {
+                Path = config.Logs.Path,
+                MaxMegabytes = config.Logs.MaxMegabytes,
+                RetainedFileCount = config.Logs.RetainedFileCount,
+            },
+            CfProxy = new CfProxyConfigDto
+            {
+                Enabled = config.CfProxy.Enabled,
+                H2Media = config.CfProxy.H2Media,
+                Domains = [.. config.CfProxy.Domains],
+                WorkerDomains = [.. config.CfProxy.WorkerDomains],
+            },
             DisableSecure = config.DisableSecure,
             FakeTlsDomain = config.FakeTlsDomain,
             ProxyProtocol = config.ProxyProtocol,
             ForceTestDc = config.ForceTestDc,
-            WebProxyEnabled = config.WebProxyEnabled,
-            WebProxyHost = config.WebProxyHost,
-            WebProxyPort = config.WebProxyPort,
-            WebProxyBasePath = config.WebProxyBasePath,
-            WebProxyPublicHost = config.WebProxyPublicHost,
-            WebProxyCertPath = config.WebProxyCertPath,
-            WebProxyCertPassword = config.WebProxyCertPassword,
-            WebProxyCarrierMode = config.WebProxyCarrierMode,
-            WebProxyMaxSessions = config.WebProxyMaxSessions,
-            WebProxyMaxSessionsPerIp = config.WebProxyMaxSessionsPerIp,
-            WebProxyMaxStreamsPerSession = config.WebProxyMaxStreamsPerSession,
-            WebProxyMaxStreams = config.WebProxyMaxStreams,
-            WebProxyMaxPendingBytesPerSession = config.WebProxyMaxPendingBytesPerSession,
-            WebProxyMaxPendingItemsPerSession = config.WebProxyMaxPendingItemsPerSession,
-            Tokens = [.. config.Tokens.Select(static token => token.Clone())],
+            WebProxy = new WebProxyConfigDto
+            {
+                Enabled = config.WebProxy.Enabled,
+                Port = config.WebProxy.Port,
+                BasePath = config.WebProxy.BasePath,
+                PublicHost = config.WebProxy.PublicHost,
+                CertPath = config.WebProxy.CertPath,
+                CertPassword = config.WebProxy.CertPassword,
+                CarrierMode = config.WebProxy.CarrierMode,
+                MaxSessions = config.WebProxy.MaxSessions,
+                MaxSessionsPerIp = config.WebProxy.MaxSessionsPerIp,
+                MaxStreamsPerSession = config.WebProxy.MaxStreamsPerSession,
+                MaxStreams = config.WebProxy.MaxStreams,
+                MaxPendingBytesPerSession = config.WebProxy.MaxPendingBytesPerSession,
+                MaxPendingItemsPerSession = config.WebProxy.MaxPendingItemsPerSession,
+            },
+            Otel = new OtelConfigDto
+            {
+                Enabled = config.Otel.Enabled,
+                ServiceName = config.Otel.ServiceName,
+                Endpoint = config.Otel.Endpoint,
+                Protocol = config.Otel.Protocol,
+                ExportTraces = config.Otel.ExportTraces,
+                ExportLogs = config.Otel.ExportLogs,
+                ExportMetrics = config.Otel.ExportMetrics,
+            },
         };
     }
 

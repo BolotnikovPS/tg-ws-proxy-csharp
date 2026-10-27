@@ -36,7 +36,7 @@ internal sealed class CfWorkerPool(
     /// <inheritdoc />
     public (IRawWebSocket Ws, string Domain)? TryGet(int dc, string fallbackDst, IReadOnlyList<string> workerDomains)
     {
-        if (config.WsPoolSize <= 0 || workerDomains.Count == 0)
+        if (config.MtProto.WsPoolSize <= 0 || workerDomains.Count == 0)
         {
             return null;
         }
@@ -105,7 +105,7 @@ internal sealed class CfWorkerPool(
     /// <inheritdoc />
     public void Warmup()
     {
-        if (config.WsPoolSize <= 0 || config.CfProxyWorkerDomains.Count == 0)
+        if (config.MtProto.WsPoolSize <= 0 || config.CfProxy.WorkerDomains.Count == 0)
         {
             return;
         }
@@ -118,7 +118,7 @@ internal sealed class CfWorkerPool(
                 continue;
             }
 
-            ScheduleRefill(dc, fallbackDst, config.CfProxyWorkerDomains);
+            ScheduleRefill(dc, fallbackDst, config.CfProxy.WorkerDomains);
             scheduled++;
         }
 
@@ -149,7 +149,7 @@ internal sealed class CfWorkerPool(
     /// </summary>
     private void ScheduleRefill(int dc, string fallbackDst, IReadOnlyList<string> workerDomains)
     {
-        if (config.WsPoolSize <= 0 || !refilling.TryAdd(dc, 0))
+        if (config.MtProto.WsPoolSize <= 0 || !refilling.TryAdd(dc, 0))
         {
             return;
         }
@@ -170,7 +170,7 @@ internal sealed class CfWorkerPool(
         try
         {
             var bucket = idle.GetOrAdd(dc, _ => new ConcurrentQueue<PooledWorkerWs>());
-            var targetSize = Math.Min(config.WsPoolSize, PerDcLimit);
+            var targetSize = Math.Min(config.MtProto.WsPoolSize, PerDcLimit);
             var needed = targetSize - bucket.Count;
             if (needed <= 0)
             {

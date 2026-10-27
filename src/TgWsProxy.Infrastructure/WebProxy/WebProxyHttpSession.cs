@@ -53,12 +53,12 @@ public sealed class WebProxyHttpSession : IAsyncDisposable
 
     /// <param name="startBridge">Запуск моста для открытого потока.</param>
     /// <param name="maxStreamsPerSession">
-    /// Предел одновременных потоков (<c>webProxyMaxStreamsPerSession</c>), <c>0</c> — без ограничения.
+    /// Предел одновременных потоков (<c>webProxy.maxStreamsPerSession</c>), <c>0</c> — без ограничения.
     /// </param>
     /// <param name="tryAcquireGlobalStream">Резерв слота в глобальном бюджете потоков.</param>
     /// <param name="releaseGlobalStream">Возврат глобального слота.</param>
     /// <param name="maxPendingBytes">
-    /// Предел байт в исходящей очереди (<c>webProxyMaxPendingBytesPerSession</c>); при превышении
+    /// Предел байт в исходящей очереди (<c>webProxy.maxPendingBytesPerSession</c>); при превышении
     /// сессия закрывается — клиент обязан переподключиться (F-W.25).
     /// </param>
     /// <param name="maxPendingItems">Предел числа кадров в исходящей очереди (F-W.25).</param>

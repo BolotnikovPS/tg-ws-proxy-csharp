@@ -58,7 +58,7 @@ internal sealed class WsPool(
     /// <inheritdoc />
     public IRawWebSocket? TryGet(int dc, bool isMedia, bool isTestDc)
     {
-        if (config.WsPoolSize <= 0 || !TryResolveTarget(dc, out var targetIp))
+        if (config.MtProto.WsPoolSize <= 0 || !TryResolveTarget(dc, out var targetIp))
         {
             return null;
         }
@@ -112,7 +112,7 @@ internal sealed class WsPool(
     /// <inheritdoc />
     public void Warmup()
     {
-        if (config.WsPoolSize <= 0)
+        if (config.MtProto.WsPoolSize <= 0)
         {
             return;
         }
@@ -187,7 +187,7 @@ internal sealed class WsPool(
     /// </summary>
     private void ScheduleRefill(PoolKey key, string targetIp)
     {
-        if (config.WsPoolSize <= 0)
+        if (config.MtProto.WsPoolSize <= 0)
         {
             return;
         }
@@ -224,7 +224,7 @@ internal sealed class WsPool(
     {
         try
         {
-            var needed = config.WsPoolSize - CountIdle(key);
+            var needed = config.MtProto.WsPoolSize - CountIdle(key);
             if (needed <= 0)
             {
                 return;
@@ -409,7 +409,7 @@ internal sealed class WsPool(
                 pending = [];
                 foreach (var key in known)
                 {
-                    if (CountIdleLocked(key) >= config.WsPoolSize)
+                    if (CountIdleLocked(key) >= config.MtProto.WsPoolSize)
                     {
                         continue;
                     }

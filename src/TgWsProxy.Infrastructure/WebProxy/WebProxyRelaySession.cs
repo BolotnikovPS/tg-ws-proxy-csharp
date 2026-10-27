@@ -31,7 +31,7 @@ internal sealed class WebProxyRelaySession(
             return null;
         }
 
-        var basePath = BridgeCapabilityVerifier.NormalizeBasePath(cfg.WebProxyBasePath);
+        var basePath = BridgeCapabilityVerifier.NormalizeBasePath(cfg.WebProxy.BasePath);
         var candidates = tokens.HandshakeOrder;
         for (var i = 0; i < candidates.Count; i++)
         {
@@ -105,6 +105,14 @@ internal sealed class WebProxyRelaySession(
     {
         try
         {
+            // Структурированная корреляция relay-потока: tokenId + streamId доступны для поиска
+            // во всех событиях этого потока (bad handshake, bridge error и т.д.).
+            using var streamScope = logger.BeginScope(new Dictionary<string, object>
+            {
+                ["TokenId"] = token.Id,
+                ["StreamId"] = stream.StreamId,
+            });
+
             var init = new byte[Protocol.HandshakeLen];
             await ReadExactlyAsync(stream, init, ct).ConfigureAwait(false);
 
