@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Application.Logic;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;

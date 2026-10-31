@@ -20,7 +20,7 @@ namespace TgWsProxy.Web;
 /// Счётчики публикуются через <c>IncTo</c>: значения в снимке кумулятивные, поэтому
 /// повторный сбор всегда даёт актуальное значение без ведения дельт.
 /// </remarks>
-public sealed class ProxyMetrics
+internal sealed class ProxyMetrics
 {
     /// <summary>Content-Type экспозиции Prometheus (text format 0.0.4).</summary>
     public const string ContentType = "text/plain; version=0.0.4; charset=utf-8";

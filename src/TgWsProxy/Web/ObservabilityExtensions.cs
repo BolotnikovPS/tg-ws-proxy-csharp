@@ -13,7 +13,7 @@ namespace TgWsProxy.Web;
 /// сервисов: эндпоинты <c>/metrics</c> и <c>/healthz/ready</c> без этих регистраций
 /// падают при построении маршрутов, а не при запросе.
 /// </remarks>
-public static class ObservabilityExtensions
+internal static class ObservabilityExtensions
 {
     /// <summary>
     /// Добавляет реестр метрик, health checks и публикаторы их статусов.

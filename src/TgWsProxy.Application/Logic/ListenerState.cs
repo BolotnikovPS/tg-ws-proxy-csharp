@@ -1,4 +1,4 @@
-namespace TgWsProxy.Application.Abstractions;
+namespace TgWsProxy.Application.Logic;
 
 /// <summary>
 /// Состояние прокси-листенера, которое видят <c>/healthz/ready</c> и страница (F-3.9, F-5.18).

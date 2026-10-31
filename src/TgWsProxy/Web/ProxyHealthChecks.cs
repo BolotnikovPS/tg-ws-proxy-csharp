@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Prometheus;
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Application.Logic;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
@@ -11,7 +12,7 @@ namespace TgWsProxy.Web;
 /// Проверка живости процесса (F-3.4): отвечает Healthy, пока обслуживается сам
 /// HTTP-запрос. Используется как liveness-проверка <c>/healthz</c>.
 /// </summary>
-public sealed class SelfHealthCheck : IHealthCheck
+internal sealed class SelfHealthCheck : IHealthCheck
 {
     /// <inheritdoc />
     public Task<HealthCheckResult> CheckHealthAsync(
@@ -24,7 +25,7 @@ public sealed class SelfHealthCheck : IHealthCheck
 /// состояние Degraded; если слушатель не поднят — Unhealthy.
 /// </summary>
 /// <param name="listener">Контроллер слушателя.</param>
-public sealed class ListenerHealthCheck(IListenerController listener) : IHealthCheck
+internal sealed class ListenerHealthCheck(IListenerController listener) : IHealthCheck
 {
     /// <inheritdoc />
     public Task<HealthCheckResult> CheckHealthAsync(
@@ -47,7 +48,7 @@ public sealed class ListenerHealthCheck(IListenerController listener) : IHealthC
 /// </summary>
 /// <param name="config">Действующая конфигурация.</param>
 /// <param name="runtime">Сведения о файле конфигурации.</param>
-public sealed class ConfigHealthCheck(Config config, ConfigRuntime runtime) : IHealthCheck
+internal sealed class ConfigHealthCheck(Config config, ConfigRuntime runtime) : IHealthCheck
 {
     /// <inheritdoc />
     public Task<HealthCheckResult> CheckHealthAsync(
@@ -111,7 +112,7 @@ public sealed class ConfigHealthCheck(Config config, ConfigRuntime runtime) : IH
 /// означает потерю данных мониторинга, поэтому состояние Degraded.
 /// </summary>
 /// <param name="peerStats">Реестр статистики по парам (IP, токен).</param>
-public sealed class PeerStatsHealthCheck(IPeerStatsRegistry peerStats) : IHealthCheck
+internal sealed class PeerStatsHealthCheck(IPeerStatsRegistry peerStats) : IHealthCheck
 {
     /// <inheritdoc />
     public Task<HealthCheckResult> CheckHealthAsync(
@@ -132,7 +133,7 @@ public sealed class PeerStatsHealthCheck(IPeerStatsRegistry peerStats) : IHealth
 /// «слушает». Выключенный bridge не влияет на readiness.
 /// </summary>
 /// <param name="config">Действующая конфигурация.</param>
-public sealed class WebProxyHealthCheck(Config config) : IHealthCheck
+internal sealed class WebProxyHealthCheck(Config config) : IHealthCheck
 {
     /// <inheritdoc />
     public Task<HealthCheckResult> CheckHealthAsync(
@@ -158,7 +159,7 @@ public sealed class WebProxyHealthCheck(Config config) : IHealthCheck
 /// </remarks>
 /// <param name="healthCheckService">Служба выполнения health check.</param>
 /// <param name="metrics">Реестр метрик приложения.</param>
-public sealed class HealthDurationPublisher(
+internal sealed class HealthDurationPublisher(
     HealthCheckService healthCheckService, ProxyMetrics metrics) : IHealthCheckPublisher
 {
     /// <inheritdoc />

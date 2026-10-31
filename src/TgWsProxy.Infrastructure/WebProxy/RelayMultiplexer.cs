@@ -8,7 +8,7 @@ namespace TgWsProxy.Infrastructure.WebProxy;
 /// <see cref="IRelayFrameSink"/> (аренда буфера из <see cref="ArrayPool{T}"/>, без копирования
 /// в исходящий буфер).
 /// </summary>
-public sealed class RelayMultiplexer : IAsyncDisposable
+internal sealed class RelayMultiplexer : IAsyncDisposable
 {
     private readonly IRelayFrameSink _sink;
     private readonly Func<RelayStream, CancellationToken, Task>? _startBridge;

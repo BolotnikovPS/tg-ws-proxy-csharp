@@ -9,7 +9,7 @@ namespace TgWsProxy.Infrastructure.Session;
 /// от Serilog напрямую и сохраняет чистоту слоёв. Имена свойств — единые константы
 /// <see cref="LoggingConstants"/>.
 /// </summary>
-public static class SessionLogScope
+internal static class SessionLogScope
 {
     /// <summary>
     /// Открывает scope со свойствами, известными до handshake: идентификатор соединения и адрес

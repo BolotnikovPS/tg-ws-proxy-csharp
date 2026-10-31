@@ -43,7 +43,7 @@ public enum RelayFrameType : byte
 }
 
 /// <summary>Причина отклонения кадра на разборе.</summary>
-public enum RelayFrameError
+internal enum RelayFrameError
 {
     None = 0,
 
@@ -65,7 +65,7 @@ public readonly record struct RelayFrame(RelayFrameType Type, int StreamId, Read
 /// <c>[type:1][streamId:3][length:4]</c> + payload. Горячий путь без копирования payload:
 /// <see cref="TryParse"/> возвращает срез входного буфера.
 /// </summary>
-public static class RelayFrameCodec
+internal static class RelayFrameCodec
 {
     /// <summary>Размер заголовка кадра в байтах (<c>kFrameHeaderSize</c>).</summary>
     public const int FrameHeaderSize = 8;

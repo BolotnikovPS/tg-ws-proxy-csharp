@@ -1,4 +1,5 @@
 using TgWsProxy.Application.Logic;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Test;

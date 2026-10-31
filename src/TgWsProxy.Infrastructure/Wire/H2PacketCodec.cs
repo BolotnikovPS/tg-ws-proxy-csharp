@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using TgWsProxy.Application.Logic;
+using TgWsProxy.Infrastructure.Transport;
 
 namespace TgWsProxy.Infrastructure.Wire;
 
@@ -7,7 +8,7 @@ namespace TgWsProxy.Infrastructure.Wire;
 /// Разбор и сборка MTProto-пакетов для HTTP/2-транспорта через Cloudflare
 /// (порт upstream <c>_read_packet</c> / <c>_encode_reply</c> из <c>proxy/cf_h2.py</c>).
 /// </summary>
-public static class H2PacketCodec
+internal static class H2PacketCodec
 {
     /// <summary>Минимальный допустимый размер MTProto-пакета.</summary>
     public const int MinPacketLength = 24;

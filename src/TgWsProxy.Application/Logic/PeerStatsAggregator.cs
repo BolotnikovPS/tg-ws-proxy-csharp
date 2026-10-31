@@ -1,12 +1,12 @@
 using TgWsProxy.Domain;
 
-namespace TgWsProxy.Web;
+namespace TgWsProxy.Application.Logic;
 
 /// <summary>
 /// Сводит снимок реестра «IP, токен» в запрошенный разрез (F-9.4):
 /// <c>pair</c> — как есть, <c>ip</c> — сумма по адресу, <c>token</c> — сумма по токену.
 /// </summary>
-public static class PeerStatsAggregator
+internal static class PeerStatsAggregator
 {
     /// <summary>Разрез по паре «адрес, токен» (по умолчанию).</summary>
     public const string GroupPair = "pair";

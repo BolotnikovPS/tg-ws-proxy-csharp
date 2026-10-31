@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.Diagnostics;
 using TgWsProxy.Infrastructure.FakeTls;
@@ -38,12 +39,18 @@ public static class ServiceCollectionExtensions
             // Relay-сессия WEB proxy: подбор токена по HMAC bridge-capability и жизненный цикл
             // сессии (статистика/реестр); менеджер сессий — bootstrap/session-токены и слоты.
             .AddSingleton<IWebProxyRelaySession, WebProxyRelaySession>()
+            // Ссылки WEB proxy для /api/tokens/{id}/link: прикладной слой обращается к ним
+            // через порт, а маркер секрета и HMAC capability остаются в Infrastructure (F-8.8).
+            .AddSingleton<IWebProxyLinks, WebProxyLinks>()
             // Глобальный бюджет relay-потоков (webProxy.maxStreams) — общий на все сессии.
             .AddSingleton<WebProxyStreamBudget>()
             .AddSingleton<WebProxySessionManager>()
             .AddSingleton<IClientSessionHandler, ClientSessionHandler>()
             .AddSingleton<IActiveSessionRegistry, ActiveSessionRegistry>()
             .AddSingleton(sp => new MetricsHistory(sp.GetRequiredService<Config>()))
+            // Ответ /api/metrics/timeseries формирует обработчик запроса в слое Application:
+            // он видит буфер через абстракцию, поэтому Infrastructure не протекает наружу (F-3.3).
+            .AddSingleton<ITimeseriesReader>(sp => sp.GetRequiredService<MetricsHistory>())
             // Ключи timeseries* применяются горячо: ConfigUpdateService пересоздаёт буфер
             // через абстракцию, чтобы слой Application не зависел от Infrastructure (F-2.11).
             .AddSingleton<ITimeseriesBufferConfigurator>(sp => sp.GetRequiredService<MetricsHistory>())

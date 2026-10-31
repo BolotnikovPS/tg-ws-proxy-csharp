@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using TgWsProxy.Application.Logic;
+using TgWsProxy.Infrastructure.Transport;
 
 namespace TgWsProxy.Infrastructure.Wire;
 

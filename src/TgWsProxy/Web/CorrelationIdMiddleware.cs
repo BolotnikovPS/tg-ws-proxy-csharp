@@ -9,7 +9,7 @@ namespace TgWsProxy.Web;
 /// корреляции от вышестоящего компонента (реверс-прокси). Имена заголовков/свойств — единые
 /// константы <see cref="LoggingConstants"/>.
 /// </summary>
-public sealed class CorrelationIdMiddleware(RequestDelegate next)
+internal sealed class CorrelationIdMiddleware(RequestDelegate next)
 {
     /// <summary>Обрабатывает запрос: устанавливает/пробрасывает идентификатор корреляции.</summary>
     public async Task InvokeAsync(HttpContext context)

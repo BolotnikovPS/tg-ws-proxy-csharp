@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.Instances;

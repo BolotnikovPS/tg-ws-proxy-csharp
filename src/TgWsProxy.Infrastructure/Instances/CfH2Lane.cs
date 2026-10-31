@@ -7,6 +7,7 @@ using System.Security.Authentication;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Domain.Exceptions;
 using TgWsProxy.Infrastructure.Wire;

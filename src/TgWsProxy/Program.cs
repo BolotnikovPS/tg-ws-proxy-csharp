@@ -1,18 +1,12 @@
 using System.Diagnostics;
 using System.Reflection;
-using System.Security.Cryptography;
-using Microsoft.AspNetCore.Server.Kestrel.Core;
-using Microsoft.AspNetCore.Server.Kestrel.Https;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.OpenApi;
-using Prometheus;
 using Serilog;
 using Serilog.Enrichers.Span;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
 using Serilog.Sinks.OpenTelemetry;
 using TgWsProxy.Application;
-using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure;
@@ -242,13 +236,13 @@ var proxyService = app.Services.GetRequiredService<ProxyHostedService>();
 if (string.IsNullOrWhiteSpace(cfg.WebApiToken))
 {
     startupLogger.LogWarning(
-        "Web API is webApiToken is empty: " +
+        "Web API is listening on all interfaces (port 80), and webApiToken is empty: " +
         "anyone who can reach this port can read metrics and change the configuration");
 }
 else
 {
     startupLogger.LogInformation(
-        "Web API is requires a bearer token for /api/*");
+        "Web API is listening on all interfaces (port 80), and requires a bearer token for /api/*");
 }
 
 // «Слушает» логируется только после успешного старта хоста: ApplicationStarted
@@ -309,10 +303,7 @@ static void ConfigureSerilog(
         .Enrich.WithProperty(LoggingConstants.Version, appVersion)
         .Enrich.WithSpan()
         .Destructure.With(new SecretMaskingPolicy())
-        .WriteTo.Console(outputTemplate:
-            "[{Timestamp:HH:mm:ss} {Level:u3}] {SourceContext} {Message:lj} " +
-            $"[{{{LoggingConstants.TraceId}}}] [{{{LoggingConstants.CorrelationIdProperty}}}]" +
-            "{NewLine}{Exception}");
+        .WriteTo.Console(new CompactJsonFormatter());
 
     if (!string.IsNullOrWhiteSpace(cfg.Logs.Path))
     {

@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace TgWsProxy.Application.Logic;
+namespace TgWsProxy.Infrastructure.Transport;
 
 /// <summary>
 /// Работа с обфусцированным списком CF proxy доменов (порт upstream <c>config.py</c>).

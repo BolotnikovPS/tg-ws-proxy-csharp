@@ -12,7 +12,7 @@ namespace TgWsProxy.Logging;
 /// деструктурируются как обычно. Имена чувствительных типов и значение-заглушка — в
 /// <see cref="LoggingConstants"/>.
 /// </summary>
-public sealed class SecretMaskingPolicy : IDestructuringPolicy
+internal sealed class SecretMaskingPolicy : IDestructuringPolicy
 {
     /// <inheritdoc />
     public bool TryDestructure(

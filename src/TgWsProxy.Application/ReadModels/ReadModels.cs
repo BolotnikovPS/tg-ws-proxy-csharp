@@ -1,6 +1,6 @@
 using TgWsProxy.Domain;
 
-namespace TgWsProxy.Models;
+namespace TgWsProxy.Application.ReadModels;
 
 /// <summary>
 /// Ответ <c>GET /api/info</c>: версия, время работы и состояние подсистем прокси (F-3.6).
@@ -51,12 +51,6 @@ public sealed record TokenDto(
         token.LastUsedAt,
         activeSessions);
 }
-
-/// <summary>
-/// Тело запроса на создание токена (F-8.8). Секрет необязателен: без него сервер генерирует
-/// 32 hex-символа, что исключает слабые секреты из панели.
-/// </summary>
-public sealed record CreateTokenRequest(string? Name, string? Secret, bool? Enabled);
 
 /// <summary>
 /// Тело запроса на изменение токена (F-8.8). Отсутствующее поле не меняется;

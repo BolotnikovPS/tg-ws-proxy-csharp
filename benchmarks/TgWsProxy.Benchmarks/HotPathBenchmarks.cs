@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Application.Logic;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Instances;
 using TgWsProxy.Infrastructure.Wire;
 

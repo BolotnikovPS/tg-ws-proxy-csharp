@@ -5,7 +5,7 @@ namespace TgWsProxy.Infrastructure.IO;
 /// (<see cref="BytesRead"/> / <see cref="BytesWritten"/>). Не владеет внутренним потоком
 /// и не закрывает его при освобождении.
 /// </summary>
-public sealed class CountingStream : Stream
+internal sealed class CountingStream : Stream
 {
     private readonly Stream _inner;
 

@@ -8,13 +8,23 @@ using TgWsProxy.Infrastructure.Hosting;
 namespace TgWsProxy.Test;
 
 /// <summary>
-/// Регистрация DI: набор сервисов приложения должен собираться без исключений и
-/// содержать ровно один <see cref="IHostedService"/> — прокси-хост (F-1.1).
+/// Регистрация DI: набор сервисов приложения должен собираться без исключений (F-1.1).
 /// </summary>
 /// <remarks>
-/// Проверка появилась после регрессии: <c>AddHostedService&lt;IHostedService&gt;(...)</c>
-/// падает прямо в момент регистрации («implementation type is indistinguishable»),
-/// то есть приложение не стартовало вообще, хотя сборка и юнит-тесты были зелёными.
+/// <para>
+/// <c>ProxyRegistrations_Build_WithSingleHostedService</c> появилась после регрессии:
+/// <c>AddHostedService&lt;IHostedService&gt;(...)</c> падала прямо в момент регистрации
+/// («implementation type is indistinguishable»), хотя сборка и юнит-тесты были зелёными.
+/// Сейчас прокси-хост регистрируется фабрикой (<c>AddSingleton&lt;IHostedService&gt;(sp =&gt;
+/// sp.GetRequiredService&lt;ProxyHostedService&gt;())</c>), а не <c>AddHostedService</c>,
+/// поэтому сама регистрация — уже доказательство, что регрессия не вернулась.
+/// </para>
+/// <para>
+/// Assert.Single ровно на один <c>IHostedService</c> больше некорректен: с появлением
+/// Wolverine (шина CQRS в слое Application) в контейнере оказывается несколько hosted-сервисов.
+/// Инвариант — приложению принадлежит ровно один hosted-сервис, <c>ProxyHostedService</c>,
+/// и он зарегистрирован как singleton (F-1.1).
+/// </para>
 /// </remarks>
 public sealed class DiRegistrationTests
 {
@@ -27,8 +37,16 @@ public sealed class DiRegistrationTests
 
         services.AddProxyApplication().AddProxyInfrastructure();
 
-        var hosted = Assert.Single(services, static descriptor => descriptor.ServiceType == typeof(IHostedService));
-        Assert.Equal(ServiceLifetime.Singleton, hosted.Lifetime);
+        // Приложению принадлежит ровно один экземпляр прокси-хоста (F-1.1),
+        // и он — singleton.
+        var proxyHost = Assert.Single(services, static descriptor =>
+            descriptor.ServiceType == typeof(ProxyHostedService));
+        Assert.Equal(ServiceLifetime.Singleton, proxyHost.Lifetime);
+
+        // IHostedService-регистрации присутствуют (одна для прокси-хоста, плюс
+        // собственные hosted-сервисы Wolverine — шина CQRS в слое Application).
+        Assert.Contains(services, static descriptor =>
+            descriptor.ServiceType == typeof(IHostedService));
     }
 
     [Fact]

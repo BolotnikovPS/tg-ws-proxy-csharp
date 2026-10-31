@@ -24,14 +24,14 @@
 services:
   tg-ws-proxy:
     container_name: tg-ws-proxy
-    image: pboldev/tg-ws-proxy:3.2.0-beta1
+    image: pboldev/tg-ws-proxy:3.2.0-beta2
     restart: unless-stopped
     ports:
       - "${TG_PORT:-1443}:1443"
       # Web API и информационная панель. Слушает все интерфейсы на порту 80.
       # Публикуйте только вместе с webApiToken, иначе любой, кто дотянется до порта,
       # сможет читать метрики и менять конфиг.
-      - "80:80"
+      - "8081:80"
       # WEB proxy (browser-relay bridge). Снаружи — стандартный HTTPS 443; внутри
       # контейнера слушаем непривилегированный 8443, т.к. образ работает под нерутом
       # (USER $APP_UID) и порты <1024 ему недоступны. Правое число обязано совпадать

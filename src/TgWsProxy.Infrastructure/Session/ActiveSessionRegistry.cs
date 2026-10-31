@@ -11,7 +11,7 @@ namespace TgWsProxy.Infrastructure.Session;
 /// поверх WebSocket): обработчик сессии в этот момент ждёт данных в <c>ReceiveAsync</c> и выходит
 /// по исключению сам, без отдельного механизма отмены.
 /// </summary>
-public sealed class ActiveSessionRegistry(ILogger<ActiveSessionRegistry> logger) : IActiveSessionRegistry
+internal sealed class ActiveSessionRegistry(ILogger<ActiveSessionRegistry> logger) : IActiveSessionRegistry
 {
     private readonly ConcurrentDictionary<long, SessionEntry> _sessions = new();
     private long _seq;

@@ -14,7 +14,7 @@ namespace TgWsProxy.Application.Logic;
 /// <c>InvalidOperationException</c> прямо в горячем пути рукопожатия. Неконсистентный снимок
 /// живёт до ближайшего <see cref="Reload"/>, который вызывается сразу после применения.
 /// </summary>
-public sealed class ProxyTokenRegistry(Config config) : IProxyTokenRegistry
+internal sealed class ProxyTokenRegistry(Config config) : IProxyTokenRegistry
 {
     private readonly object _sync = new();
 

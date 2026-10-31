@@ -5,7 +5,7 @@ namespace TgWsProxy.Application.Logic;
 /// которые раньше дублировались в разных классах (лимит учёта peer'ов и частота его
 /// фоновой очистки).
 /// </summary>
-public static class Constants
+internal static class Constants
 {
     /// <summary>Верхняя граница числа отслеживаемых адресов/пар в per-IP учёте и ограничителе частоты.</summary>
     public const int MaxTrackedPeers = 100_000;

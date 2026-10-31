@@ -1,4 +1,4 @@
-namespace TgWsProxy.Application.Abstractions;
+namespace TgWsProxy.Application.Logic;
 
 /// <summary>
 /// Второй одновременный перезапуск листенера запрещён (F-7.6): вызывающая сторона превращает

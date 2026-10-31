@@ -1,6 +1,6 @@
 using System.Collections.Frozen;
 
-namespace TgWsProxy.Application.Logic;
+namespace TgWsProxy.Infrastructure.Transport;
 
 /// <summary>
 /// Константы и таблицы протокола MTProto/WebSocket, выровненные с upstream <c>proxy/utils.py</c>.

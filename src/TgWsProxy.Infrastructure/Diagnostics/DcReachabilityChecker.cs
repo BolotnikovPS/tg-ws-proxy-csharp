@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 

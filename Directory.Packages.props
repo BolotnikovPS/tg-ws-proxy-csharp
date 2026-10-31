@@ -25,6 +25,11 @@
     <PackageVersion Include="AspNetCore.HealthChecks.UI.Client" Version="9.0.0" />
     <!-- F-1.11: Swagger UI и документ OpenAPI. -->
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="10.3.0" />
+    <!-- CQRS-медиатор между HTTP-слоем и прикладной логикой (in-process, без брокера). -->
+    <PackageVersion Include="WolverineFx" Version="6.56.0" />
+    <!-- Wolverine 6 не содержит компилятор обработчиков: без этого пакета шина падает
+         с «no IAssemblyGenerator (Roslyn) is registered» при TypeLoadMode.Dynamic. -->
+    <PackageVersion Include="WolverineFx.RuntimeCompilation" Version="6.56.0" />
     <!-- Микробенчмарки горячих путей (baseline + регрессионный контроль). -->
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
     <!-- OpenTelemetry: OTLP-экспорт трасс/метрик (SDK) и логов (Serilog sink). -->

@@ -13,7 +13,7 @@ namespace TgWsProxy.Application.Logic;
 /// через <see cref="Interlocked"/>. Фоновая очистка удаляет пары без активных соединений,
 /// у которых истёк TTL, и удерживает размер реестра в пределах <see cref="Constants.MaxTrackedPeers"/>.
 /// </summary>
-public sealed class PeerStatsRegistry : IPeerStatsRegistry
+internal sealed class PeerStatsRegistry : IPeerStatsRegistry
 {
     private readonly double _ttlSeconds;
     private readonly Func<double> _clock;

@@ -1,6 +1,6 @@
 namespace TgWsProxy.Infrastructure.IO;
 
-public static class IoUtil
+internal static class IoUtil
 {
     public static async Task<byte[]> ReadExact(this Stream stream, int len, CancellationToken ct)
     {

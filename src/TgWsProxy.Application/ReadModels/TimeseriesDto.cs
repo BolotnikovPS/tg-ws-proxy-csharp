@@ -1,4 +1,4 @@
-namespace TgWsProxy.Infrastructure.Metrics;
+namespace TgWsProxy.Application.ReadModels;
 
 /// <summary>Одна точка временного ряда для графиков страницы (F-3.3).</summary>
 /// <param name="Timestamp">Момент сэмпла (UTC).</param>

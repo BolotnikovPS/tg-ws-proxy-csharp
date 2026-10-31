@@ -14,6 +14,7 @@ using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.Metrics;
 using TgWsProxy.Infrastructure.Session;
+using TgWsProxy.Infrastructure.WebProxy;
 using TgWsProxy.Web;
 
 namespace TgWsProxy.Test;
@@ -579,12 +580,19 @@ public sealed class WebApiEndpointsTests
         // вводят IActiveSessionRegistry, а незарегистрированный интерфейс minimal API
         // принял бы за тело запроса и уронил бы построение всей таблицы маршрутов.
         builder.Services.AddSingleton<IActiveSessionRegistry, ActiveSessionRegistry>();
+        // Ссылки WEB proxy для /api/tokens/{id}/link (F-8.8): в тестах используется
+        // настоящий адаптер — маркер секрета и capability проверяются отдельно
+        // в WebProxyLinkBuilderTests.
+        builder.Services.AddSingleton<IWebProxyLinks, WebProxyLinks>();
         // Проверка достижимости DC — сетевой ввод-вывод: в тестах подменяется заглушкой,
         // иначе незарегистрированный интерфейс minimal API принял бы за тело запроса.
         builder.Services.AddSingleton<IDcReachabilityChecker>(new StubDcChecker());
         builder.Services.AddSingleton<IProxyServer>(new StubProxyServer(listening));
         builder.Services.AddSingleton<IProxyStats>(new ProxyStats());
         builder.Services.AddSingleton<MetricsHistory>();
+        // Тот же буфер виден обработчику /api/metrics/timeseries через прикладной порт (F-3.3).
+        builder.Services.AddSingleton<ITimeseriesReader>(sp =>
+            sp.GetRequiredService<MetricsHistory>());
         // timeseries* — горячие ключи (F-2.11): сервис обновления получает буфер через абстракцию.
         builder.Services.AddSingleton<ITimeseriesBufferConfigurator>(sp =>
             sp.GetRequiredService<MetricsHistory>());

@@ -15,7 +15,7 @@ namespace TgWsProxy.Web;
 /// Включается только при <see cref="OtelConfig.Enabled"/>: по умолчанию выключено и не влияет на
 /// поведение. Блок <c>otel</c> — «только старт»: SDK и синки собираются один раз при запуске.
 /// </summary>
-public static class OpenTelemetryExtensions
+internal static class OpenTelemetryExtensions
 {
     /// <summary>
     /// Добавляет OTLP-телеаметрию. Использует посигнальный <c>AddOtlpExporter</c>, а не единый

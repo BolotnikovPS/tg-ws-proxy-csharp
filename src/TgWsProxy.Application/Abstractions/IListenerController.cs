@@ -1,3 +1,4 @@
+using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
 
 namespace TgWsProxy.Application.Abstractions;

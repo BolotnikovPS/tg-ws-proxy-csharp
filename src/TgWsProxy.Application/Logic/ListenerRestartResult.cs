@@ -1,4 +1,4 @@
-namespace TgWsProxy.Application.Abstractions;
+namespace TgWsProxy.Application.Logic;
 
 /// <summary>
 /// Итог перезапуска слушателя (§ 2.7). При неудаче привязки контроллер сам возвращает

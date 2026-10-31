@@ -1,6 +1,6 @@
 using TgWsProxy.Application.Abstractions;
 
-namespace TgWsProxy.Application.Logic;
+namespace TgWsProxy.Infrastructure.Transport;
 
 /// <summary>
 /// Реализация распределения CF proxy доменов по DC (порт upstream <c>balancer.py</c>).

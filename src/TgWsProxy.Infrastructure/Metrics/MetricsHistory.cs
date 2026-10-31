@@ -1,5 +1,6 @@
-using TgWsProxy;
+
 using TgWsProxy.Application.Abstractions;
+using TgWsProxy.Application.ReadModels;
 using TgWsProxy.Domain;
 
 namespace TgWsProxy.Infrastructure.Metrics;
@@ -9,7 +10,7 @@ namespace TgWsProxy.Infrastructure.Metrics;
 /// (умолчание: час истории при шаге 5 с), старые записи вытесняются.
 /// Потокобезопасен: запись идёт из фонового сэмплера, чтение — из обработчиков запросов.
 /// </summary>
-public sealed class MetricsHistory : ITimeseriesBufferConfigurator
+public sealed class MetricsHistory : ITimeseriesBufferConfigurator, ITimeseriesReader
 {
     /// <summary>Шаг сэмплирования по умолчанию (совпадает с шагом по умолчанию для API).</summary>
     public const int DefaultStepSeconds = 5;
