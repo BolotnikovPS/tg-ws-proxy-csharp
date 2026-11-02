@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -25,6 +26,9 @@ namespace TgWsProxy.Test;
 /// </summary>
 public sealed class WebApiEndpointsTests
 {
+    /// <summary>Тестовый токен панели: /api/* в тестах авторизуются этим токеном.</summary>
+    private const string TestApiToken = "test-token";
+
     [Theory]
     [InlineData("127.0.0.1", 8081, "http://127.0.0.1:8081")]
     [InlineData("localhost", 8081, "http://localhost:8081")]
@@ -36,10 +40,7 @@ public sealed class WebApiEndpointsTests
     [InlineData("[::]", 8081, "http://[::]:8081")]
     [InlineData("::1", 8081, "http://[::1]:8081")]
     [InlineData("127.0.0.1", 0, "http://127.0.0.1:0")]
-    public void BuildListenUrl_FormatsHostAndPort(string host, int port, string expected)
-    {
-        Assert.Equal(expected, WebApiEndpoints.BuildListenUrl(host, port));
-    }
+    public void BuildListenUrl_FormatsHostAndPort(string host, int port, string expected) => Assert.Equal(expected, WebApiEndpoints.BuildListenUrl(host, port));
 
     [Fact]
     public async Task Healthz_Returns_200_When_Server_Listening()
@@ -569,6 +570,8 @@ public sealed class WebApiEndpointsTests
         var cfg = config ?? new Config();
         // Хост применяет умолчания (список DC) до запуска — тест повторяет это поведение.
         ConfigDefaults.Apply(cfg);
+        // Fail-closed аутентификация (webApiToken): /api/* доступны только с токеном.
+        cfg.WebApiToken = TestApiToken;
 
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
@@ -611,7 +614,10 @@ public sealed class WebApiEndpointsTests
         var addresses = app.Services.GetRequiredService<IServer>()
             .Features.Get<IServerAddressesFeature>()?.Addresses;
         var address = Assert.Single(addresses ?? []);
-        return new TestApp(app, new HttpClient { BaseAddress = new Uri(address) });
+        var client = new HttpClient { BaseAddress = new Uri(address) };
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", TestApiToken);
+        return new TestApp(app, client);
     }
 
     private sealed record TestApp(WebApplication App, HttpClient Client) : IAsyncDisposable
@@ -637,10 +643,10 @@ public sealed class WebApiEndpointsTests
             var fail = new DcResult(2, false, null, "timeout", "проверено 1 адрес(ов)", null);
             var routes = new DcRouteCheck[]
             {
-                new("directWs", "Прямой WebSocket", new[] { ok, fail, ok, ok, ok, ok }, null),
-                new("directTcp", "Прямой TCP", new[] { fail, okTcp, ok, ok, ok, ok }, null),
-                new("cfProxy", "Cloudflare-фронтинг", new[] { ok, ok, ok, ok, ok, ok }, "использован встроенный пул (сэмпл из 3)"),
-                new("cfWorker", "Cloudflare Worker", new[] { ok, ok, ok, ok, ok, ok }, null),
+                new("directWs", "Прямой WebSocket", [ok, fail, ok, ok, ok, ok], null),
+                new("directTcp", "Прямой TCP", [fail, okTcp, ok, ok, ok, ok], null),
+                new("cfProxy", "Cloudflare-фронтинг", [ok, ok, ok, ok, ok, ok], "использован встроенный пул (сэмпл из 3)"),
+                new("cfWorker", "Cloudflare Worker", [ok, ok, ok, ok, ok, ok], null),
             };
             return Task.FromResult(new DcCheckReport(DateTimeOffset.UtcNow, dcs, routes));
         }
@@ -657,8 +663,8 @@ public sealed class WebApiEndpointsTests
         public Task RebindAsync(
             IPEndPoint endpoint,
             Func<CancellationToken, Task>? betweenStopAndBind,
-            CancellationToken cancellationToken) =>
-            throw new NotSupportedException("RebindAsync не используется в тестах Web API.");
+            CancellationToken cancellationToken)
+            => throw new NotSupportedException("RebindAsync не используется в тестах Web API.");
     }
 
     /// <summary>
@@ -678,7 +684,7 @@ public sealed class WebApiEndpointsTests
         public DateTimeOffset? LastRestartAt { get; } =
             new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
 
-        public Task<ListenerRestartResult> RestartAsync(Config candidate, CancellationToken cancellationToken) =>
-            throw new NotSupportedException("RestartAsync не используется в тестах Web API.");
+        public Task<ListenerRestartResult> RestartAsync(Config candidate, CancellationToken cancellationToken)
+            => throw new NotSupportedException("RestartAsync не используется в тестах Web API.");
     }
 }

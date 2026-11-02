@@ -80,7 +80,7 @@ public class ProxyHostedServiceTests
 
         // F-1.3: cfDomainRefresher.Stop → wsPool.Reset → cfWorkerPool.Reset → cfH2Pool.CloseAsync.
         Assert.Equal(
-            new[] { "cfDomainRefresher.Stop", "wsPool.Reset", "cfWorkerPool.Reset", "cfH2Pool.Close" },
+            ["cfDomainRefresher.Stop", "wsPool.Reset", "cfWorkerPool.Reset", "cfH2Pool.Close"],
             log.Snapshot());
 
         Assert.True(service.Completion.IsCompleted);
@@ -171,7 +171,7 @@ public class ProxyHostedServiceTests
     /// <summary>Потокобезопасный журнал вызовов заглушек: фиксирует порядок операций.</summary>
     private sealed class CallLog
     {
-        private readonly object sync = new();
+        private readonly Lock sync = new();
         private readonly List<string> calls = [];
 
         public void Add(string call)
@@ -186,7 +186,7 @@ public class ProxyHostedServiceTests
         {
             lock (sync)
             {
-                return calls.ToArray();
+                return [.. calls];
             }
         }
 
@@ -238,17 +238,14 @@ public class ProxyHostedServiceTests
             }
         }
 
-        private static async Task WaitForCancellationAsync(CancellationToken cancellationToken)
-        {
-            await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
-        }
+        private static async Task WaitForCancellationAsync(CancellationToken cancellationToken) => await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Минимальная реализация <see cref="IHostApplicationLifetime"/>: фиксирует только
     /// факт <see cref="StopApplication"/> через токен <see cref="ApplicationStopping"/>.
     /// </summary>
-    private sealed class StubApplicationLifetime : IHostApplicationLifetime
+    private sealed class StubApplicationLifetime : IHostApplicationLifetime, IDisposable
     {
         private readonly CancellationTokenSource _stopping = new();
         private readonly CancellationTokenSource _stopped = new();
@@ -264,6 +261,13 @@ public class ProxyHostedServiceTests
             _stopping.Cancel();
             _stopped.Cancel();
         }
+
+        public void Dispose()
+        {
+            _stopping.Dispose();
+            _stopped.Dispose();
+            GC.SuppressFinalize(this);
+        }
     }
 
     private sealed class StubSessionHandler(CallLog log) : IClientSessionHandler
@@ -272,8 +276,8 @@ public class ProxyHostedServiceTests
             Socket client,
             ClientContext context,
             ISessionTokenBinding? session,
-            CancellationToken cancellationToken) =>
-            throw new NotSupportedException("Handle не вызывается в тестах hosted-сервиса.");
+            CancellationToken cancellationToken)
+            => throw new NotSupportedException("Handle не вызывается в тестах hosted-сервиса.");
 
         public void Warmup(CancellationToken cancellationToken) => log.Add("session.Warmup");
     }
@@ -311,13 +315,13 @@ public class ProxyHostedServiceTests
     {
         public void Start(CancellationToken cancellationToken) => log.Add("cfDomainRefresher.Start");
 
-        public void Stop() => log.Add("cfDomainRefresher.Stop");
+        public void StopRefresh() => log.Add("cfDomainRefresher.Stop");
     }
 
     private sealed class StubCfH2Pool(CallLog log) : ICfH2Pool
     {
-        public Task<ICfH2Channel?> OpenAsync(int dc, string label, CancellationToken cancellationToken) =>
-            Task.FromResult<ICfH2Channel?>(null);
+        public Task<ICfH2Channel?> OpenAsync(int dc, string label, CancellationToken cancellationToken)
+            => Task.FromResult<ICfH2Channel?>(null);
 
         public Task CloseAsync()
         {
@@ -338,11 +342,11 @@ public class ProxyHostedServiceTests
             MsgSplitter? splitter,
             IPAddress? peer,
             string? tokenId,
-            CancellationToken cancellationToken) =>
-            throw new NotSupportedException("Мост не вызывается в тестах hosted-сервиса.");
+            CancellationToken cancellationToken)
+            => throw new NotSupportedException("Мост не вызывается в тестах hosted-сервиса.");
 
-        public Task<bool> DoFallback(FallbackRequest request, CancellationToken cancellationToken) =>
-            Task.FromResult(false);
+        public Task<bool> DoFallback(FallbackRequest request, CancellationToken cancellationToken)
+            => Task.FromResult(false);
 
         public void ResetTcpBackoff() => log.Add("bridge.ResetTcpBackoff");
     }

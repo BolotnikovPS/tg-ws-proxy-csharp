@@ -20,86 +20,339 @@ public static class ConfigDtoMapper
 
         if (dto.MtProto is { } mt)
         {
-            if (mt.Port is { } port) target.MtProto.Port = port;
-            if (mt.PublicHost is { } publicHost) target.MtProto.PublicHost = publicHost.Trim();
-            if (mt.AllowInvalidCertificates is { } allowInvalid) target.MtProto.AllowInvalidCertificates = allowInvalid;
-            if (mt.WsMaxFrameBytes is { } wsMaxFrameBytes) target.MtProto.WsMaxFrameBytes = wsMaxFrameBytes;
-            if (mt.WsConnectTimeoutSeconds is { } wsTimeout) target.MtProto.WsConnectTimeoutSeconds = wsTimeout;
-            if (mt.SocketBufferKb is { } socketBufferKb) target.MtProto.SocketBufferKb = socketBufferKb;
-            if (mt.WsPoolSize is { } wsPoolSize) target.MtProto.WsPoolSize = wsPoolSize;
-            if (mt.DcIp is { } dcIp) Replace(target.MtProto.DcIp, dcIp);
+            if (mt.Port is { } port)
+            {
+                target.MtProto.Port = port;
+            }
+
+            if (mt.PublicHost is { } publicHost)
+            {
+                target.MtProto.PublicHost = publicHost.Trim();
+            }
+
+            if (mt.AllowInvalidCertificates is { } allowInvalid)
+            {
+                target.MtProto.AllowInvalidCertificates = allowInvalid;
+            }
+
+            if (mt.WsMaxFrameBytes is { } wsMaxFrameBytes)
+            {
+                target.MtProto.WsMaxFrameBytes = wsMaxFrameBytes;
+            }
+
+            if (mt.WsConnectTimeoutSeconds is { } wsTimeout)
+            {
+                target.MtProto.WsConnectTimeoutSeconds = wsTimeout;
+            }
+
+            if (mt.SocketBufferKb is { } socketBufferKb)
+            {
+                target.MtProto.SocketBufferKb = socketBufferKb;
+            }
+
+            if (mt.WsPoolSize is { } wsPoolSize)
+            {
+                target.MtProto.WsPoolSize = wsPoolSize;
+            }
+
+            if (mt.DcIp is { } dcIp)
+            {
+                Replace(target.MtProto.DcIp, dcIp);
+            }
         }
 
-        if (dto.Tokens is { } tokens) ReplaceTokens(target.Tokens, tokens);
+        if (dto.Tokens is { } tokens)
+        {
+            ReplaceTokens(target.Tokens, tokens);
+        }
 
         if (dto.Stats is { } stats)
         {
-            if (stats.Enabled is { } enabled) target.Stats.Enabled = enabled;
-            if (stats.TtlSeconds is { } ttl) target.Stats.TtlSeconds = ttl;
-            if (stats.MaxPeers is { } maxPeers) target.Stats.MaxPeers = maxPeers;
+            if (stats.Enabled is { } enabled)
+            {
+                target.Stats.Enabled = enabled;
+            }
+
+            if (stats.TtlSeconds is { } ttl)
+            {
+                target.Stats.TtlSeconds = ttl;
+            }
+
+            if (stats.MaxPeers is { } maxPeers)
+            {
+                target.Stats.MaxPeers = maxPeers;
+            }
         }
 
-        if (dto.Verbose is { } verbose) target.Verbose = verbose;
-        if (dto.MaxConnections is { } maxConnections) target.MaxConnections = maxConnections;
-        if (dto.RateLimitPerIp is { } rateLimitPerIp) target.RateLimitPerIp = rateLimitPerIp;
-        if (dto.RateLimitWindowSeconds is { } rateLimitWindow) target.RateLimitWindowSeconds = rateLimitWindow;
-        if (dto.WebApiToken is { } webApiToken) target.WebApiToken = webApiToken;
-        if (dto.PrometheusTopPeers is { } prometheusTopPeers) target.PrometheusTopPeers = prometheusTopPeers;
+        if (dto.Verbose is { } verbose)
+        {
+            target.Verbose = verbose;
+        }
 
-        if (dto.EnableSwagger is { } enableSwagger) target.EnableSwagger = enableSwagger;
-        if (dto.TimeseriesWindowSeconds is { } tsWindow) target.TimeseriesWindowSeconds = tsWindow;
-        if (dto.TimeseriesStepSeconds is { } tsStep) target.TimeseriesStepSeconds = tsStep;
+        if (dto.MaxConnections is { } maxConnections)
+        {
+            target.MaxConnections = maxConnections;
+        }
+
+        if (dto.RateLimitPerIp is { } rateLimitPerIp)
+        {
+            target.RateLimitPerIp = rateLimitPerIp;
+        }
+
+        if (dto.RateLimitWindowSeconds is { } rateLimitWindow)
+        {
+            target.RateLimitWindowSeconds = rateLimitWindow;
+        }
+
+        if (dto.WebApiToken is { } webApiToken)
+        {
+            target.WebApiToken = webApiToken;
+        }
+
+        if (dto.PrometheusTopPeers is { } prometheusTopPeers)
+        {
+            target.PrometheusTopPeers = prometheusTopPeers;
+        }
+
+        if (dto.EnableSwagger is { } enableSwagger)
+        {
+            target.EnableSwagger = enableSwagger;
+        }
+
+        if (dto.TimeseriesWindowSeconds is { } tsWindow)
+        {
+            target.TimeseriesWindowSeconds = tsWindow;
+        }
+
+        if (dto.TimeseriesStepSeconds is { } tsStep)
+        {
+            target.TimeseriesStepSeconds = tsStep;
+        }
 
         if (dto.Logs is { } logs)
         {
-            if (logs.Path is { } path) target.Logs.Path = path;
-            if (logs.MaxMegabytes is { } maxMegabytes) target.Logs.MaxMegabytes = maxMegabytes;
-            if (logs.RetainedFileCount is { } retainedFileCount) target.Logs.RetainedFileCount = retainedFileCount;
+            if (logs.Path is { } path)
+            {
+                target.Logs.Path = path;
+            }
+
+            if (logs.MaxMegabytes is { } maxMegabytes)
+            {
+                target.Logs.MaxMegabytes = maxMegabytes;
+            }
+
+            if (logs.RetainedFileCount is { } retainedFileCount)
+            {
+                target.Logs.RetainedFileCount = retainedFileCount;
+            }
         }
 
         if (dto.CfProxy is { } cf)
         {
-            if (cf.Enabled is { } cfEnabled) target.CfProxy.Enabled = cfEnabled;
-            if (cf.H2Media is { } cfH2Media) target.CfProxy.H2Media = cfH2Media;
-            if (cf.Domains is { } cfDomains) Replace(target.CfProxy.Domains, cfDomains);
-            if (cf.WorkerDomains is { } cfWorkerDomains) Replace(target.CfProxy.WorkerDomains, cfWorkerDomains);
+            if (cf.Enabled is { } cfEnabled)
+            {
+                target.CfProxy.Enabled = cfEnabled;
+            }
+
+            if (cf.H2Media is { } cfH2Media)
+            {
+                target.CfProxy.H2Media = cfH2Media;
+            }
+
+            if (cf.Domains is { } cfDomains)
+            {
+                Replace(target.CfProxy.Domains, cfDomains);
+            }
+
+            if (cf.WorkerDomains is { } cfWorkerDomains)
+            {
+                Replace(target.CfProxy.WorkerDomains, cfWorkerDomains);
+            }
         }
 
-        if (dto.DisableSecure is { } disableSecure) target.DisableSecure = disableSecure;
-        if (dto.FakeTlsDomain is { } fakeTlsDomain) target.FakeTlsDomain = fakeTlsDomain;
-        if (dto.ProxyProtocol is { } proxyProtocol) target.ProxyProtocol = proxyProtocol;
-        if (dto.ForceTestDc is { } forceTestDc) target.ForceTestDc = forceTestDc;
+        if (dto.DisableSecure is { } disableSecure)
+        {
+            target.DisableSecure = disableSecure;
+        }
+
+        if (dto.FakeTlsDomain is { } fakeTlsDomain)
+        {
+            target.FakeTlsDomain = fakeTlsDomain;
+        }
+
+        if (dto.ProxyProtocol is { } proxyProtocol)
+        {
+            target.ProxyProtocol = proxyProtocol;
+        }
+
+        if (dto.ForceTestDc is { } forceTestDc)
+        {
+            target.ForceTestDc = forceTestDc;
+        }
 
         if (dto.WebProxy is { } wp)
         {
-            if (wp.Enabled is { } wpEnabled) target.WebProxy.Enabled = wpEnabled;
-            if (wp.Port is { } wpPort) target.WebProxy.Port = wpPort;
-            if (wp.BasePath is { } wpBasePath) target.WebProxy.BasePath = wpBasePath;
-            if (wp.PublicHost is { } wpPublicHost) target.WebProxy.PublicHost = wpPublicHost.Trim();
-            if (wp.CertPath is { } wpCertPath) target.WebProxy.CertPath = wpCertPath;
-            if (wp.CertPassword is { } wpCertPassword) target.WebProxy.CertPassword = wpCertPassword;
-            if (wp.CarrierMode is { } wpCarrierMode) target.WebProxy.CarrierMode = wpCarrierMode.Trim();
-            if (wp.MaxSessions is { } wpMaxSessions) target.WebProxy.MaxSessions = wpMaxSessions;
-            if (wp.MaxSessionsPerIp is { } wpMaxSessionsPerIp) target.WebProxy.MaxSessionsPerIp = wpMaxSessionsPerIp;
-            if (wp.MaxStreamsPerSession is { } wpMaxStreamsPerSession) target.WebProxy.MaxStreamsPerSession = wpMaxStreamsPerSession;
-            if (wp.MaxStreams is { } wpMaxStreams) target.WebProxy.MaxStreams = wpMaxStreams;
-            if (wp.MaxPendingBytesPerSession is { } wpMaxPendingBytes) target.WebProxy.MaxPendingBytesPerSession = wpMaxPendingBytes;
-            if (wp.MaxPendingItemsPerSession is { } wpMaxPendingItems) target.WebProxy.MaxPendingItemsPerSession = wpMaxPendingItems;
+            if (wp.Enabled is { } wpEnabled)
+            {
+                target.WebProxy.Enabled = wpEnabled;
+            }
+
+            if (wp.Port is { } wpPort)
+            {
+                target.WebProxy.Port = wpPort;
+            }
+
+            if (wp.BasePath is { } wpBasePath)
+            {
+                target.WebProxy.BasePath = wpBasePath;
+            }
+
+            if (wp.PublicHost is { } wpPublicHost)
+            {
+                target.WebProxy.PublicHost = wpPublicHost.Trim();
+            }
+
+            if (wp.CertPath is { } wpCertPath)
+            {
+                target.WebProxy.CertPath = wpCertPath;
+            }
+
+            if (wp.CertPassword is { } wpCertPassword)
+            {
+                target.WebProxy.CertPassword = wpCertPassword;
+            }
+
+            if (wp.CarrierMode is { } wpCarrierMode)
+            {
+                target.WebProxy.CarrierMode = wpCarrierMode.Trim();
+            }
+
+            if (wp.MaxSessions is { } wpMaxSessions)
+            {
+                target.WebProxy.MaxSessions = wpMaxSessions;
+            }
+
+            if (wp.MaxSessionsPerIp is { } wpMaxSessionsPerIp)
+            {
+                target.WebProxy.MaxSessionsPerIp = wpMaxSessionsPerIp;
+            }
+
+            if (wp.MaxStreamsPerSession is { } wpMaxStreamsPerSession)
+            {
+                target.WebProxy.MaxStreamsPerSession = wpMaxStreamsPerSession;
+            }
+
+            if (wp.MaxStreams is { } wpMaxStreams)
+            {
+                target.WebProxy.MaxStreams = wpMaxStreams;
+            }
+
+            if (wp.MaxPendingBytesPerSession is { } wpMaxPendingBytes)
+            {
+                target.WebProxy.MaxPendingBytesPerSession = wpMaxPendingBytes;
+            }
+
+            if (wp.MaxPendingItemsPerSession is { } wpMaxPendingItems)
+            {
+                target.WebProxy.MaxPendingItemsPerSession = wpMaxPendingItems;
+            }
+
+            if (wp.IdleSessionTimeoutSeconds is { } wpIdleTimeout)
+            {
+                target.WebProxy.IdleSessionTimeoutSeconds = wpIdleTimeout;
+            }
         }
 
         if (dto.Otel is { } otel)
         {
-            if (otel.Enabled is { } enabled) target.Otel.Enabled = enabled;
-            if (otel.ServiceName is { } serviceName) target.Otel.ServiceName = serviceName.Trim();
-            if (otel.Endpoint is { } endpoint) target.Otel.Endpoint = endpoint.Trim();
-            if (otel.Protocol is { } protocol) target.Otel.Protocol = protocol.Trim();
-            if (otel.ExportTraces is { } exportTraces) target.Otel.ExportTraces = exportTraces;
-            if (otel.ExportLogs is { } exportLogs) target.Otel.ExportLogs = exportLogs;
-            if (otel.ExportMetrics is { } exportMetrics) target.Otel.ExportMetrics = exportMetrics;
+            if (otel.Enabled is { } enabled)
+            {
+                target.Otel.Enabled = enabled;
+            }
+
+            if (otel.ServiceName is { } serviceName)
+            {
+                target.Otel.ServiceName = serviceName.Trim();
+            }
+
+            if (otel.Endpoint is { } endpoint)
+            {
+                target.Otel.Endpoint = endpoint.Trim();
+            }
+
+            if (otel.Protocol is { } protocol)
+            {
+                target.Otel.Protocol = protocol.Trim();
+            }
+
+            if (otel.ExportTraces is { } exportTraces)
+            {
+                target.Otel.ExportTraces = exportTraces;
+            }
+
+            if (otel.ExportLogs is { } exportLogs)
+            {
+                target.Otel.ExportLogs = exportLogs;
+            }
+
+            if (otel.ExportMetrics is { } exportMetrics)
+            {
+                target.Otel.ExportMetrics = exportMetrics;
+            }
         }
 
-        if (dto.AllowIp is { } allowIp) Replace(target.AllowIp, allowIp);
-        if (dto.DenyIp is { } denyIp) Replace(target.DenyIp, denyIp);
+        if (dto.BotApi is { } botApi)
+        {
+            if (botApi.Enabled is { } enabled)
+            {
+                target.BotApi.Enabled = enabled;
+            }
+
+            if (botApi.DataDir is { } dataDir)
+            {
+                target.BotApi.DataDir = dataDir.Trim();
+            }
+
+            if (botApi.Host is { } host)
+            {
+                target.BotApi.Host = host.Trim();
+            }
+
+            if (botApi.Port is { } port)
+            {
+                target.BotApi.Port = port;
+            }
+
+            if (botApi.Secret is { } secret)
+            {
+                target.BotApi.Secret = secret.Trim();
+            }
+
+            if (botApi.MaxUploadBytes is { } maxUploadBytes)
+            {
+                target.BotApi.MaxUploadBytes = maxUploadBytes;
+            }
+
+            if (botApi.MaxFileCacheBytes is { } maxFileCacheBytes)
+            {
+                target.BotApi.MaxFileCacheBytes = maxFileCacheBytes;
+            }
+
+            if (botApi.RequestsPerSecondPerToken is { } requestsPerSecondPerToken)
+            {
+                target.BotApi.RequestsPerSecondPerToken = requestsPerSecondPerToken;
+            }
+        }
+
+        if (dto.AllowIp is { } allowIp)
+        {
+            Replace(target.AllowIp, allowIp);
+        }
+
+        if (dto.DenyIp is { } denyIp)
+        {
+            Replace(target.DenyIp, denyIp);
+        }
     }
 
     /// <summary>
@@ -173,6 +426,7 @@ public static class ConfigDtoMapper
                 MaxStreams = config.WebProxy.MaxStreams,
                 MaxPendingBytesPerSession = config.WebProxy.MaxPendingBytesPerSession,
                 MaxPendingItemsPerSession = config.WebProxy.MaxPendingItemsPerSession,
+                IdleSessionTimeoutSeconds = config.WebProxy.IdleSessionTimeoutSeconds,
             },
             Otel = new OtelConfigDto
             {
@@ -183,6 +437,17 @@ public static class ConfigDtoMapper
                 ExportTraces = config.Otel.ExportTraces,
                 ExportLogs = config.Otel.ExportLogs,
                 ExportMetrics = config.Otel.ExportMetrics,
+            },
+            BotApi = new BotApiConfigDto
+            {
+                Enabled = config.BotApi.Enabled,
+                DataDir = config.BotApi.DataDir,
+                Host = config.BotApi.Host,
+                Port = config.BotApi.Port,
+                Secret = config.BotApi.Secret,
+                MaxUploadBytes = config.BotApi.MaxUploadBytes,
+                MaxFileCacheBytes = config.BotApi.MaxFileCacheBytes,
+                RequestsPerSecondPerToken = config.BotApi.RequestsPerSecondPerToken,
             },
         };
     }

@@ -137,6 +137,13 @@ public sealed class Config
     public OtelConfig Otel { get; set; } = new OtelConfig();
 
     /// <summary>
+    /// Настройки локального Telegram Bot API-сервера (вложенный блок <c>botApi</c>): HTTP-эндпоинты
+    /// <c>/bot&lt;token&gt;/&lt;method&gt;</c> и MTProto-ядро для ботов. Все ключи блока — «только
+    /// старт»; см. <see cref="BotApiConfig"/>. Расширение порта, в upstream отсутствует.
+    /// </summary>
+    public BotApiConfig BotApi { get; set; } = new BotApiConfig();
+
+    /// <summary>
     /// HTTP/2 доступен только при включённом CF fallback, secure-соединениях и без test DC.
     /// </summary>
     public bool H2Enabled => CfProxy.H2Media && CfProxy.Enabled && !DisableSecure && !ForceTestDc;

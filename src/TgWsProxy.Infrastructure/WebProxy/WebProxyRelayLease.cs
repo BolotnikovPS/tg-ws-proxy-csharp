@@ -13,8 +13,8 @@ public sealed class WebProxyRelayLease : IDisposable
 
     internal WebProxyRelayLease(
         Func<RelayStream, CancellationToken, Task> startBridge,
-        CancellationToken lifetimeToken,
-        Action close)
+        Action close,
+        CancellationToken lifetimeToken)
     {
         StartBridge = startBridge;
         LifetimeToken = lifetimeToken;

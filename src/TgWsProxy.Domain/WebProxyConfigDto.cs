@@ -34,4 +34,6 @@ public sealed class WebProxyConfigDto
     public int? MaxPendingBytesPerSession { get; set; }
 
     public int? MaxPendingItemsPerSession { get; set; }
+
+    public int? IdleSessionTimeoutSeconds { get; set; }
 }

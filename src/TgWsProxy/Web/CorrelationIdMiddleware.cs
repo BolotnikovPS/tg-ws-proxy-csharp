@@ -25,7 +25,7 @@ internal sealed class CorrelationIdMiddleware(RequestDelegate next)
 
         using (LogContext.PushProperty(LoggingConstants.CorrelationIdProperty, correlationId))
         {
-            await next(context);
+            await next(context).ConfigureAwait(false);
         }
     }
 }

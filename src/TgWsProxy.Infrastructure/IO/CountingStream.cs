@@ -5,12 +5,9 @@ namespace TgWsProxy.Infrastructure.IO;
 /// (<see cref="BytesRead"/> / <see cref="BytesWritten"/>). Не владеет внутренним потоком
 /// и не закрывает его при освобождении.
 /// </summary>
-internal sealed class CountingStream : Stream
+internal sealed class CountingStream(Stream inner) : Stream
 {
-    private readonly Stream _inner;
-
-    public CountingStream(Stream inner) =>
-        _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+    private readonly Stream _inner = inner ?? throw new ArgumentNullException(nameof(inner));
 
     /// <summary>Суммарное число байт, прочитанных из внутреннего потока.</summary>
     public long BytesRead { get; private set; }
@@ -31,8 +28,8 @@ internal sealed class CountingStream : Stream
 
     public override void Flush() => _inner.Flush();
 
-    public override Task FlushAsync(CancellationToken cancellationToken) =>
-        _inner.FlushAsync(cancellationToken);
+    public override Task FlushAsync(CancellationToken cancellationToken)
+        => _inner.FlushAsync(cancellationToken);
 
     public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
 
@@ -62,11 +59,11 @@ internal sealed class CountingStream : Stream
         return value;
     }
 
-    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
-        CountReadAsync(_inner.ReadAsync(buffer, offset, count, cancellationToken));
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        => CountReadAsync(_inner.ReadAsync(buffer, offset, count, cancellationToken));
 
-    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
-        CountReadAsync(_inner.ReadAsync(buffer, cancellationToken));
+    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        => CountReadAsync(_inner.ReadAsync(buffer, cancellationToken));
 
     public override void Write(byte[] buffer, int offset, int count)
     {
@@ -86,17 +83,14 @@ internal sealed class CountingStream : Stream
         BytesWritten++;
     }
 
-    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
-        CountWriteAsync(_inner.WriteAsync(buffer, offset, count, cancellationToken), count);
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        => CountWriteAsync(_inner.WriteAsync(buffer, offset, count, cancellationToken), count);
 
-    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
-        CountWriteAsync(_inner.WriteAsync(buffer, cancellationToken), buffer.Length);
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        => CountWriteAsync(_inner.WriteAsync(buffer, cancellationToken), buffer.Length);
 
     /// <summary>Не освобождаем внутренний поток — обёртка им не владеет.</summary>
-    protected override void Dispose(bool disposing)
-    {
-        // Намеренно пусто: CountingStream не закрывает внутренний поток.
-    }
+    protected override void Dispose(bool disposing) => base.Dispose(disposing);
 
     private async Task<int> CountReadAsync(Task<int> readTask)
     {

@@ -16,7 +16,7 @@ namespace TgWsProxy.Application.Logic;
 /// </summary>
 internal sealed class ProxyTokenRegistry(Config config) : IProxyTokenRegistry
 {
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
 
     /// <summary>Разобранные токены; <c>volatile</c> — читаются без блокировки.</summary>
     private volatile ProxyTokenEntry[] _all = [];
@@ -181,14 +181,10 @@ internal sealed class ProxyTokenRegistry(Config config) : IProxyTokenRegistry
     /// времени создания. Свежий токен первым означает, что активное устройство находит свой
     /// секрет с первой попытки, а не после перебора всех остальных.
     /// </summary>
-    private static ProxyTokenEntry[] BuildOrder(ProxyTokenEntry[] entries)
-    {
-        return entries
+    private static ProxyTokenEntry[] BuildOrder(ProxyTokenEntry[] entries) => [.. entries
             .Where(static entry => entry.Enabled)
             .OrderByDescending(static entry => entry.LastUsedAt ?? DateTimeOffset.MinValue)
-            .ThenBy(static entry => entry.CreatedAt)
-            .ToArray();
-    }
+            .ThenBy(static entry => entry.CreatedAt)];
 
     /// <summary>
     /// Разбирает hex-секрет. Конфигурация проверена <c>ConfigValidator</c>, поэтому пустой

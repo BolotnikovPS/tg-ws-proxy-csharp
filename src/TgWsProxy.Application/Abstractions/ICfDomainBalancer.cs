@@ -13,8 +13,8 @@ public interface ICfDomainBalancer
     /// <summary>
     /// Обновляет список доменов; при фактическом изменении сбрасывает привязку DC→домен.
     /// </summary>
-    /// <param name="domains">Новый список доменов.</param>
-    void UpdateDomains(IReadOnlyList<string> domains);
+    /// <param name="newDomains">Новый список доменов.</param>
+    void UpdateDomains(IReadOnlyList<string> newDomains);
 
     /// <summary>
     /// Возвращает домены для DC: текущий привязанный первым, остальные — в случайном порядке.

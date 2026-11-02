@@ -19,8 +19,6 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
     /// </summary>
     private const int MaxCoalescedBatchBytes = 256 * 1024;
 
-    private bool _closed;
-
     /// <summary>
     /// Переиспользуемый буфер для чтения коротких заголовков WS-фрейма (2 байта
     /// заголовка, 2/8 байт расширенной длины, 4 байта маски). Устраняет по одной
@@ -37,14 +35,14 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
     private readonly WsBinaryMessageAssembler _assembler = new();
 
     /// <inheritdoc />
-    public bool IsClosed => _closed;
+    public bool IsClosed { get; private set; }
 
     /// <inheritdoc />
     public bool IsRemoteClosed
     {
         get
         {
-            if (_closed)
+            if (IsClosed)
             {
                 return true;
             }
@@ -71,7 +69,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
 
     public async Task Send(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
     {
-        if (_closed)
+        if (IsClosed)
         {
             throw new IOException("WebSocket closed");
         }
@@ -89,7 +87,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
 
     public async Task SendBatch(IReadOnlyList<ReadOnlyMemory<byte>> parts, CancellationToken cancellationToken)
     {
-        if (_closed)
+        if (IsClosed)
         {
             throw new IOException("WebSocket closed");
         }
@@ -118,7 +116,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
 
     public async Task<byte[]?> Recv(CancellationToken cancellationToken)
     {
-        while (!_closed)
+        while (!IsClosed)
         {
             (bool fin, byte opcode, byte[] payload) frame;
             try
@@ -127,7 +125,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
             }
             catch (EndOfStreamException)
             {
-                _closed = true;
+                IsClosed = true;
                 logger.LogDebug("[{Scope}] WS read ended (peer closed TCP without WS close frame)", scope);
                 return null;
             }
@@ -144,7 +142,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
             var (fin, opcode, payload) = frame;
             if (opcode == 0x8)
             {
-                _closed = true;
+                IsClosed = true;
                 return null;
             }
             if (opcode == 0x9)
@@ -171,12 +169,12 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
     {
         try
         {
-            if (_closed)
+            if (IsClosed)
             {
                 return;
             }
 
-            _closed = true;
+            IsClosed = true;
             _assembler.Reset();
             try { await WriteMaskedFrame(0x8, ReadOnlyMemory<byte>.Empty, cancellationToken); } catch { }
             try { await transport.DisposeAsync(); } catch { }
@@ -218,7 +216,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
 
         if (len > (ulong)wsMaxFrameBytes)
         {
-            _closed = true;
+            IsClosed = true;
             throw new WsFrameTooLargeException(len, wsMaxFrameBytes);
         }
 
@@ -291,13 +289,13 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
 
     /// <summary>Полный размер кадра с учётом 4-байтовой маски.</summary>
     /// <param name="payloadLength">Длина payload.</param>
-    private static int FrameLength(int payloadLength) =>
-        2 + ExtLenBytes(payloadLength) + 4 + payloadLength;
+    private static int FrameLength(int payloadLength)
+        => 2 + ExtLenBytes(payloadLength) + 4 + payloadLength;
 
     /// <summary>Количество байт расширенной длины в заголовке кадра.</summary>
     /// <param name="payloadLength">Длина payload.</param>
-    private static int ExtLenBytes(int payloadLength) =>
-        payloadLength < 126 ? 0 : payloadLength < 65536 ? 2 : 8;
+    private static int ExtLenBytes(int payloadLength)
+        => payloadLength < 126 ? 0 : payloadLength < 65536 ? 2 : 8;
 
     /// <summary>
     /// Записывает кадр (заголовок, маска, замаскированный payload) в буфер.
@@ -385,7 +383,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
                 mask[0], mask[1], mask[2], mask[3],
                 mask[0], mask[1], mask[2], mask[3]);
 
-            var limit = data.Length - (data.Length % Vector128<byte>.Count);
+            var limit = data.Length - data.Length % Vector128<byte>.Count;
             for (; i < limit; i += Vector128<byte>.Count)
             {
                 var block = Vector128.LoadUnsafe(

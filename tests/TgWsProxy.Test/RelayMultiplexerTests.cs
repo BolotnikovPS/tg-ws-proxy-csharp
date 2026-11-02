@@ -55,13 +55,13 @@ public class RelayMultiplexerTests
         });
 
         await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Open, 9, ReadOnlyMemory<byte>.Empty), default);
-        await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Data, 9, new byte[] { 9, 9, 9 }), default);
+        await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Data, 9, "\t\t\t"u8.ToArray()), default);
 
         var buffer = new byte[3];
         var n = await bridged!.ReadAsync(buffer);
 
         Assert.Equal(3, n);
-        Assert.Equal(new byte[] { 9, 9, 9 }, buffer);
+        Assert.Equal("\t\t\t"u8.ToArray(), buffer);
         await mux.DisposeAsync();
     }
 
@@ -296,17 +296,25 @@ public class RelayMultiplexerTests
     {
         var buffer = new byte[RelayFrameCodec.FrameSize(payload.Length)];
         RelayFrameCodec.Write(buffer, type, streamId, payload.Span);
-        RelayFrameCodec.TryParse(buffer, out var frame, out _);
+        if (!RelayFrameCodec.TryParse(buffer, out var frame, out _))
+        {
+            throw new InvalidOperationException("Relay frame parse failed in test helper.");
+        }
+
         return frame;
     }
 
     private sealed class CapturingSink : IRelayFrameSink
     {
-        public List<RelayFrame> Frames { get; } = new();
+        public List<RelayFrame> Frames { get; } = [];
 
         public ValueTask SendAsync(ReadOnlyMemory<byte> frameBytes, CancellationToken ct)
         {
-            RelayFrameCodec.TryParse(frameBytes, out var frame, out _);
+            if (!RelayFrameCodec.TryParse(frameBytes, out var frame, out _))
+            {
+                return ValueTask.CompletedTask;
+            }
+
             lock (Frames)
             {
                 Frames.Add(new RelayFrame(frame.Type, frame.StreamId, frame.Payload.ToArray()));

@@ -127,6 +127,7 @@ public class IncrementalCipher : IDisposable
     {
         _transform.Dispose();
         _aes.Dispose();
+        GC.SuppressFinalize(this);
     }
 
     private void IncrementCounter()

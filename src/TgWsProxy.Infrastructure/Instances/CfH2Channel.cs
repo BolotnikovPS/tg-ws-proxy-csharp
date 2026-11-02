@@ -46,8 +46,8 @@ internal sealed class CfH2Channel : ICfH2Channel
     private readonly HashSet<RequestState> _replayPending = [];
     private readonly Dictionary<RequestState, Task> _tasks = [];
     private readonly List<ReplayPacket> _replayHistory = [];
-    private readonly object _sync = new();
-    private readonly object _wakeSync = new();
+    private readonly Lock _sync = new();
+    private readonly Lock _wakeSync = new();
 
     private TaskCompletionSource _wakeup = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private byte[]? _replayKey;
@@ -108,12 +108,12 @@ internal sealed class CfH2Channel : ICfH2Channel
         {
             lock (_sync)
             {
-                return _transportError;
+                return field;
             }
         }
-    }
 
-    private int? _transportError;
+        private set;
+    }
 
     private bool NativeBackpressure
     {
@@ -129,8 +129,8 @@ internal sealed class CfH2Channel : ICfH2Channel
     private double? _deliveringSince;
 
     /// <inheritdoc />
-    public Task<bool> SendAsync(byte[] body, bool quick, CancellationToken cancellationToken) =>
-        SendInternalAsync(body, quick, replay: false, cancellationToken);
+    public Task<bool> SendAsync(byte[] body, bool quick, CancellationToken cancellationToken)
+        => SendInternalAsync(body, quick, replay: false, cancellationToken);
 
     /// <inheritdoc />
     public async Task<byte[]> ReceiveAsync(CancellationToken cancellationToken)
@@ -231,8 +231,7 @@ internal sealed class CfH2Channel : ICfH2Channel
     }
 
     /// <summary>Регистрирует факт получения HTTP-ответа (вызывается из lane).</summary>
-    /// <param name="length">Длина тела ответа.</param>
-    public void OnHttpResponse(int length)
+    public void OnHttpResponse()
     {
         lock (_sync)
         {
@@ -466,10 +465,7 @@ internal sealed class CfH2Channel : ICfH2Channel
 
             lock (_sync)
             {
-                if (nativePacket is not null)
-                {
-                    nativePacket.Originals.Add(state);
-                }
+                nativePacket?.Originals.Add(state);
 
                 if (replay && replayPacket is not null)
                 {
@@ -678,7 +674,7 @@ internal sealed class CfH2Channel : ICfH2Channel
 
             if (error is MTProtoTransportException transport)
             {
-                _transportError = transport.Code;
+                TransportError = transport.Code;
             }
 
             _closed = true;
@@ -696,7 +692,7 @@ internal sealed class CfH2Channel : ICfH2Channel
         _queue.Writer.TryWrite(error);
     }
 
-    private void CancelRequest(RequestState state)
+    private static void CancelRequest(RequestState state)
     {
         state.Cancelled = true;
         try
@@ -787,10 +783,7 @@ internal sealed class CfH2Channel : ICfH2Channel
                 channel._sentSince.Remove(state);
             }
 
-            if (entry is not null)
-            {
-                entry.Retired = true;
-            }
+            entry?.Retired = true;
 
             if (now >= _nextCapacityLog)
             {
@@ -807,7 +800,7 @@ internal sealed class CfH2Channel : ICfH2Channel
                     _lane.ReservedRequests);
             }
 
-            channel.CancelRequest(state);
+            CancelRequest(state);
             await channel.AwaitRequestAsync(state).ConfigureAwait(false);
             channel._capacityRotations++;
             return;
@@ -864,7 +857,7 @@ internal sealed class CfH2Channel : ICfH2Channel
     private string? ReplayBlocker(ReplayPacket entry, double now)
     {
         var age = now - entry.SentAt;
-        if (age < 0 || age > ReplayMaxAge)
+        if (age is < 0 or > ReplayMaxAge)
         {
             return "expired";
         }
@@ -920,8 +913,8 @@ internal sealed class CfH2Channel : ICfH2Channel
 
     private bool ReplayDue(ReplayPacket entry, double now) => ReplayBlocker(entry, now) is null;
 
-    private int ReplayLimit(ReplayPacket entry) =>
-        entry.Originals.Count > 0 || entry.Retired || entry == _replayHistory[^1] ? ReplayMaxAttempts : 0;
+    private int ReplayLimit(ReplayPacket entry)
+        => entry.Originals.Count > 0 || entry.Retired || entry == _replayHistory[^1] ? ReplayMaxAttempts : 0;
 
     private bool OverdueOriginal(ReplayPacket entry, double now)
     {
@@ -949,8 +942,8 @@ internal sealed class CfH2Channel : ICfH2Channel
         return candidate.Length == length && reply.AsSpan(0, length).SequenceEqual(candidate);
     }
 
-    private ReplayPacket? FindPacket(byte[] body) =>
-        _replayHistory.FirstOrDefault(entry => entry.Body.AsSpan().SequenceEqual(body));
+    private ReplayPacket? FindPacket(byte[] body)
+        => _replayHistory.FirstOrDefault(entry => entry.Body.AsSpan().SequenceEqual(body));
 
     private ReplayPacket? RememberPacket(byte[] body, double now)
     {

@@ -2,9 +2,9 @@ using Microsoft.Extensions.Logging;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
+using TgWsProxy.Infrastructure.Transport;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -46,7 +46,7 @@ internal sealed class WsPool(
     private readonly HashSet<PoolKey> refilling = [];
     private readonly Dictionary<PoolKey, int> refillFailures = [];
     private readonly Dictionary<PoolKey, DateTimeOffset> refillAfter = [];
-    private readonly object sync = new();
+    private readonly Lock sync = new();
     private CancellationTokenSource? lifetime;
     private bool sweeperStarted;
 
@@ -312,7 +312,7 @@ internal sealed class WsPool(
         {
             for (var attempt = 0; attempt < 2; attempt++)
             {
-                var fronted = (attempt == 0) == frontingFirst;
+                var fronted = attempt == 0 == frontingFirst;
                 var timeout = TimeSpan.FromSeconds(fronted ? FrontedTimeoutSeconds : PlainTimeoutSeconds);
                 var sni = fronted ? FrontingSni : null;
 

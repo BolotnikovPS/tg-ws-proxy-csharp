@@ -15,7 +15,7 @@ public sealed class PeerStatsSnapshotCache
 {
     private readonly IPeerStatsRegistry _registry;
     private readonly long _ttlMilliseconds;
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private IReadOnlyList<PeerStatsSnapshot>? _cached;
     private long _cachedAtMilliseconds;
 

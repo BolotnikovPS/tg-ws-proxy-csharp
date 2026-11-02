@@ -112,7 +112,7 @@ if ($Local) {
     Write-Host "  webProxy.publicHost  = lvh.me      (домен, а не IP: Telegram не принимает IP)"
     Write-Host ""
     Write-Host "Локальная проверка (сервер и клиент на одной машине):" -ForegroundColor Cyan
-    Write-Host "  dotnet run --project src/TgWsProxy -- --config config.json"
+    Write-Host "  dotnet run --project src/TgWsProxy"
     Write-Host "  node tools/web-proxy-smoke.mjs --host lvh.me --secret <32hex> --carrier websocket --ca $pemPath"
     Write-Host "  браузер: https://lvh.me/?bridge=<capability>"
 } else {

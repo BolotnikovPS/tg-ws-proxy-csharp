@@ -138,9 +138,9 @@ public class MsgSplitterTests
     public void Split_WhenDisabled_PassesChunksThrough()
     {
         var splitter = new MsgSplitter(Protocol.ProtoIntermediateInt);
-        splitter.Split(new byte[] { 0, 0, 0, 0 }, new byte[] { 0, 0, 0, 0 });
+        splitter.Split([0, 0, 0, 0], [0, 0, 0, 0]);
 
-        var chunk = new byte[] { 9, 9, 9 };
+        var chunk = "\t\t\t"u8.ToArray();
         var parts = splitter.Split(chunk, chunk);
 
         Assert.Single(parts);
@@ -180,7 +180,7 @@ public class MsgSplitterTests
     private static byte[] BuildAbridgedMessage(int payloadLen)
     {
         var header = new byte[] { (byte)(payloadLen / 4) };
-        return header.Concat(new byte[payloadLen]).ToArray();
+        return [.. header, .. new byte[payloadLen]];
     }
 
     private static byte[] BuildAbridgedExtendedMessage(int payloadLen)
@@ -193,12 +193,12 @@ public class MsgSplitterTests
             (byte)((words >> 8) & 0xFF),
             (byte)((words >> 16) & 0xFF),
         };
-        return header.Concat(new byte[payloadLen]).ToArray();
+        return [.. header, .. new byte[payloadLen]];
     }
 
     private static byte[] BuildIntermediateMessage(int payloadLen)
     {
         var header = BitConverter.GetBytes(payloadLen);
-        return header.Concat(new byte[payloadLen]).ToArray();
+        return [.. header, .. new byte[payloadLen]];
     }
 }

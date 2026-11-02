@@ -10,7 +10,7 @@ public sealed class ConfigRuntime
     /// <summary>Создаёт описание источника конфигурации.</summary>
     /// <param name="path">Путь к файлу конфигурации.</param>
     /// <param name="isExplicit">
-    /// <c>true</c>, если путь задан пользователем (<c>--config</c> или <c>TGWS_CONFIG</c>);
+    /// <c>true</c>, если путь задан пользователем (переменной <c>TGWS_CONFIG</c>);
     /// <c>false</c> для неявного <c>./config.json</c>.
     /// </param>
     public ConfigRuntime(string path, bool isExplicit)

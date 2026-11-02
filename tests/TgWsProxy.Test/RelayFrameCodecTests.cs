@@ -77,7 +77,7 @@ public class RelayFrameCodecTests
         var buffer = new byte[RelayFrameCodec.FrameHeaderSize];
         RelayFrameCodec.WriteHeader(buffer, RelayFrameType.Data, 1, 16);
 
-        var ok = RelayFrameCodec.TryParse(buffer, out var frame, out var error);
+        var ok = RelayFrameCodec.TryParse(buffer, out _, out var error);
 
         Assert.False(ok);
         Assert.Equal(RelayFrameError.HeaderTooShort, error);
@@ -88,7 +88,7 @@ public class RelayFrameCodecTests
     {
         var buffer = new byte[RelayFrameCodec.FrameHeaderSize - 1];
 
-        var ok = RelayFrameCodec.TryParse(buffer, out var frame, out var error);
+        var ok = RelayFrameCodec.TryParse(buffer, out _, out var error);
 
         Assert.False(ok);
         Assert.Equal(RelayFrameError.HeaderTooShort, error);
@@ -100,7 +100,7 @@ public class RelayFrameCodecTests
         var buffer = new byte[RelayFrameCodec.FrameHeaderSize];
         buffer[0] = 0x7F;
 
-        var ok = RelayFrameCodec.TryParse(buffer, out var frame, out var error);
+        var ok = RelayFrameCodec.TryParse(buffer, out _, out var error);
 
         Assert.False(ok);
         Assert.Equal(RelayFrameError.UnknownType, error);

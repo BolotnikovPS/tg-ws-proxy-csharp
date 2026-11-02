@@ -31,7 +31,7 @@ internal static class PeerStatsAggregator
     public static IReadOnlyList<PeerStatsSnapshot> Aggregate(IEnumerable<PeerStatsSnapshot> rows, string? group)
     {
         var mode = NormalizeGroup(group);
-        var list = rows as IReadOnlyList<PeerStatsSnapshot> ?? rows.ToList();
+        var list = rows as IReadOnlyList<PeerStatsSnapshot> ?? [.. rows];
         if (mode == GroupPair)
         {
             return list;

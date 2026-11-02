@@ -184,7 +184,7 @@ internal static class FakeTlsCodec
         }
 
         var records = (data.Length + ApplicationDataMax - 1) / ApplicationDataMax;
-        var result = new byte[data.Length + (records * 5)];
+        var result = new byte[data.Length + records * 5];
         var srcOffset = 0;
         var dstOffset = 0;
 

@@ -1,8 +1,9 @@
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
+using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
+using TgWsProxy.Infrastructure.Transport;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -12,6 +13,7 @@ namespace TgWsProxy.Infrastructure.Instances;
 /// <c>kws{dc}.{baseDomain}</c> и выдаёт каналы поверх них.
 /// </summary>
 internal sealed class CfH2Pool(
+    Config config,
     ICfDomainBalancer balancer,
     IProxyStats stats,
     ILogger<CfH2Pool> logger) : ICfH2Pool
@@ -19,7 +21,7 @@ internal sealed class CfH2Pool(
     private const double DomainCooldownSeconds = 30.0;
     private const double SetupTimeoutSeconds = 8.0;
 
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private readonly Dictionary<string, CfH2Lane> _lanes = [];
     private readonly Dictionary<string, SemaphoreSlim> _locks = [];
     private readonly Dictionary<string, double> _failedUntil = [];
@@ -140,7 +142,7 @@ internal sealed class CfH2Pool(
                         _nextLane++;
                     }
 
-                    lane = new CfH2Lane(host, _nextLane, stats, logger);
+                    lane = new CfH2Lane(host, _nextLane, stats, logger, config.MtProto.AllowInvalidCertificates);
                     try
                     {
                         await lane.PreflightAsync(cancellationToken).ConfigureAwait(false);

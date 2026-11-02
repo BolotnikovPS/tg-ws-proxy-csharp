@@ -1,30 +1,78 @@
+# Верхняя строчка указывает, что это корневой файл конфигурации
 root = true
 
+# Настройки для всех файлов проекта
 [*]
-charset = utf-8
-end_of_line = crlf
-insert_final_newline = true
-trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
+insert_final_newline = true
+charset = utf-8
+trim_trailing_whitespace = true
 
-[*.{cs,csx}]
-indent_size = 4
-
-[*.{json,props,targets,yml,yaml,xml,csproj}]
+# Настройки для файлов разметки (JSON, XML, YAML)
+[*.{json,xml,yml}]
 indent_size = 2
 
-[*.md]
-trim_trailing_whitespace = false
-
-[*.{sln,slnx}]
-indent_style = tab
-indent_size = 4
-
+# === НАСТРОЙКИ СТИЛЯ КОДА C# ===
 [*.cs]
+
+# Переносы строк (Windows-style CRLF или Unix-style LF)
+end_of_line = crlf
+
+# Использование var (уровень Info/Suggestion)
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = true:suggestion
+
+# Предпочитать Expression-bodied члены (стрелочные функции =>)
+csharp_style_expression_bodied_methods = true:suggestion
+csharp_style_expression_bodied_properties = true:suggestion
+csharp_style_expression_bodied_accessors = true:suggestion
+
+# Пространства имен (Файловые пространства имен для C# 10+)
 csharp_style_namespace_declarations = file_scoped:suggestion
-csharp_using_directive_placement = outside_namespace:suggestion
-dotnet_sort_system_directives_first = true
-dotnet_separate_import_directive_groups = false
-csharp_new_line_before_open_brace = all
-csharp_prefer_braces = when_multiline:suggestion
+
+# Модификаторы доступа (упорядочивание: public, private, internal и т.д.)
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:suggestion
+csharp_preferred_modifier_order = public,private,protected,internal,file,final,sealed,abstract,virtual,override,queue,stack,alloc,static,readonly,extern,unsafe,volatile,async:suggestion
+
+# Правила очистки using директив
+dotnet_sort_system_directives_first = true:suggestion
+dotnet_separate_import_directive_groups = true:suggestion
+
+# Форматирование пустых строк и пробелов
+csharp_space_after_cast = false:suggestion
+csharp_style_allow_blank_lines_between_consecutive_braces = false:suggestion
+# IDE2006: «пустая строка после маркера =>» — ключ обязан иметь суффикс _experimental, иначе Roslyn его игнорирует
+csharp_style_allow_blank_line_after_token_in_arrow_expression_clause_experimental = false:suggestion
+
+# Фигурные скобки, тела конструкторов, скобки и сопоставление с образцом (Info/Suggestion, видны в IDE)
+csharp_prefer_braces = true:suggestion
+csharp_style_expression_bodied_constructors = true:suggestion
+dotnet_style_parentheses_in_arithmetic_binary_operators = never_if_unnecessary:suggestion
+dotnet_style_parentheses_in_other_binary_operators = never_if_unnecessary:suggestion
+dotnet_style_parentheses_in_relational_binary_operators = never_if_unnecessary:suggestion
+dotnet_style_parentheses_in_other_operators = never_if_unnecessary:suggestion
+csharp_style_prefer_pattern_matching = true:suggestion
+csharp_style_prefer_not_pattern = true:suggestion
+csharp_style_prefer_extended_property_pattern = true:suggestion
+
+# === СГЕНЕРИРОВАННЫЕ MTProto-СХЕМЫ ===
+# Регенерация схемы затирает ручные правки — стилевые и IDE-правила к этим файлам не применяются.
+[src/TgWsProxy.Infrastructure/MtProto/TL.Schema.cs]
+generated_code = true
+
+[src/TgWsProxy.Infrastructure/MtProto/TL.Secret.cs]
+generated_code = true
+
+[src/TgWsProxy.Infrastructure/MtProto/TL.MTProto.cs]
+generated_code = true
+
+[src/TgWsProxy.Infrastructure/MtProto/TL.Xtended.cs]
+generated_code = true
+
+[src/TgWsProxy.Infrastructure/MtProto/TL.cs]
+generated_code = true
+
+[src/TgWsProxy.Infrastructure/MtProto/TL.Methods.cs]
+generated_code = true

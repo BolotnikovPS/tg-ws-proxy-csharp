@@ -325,8 +325,8 @@ public static class ConfigValidator
                 "webProxy.maxStreams must be greater than or equal to webProxy.maxStreamsPerSession");
         }
 
-        if (config.WebProxy.MaxPendingBytesPerSession < 1
-            || config.WebProxy.MaxPendingBytesPerSession > MaxWebProxyPendingBytes)
+        if (config.WebProxy.MaxPendingBytesPerSession is < 1
+            or > MaxWebProxyPendingBytes)
         {
             throw new ArgumentException(
                 $"webProxy.maxPendingBytesPerSession must be in range 1..{MaxWebProxyPendingBytes}");
@@ -335,6 +335,11 @@ public static class ConfigValidator
         if (config.WebProxy.MaxPendingItemsPerSession < 1)
         {
             throw new ArgumentException("webProxy.maxPendingItemsPerSession must be greater than 0");
+        }
+
+        if (config.WebProxy.IdleSessionTimeoutSeconds < 0)
+        {
+            throw new ArgumentException("webProxy.idleSessionTimeoutSeconds must be 0 (disabled) or greater");
         }
     }
 
@@ -460,7 +465,7 @@ public static class ConfigValidator
         var endpoint = otel.Endpoint.Trim();
         if (endpoint.Length > 0
             && (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
-                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)))
+                || uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
         {
             throw new ArgumentException("otel.endpoint must be an absolute URL (http:// or https://)");
         }

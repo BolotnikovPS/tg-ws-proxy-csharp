@@ -85,4 +85,11 @@ public sealed class WebProxyConfig
 
     /// <summary>Предел числа кадров в исходящей очереди одной сессии. Горячий ключ.</summary>
     public int MaxPendingItemsPerSession { get; set; } = 16384;
+
+    /// <summary>
+    /// Таймаут бездействия relay-сессии: если клиент не шлёт <c>/up</c> или <c>/down</c> дольше
+    /// этого времени, сессия закрывается и её ресурсы (потоки, мосты) освобождаются. <c>0</c> —
+    /// закрытие по бездействию отключено. Горячий ключ.
+    /// </summary>
+    public int IdleSessionTimeoutSeconds { get; set; } = 300;
 }

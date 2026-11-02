@@ -10,8 +10,8 @@ namespace TgWsProxy.Test;
 /// </summary>
 public class ActiveSessionRegistryTests
 {
-    private static ActiveSessionRegistry CreateRegistry() =>
-        new(NullLogger<ActiveSessionRegistry>.Instance);
+    private static ActiveSessionRegistry CreateRegistry()
+        => new(NullLogger<ActiveSessionRegistry>.Instance);
 
     [Fact]
     public void Register_Abort_CountsSession()

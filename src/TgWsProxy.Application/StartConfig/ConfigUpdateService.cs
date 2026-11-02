@@ -431,6 +431,10 @@ public sealed class ConfigUpdateService(
                 case "webProxy.maxPendingItemsPerSession":
                     config.WebProxy.MaxPendingItemsPerSession = candidate.WebProxy.MaxPendingItemsPerSession;
                     break;
+
+                case "webProxy.idleSessionTimeoutSeconds":
+                    config.WebProxy.IdleSessionTimeoutSeconds = candidate.WebProxy.IdleSessionTimeoutSeconds;
+                    break;
             }
         }
     }

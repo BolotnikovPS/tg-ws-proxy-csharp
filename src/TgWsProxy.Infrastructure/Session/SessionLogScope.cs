@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Infrastructure.Logging;
 
@@ -44,7 +45,7 @@ internal static class SessionLogScope
         return logger.BeginScope(new Dictionary<string, object>
         {
             [LoggingConstants.TokenId] = tokenId,
-            [LoggingConstants.Dc] = dc?.ToString() ?? "-",
+            [LoggingConstants.Dc] = dc?.ToString(CultureInfo.InvariantCulture) ?? "-",
             [LoggingConstants.Media] = media,
         });
     }

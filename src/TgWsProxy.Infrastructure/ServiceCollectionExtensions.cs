@@ -1,8 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TgWsProxy.Application.Abstractions;
-using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.Diagnostics;
 using TgWsProxy.Infrastructure.FakeTls;
@@ -11,6 +9,7 @@ using TgWsProxy.Infrastructure.Instances;
 using TgWsProxy.Infrastructure.Metrics;
 using TgWsProxy.Infrastructure.MtProto;
 using TgWsProxy.Infrastructure.Session;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.WebProxy;
 
 namespace TgWsProxy.Infrastructure;
@@ -34,6 +33,8 @@ public static class ServiceCollectionExtensions
             .AddSingleton<ClientInitReader>()
             .AddSingleton<MaskingProxy>()
             .AddSingleton<IMtProtoInspector, MtProtoInspector>()
+            // Локальный Bot API-сервер: кэш MTProto-соединений ботов + файловые сессии (botApi.DataDir).
+            .AddSingleton(sp => new BotGateway(sp.GetRequiredService<Config>().BotApi, sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<BotGateway>>()))
             // Ядро «после handshake» — общее для TCP-режима и web-proxy (DESIGN-WEB-PROXY §4.3).
             .AddSingleton<MtProtoBridgeEngine>()
             // Relay-сессия WEB proxy: подбор токена по HMAC bridge-capability и жизненный цикл

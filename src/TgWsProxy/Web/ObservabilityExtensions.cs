@@ -29,6 +29,7 @@ internal static class ObservabilityExtensions
         // F-3.1: единственный реестр метрик приложения. /metrics и публикаторы
         // health check пишут в него, поэтому второго источника истины нет.
         services.AddSingleton<ProxyMetrics>();
+        services.AddSingleton<BotApiRateLimiter>();
 
         // F-3.4/F-3.10: liveness — self, readiness — слушатель, конфигурация и
         // реестр статистики. Статусы публикует prometheus-net.AspNetCore.HealthChecks

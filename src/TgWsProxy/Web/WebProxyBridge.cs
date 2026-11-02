@@ -66,7 +66,7 @@ internal static class WebProxyBridge
                     case "api/v1/up":
                     case "api/v1/down":
                     case "api/v1/ws":
-                        await HandleApiAsync(context, cfg, basePath, rawPath[basePrefix.Length..]);
+                        await HandleApiAsync(context, rawPath[basePrefix.Length..]);
                         return;
                 }
             }
@@ -156,7 +156,7 @@ internal static class WebProxyBridge
             response.Headers.ContentSecurityPolicy = BuildCsp(nonce, publicHost);
             response.Headers.CacheControl = "no-store";
             response.Headers["Referrer-Policy"] = "no-referrer";
-            response.Headers["X-Content-Type-Options"] = "nosniff";
+            response.Headers.XContentTypeOptions = "nosniff";
             response.Headers["X-DNS-Prefetch-Control"] = "off";
             response.Headers["Permissions-Policy"] = PermissionsPolicy;
 
@@ -175,7 +175,7 @@ internal static class WebProxyBridge
     // Carrier API
     // ---------------------------------------------------------------------
 
-    private static async Task HandleApiAsync(HttpContext context, Config cfg, string basePath, string suffix)
+    private static async Task HandleApiAsync(HttpContext context, string suffix)
     {
         var logger = GetLogger(context);
         try
@@ -185,7 +185,7 @@ internal static class WebProxyBridge
             // Носитель websocket авторизуется подпротоколом, а не заголовком Authorization (F-W.24).
             if (suffix == "api/v1/ws")
             {
-                await HandleWebSocketAsync(context, cfg, basePath);
+                await HandleWebSocketAsync(context);
                 return;
             }
 
@@ -422,7 +422,7 @@ internal static class WebProxyBridge
     /// Авторизация — подпротокол <c>tproxy-v1.&lt;session-token&gt;</c> (F-W.24): session-токен
     /// выдаётся только после погашения bootstrap, поэтому подделка без bridge-страницы невозможна.
     /// </summary>
-    private static async Task HandleWebSocketAsync(HttpContext context, Config cfg, string basePath)
+    private static async Task HandleWebSocketAsync(HttpContext context)
     {
         var logger = GetLogger(context);
         var request = context.Request;
@@ -590,12 +590,10 @@ internal static class WebProxyBridge
             => await socket.SendAsync(batch, WebSocketMessageType.Binary, endOfMessage: true, ct);
 
         public ValueTask SendPingAsync(CancellationToken ct)
-        {
             // Простой держит Kestrel (KeepAliveInterval=30s в WebSocketOptions): он сам шлёт
             // protocol-level ping. Пустое бинарное сообщение здесь недопустимо — клиент принял бы
             // его за пустой батч кадров и отверг сессию.
-            return ValueTask.CompletedTask;
-        }
+            => ValueTask.CompletedTask;
     }
 
     // ---------------------------------------------------------------------
@@ -721,16 +719,25 @@ internal static class WebProxyBridge
 
     private static IPAddress? ResolvePeer(HttpContext context)
     {
-        // При наличии обратного прокси берём единственный адрес из X-Forwarded-For,
-        // иначе — непосредственный peer соединения.
-        var forwarded = context.Request.Headers["X-Forwarded-For"].ToString();
-        if (!string.IsNullOrEmpty(forwarded) && !forwarded.Contains(','))
+        var remote = context.Connection.RemoteIpAddress;
+
+        // X-Forwarded-For доверяем только от петлевого (same-host) обратного прокси.
+        // Иначе клиент подделал бы адрес напрямую и обошёл бы per-IP лимиты сессий.
+        if (IsTrustedProxy(remote))
         {
-            return IPAddress.TryParse(forwarded.Trim(), out var parsed) ? parsed : null;
+            var forwarded = context.Request.Headers["X-Forwarded-For"].ToString();
+            if (!string.IsNullOrEmpty(forwarded) && !forwarded.Contains(','))
+            {
+                return IPAddress.TryParse(forwarded.Trim(), out var parsed) ? parsed : null;
+            }
         }
 
-        return context.Connection.RemoteIpAddress;
+        return remote;
     }
+
+    /// <summary>Петлевой адрес: обратный прокси на том же хосте (nginx/HAProxy).</summary>
+    private static bool IsTrustedProxy(IPAddress? address)
+        => address is not null && IPAddress.IsLoopback(address);
 
     private static string GenerateNonce()
     {

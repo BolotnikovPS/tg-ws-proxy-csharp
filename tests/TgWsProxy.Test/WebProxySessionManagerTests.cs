@@ -203,7 +203,7 @@ public class WebProxySessionManagerTests
     private static byte[] HelloFrame()
     {
         var buffer = new byte[RelayFrameCodec.FrameSize(1)];
-        RelayFrameCodec.Write(buffer, RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+        RelayFrameCodec.Write(buffer, RelayFrameType.Hello, 0, [RelayFrameCodec.HelloProtocolVersion]);
         return buffer;
     }
 
@@ -212,7 +212,7 @@ public class WebProxySessionManagerTests
         public ProxyTokenEntry? ResolveToken(string host, string? capability) => null;
 
         public WebProxyRelayLease OpenSession(ProxyTokenEntry token, IPAddress? peer, string scope)
-            => new((_, _) => Task.CompletedTask, new CancellationTokenSource().Token, () => { });
+            => new((_, _) => Task.CompletedTask, () => { }, new CancellationTokenSource().Token);
     }
 
     private sealed class FakeTimeProvider(DateTimeOffset start) : TimeProvider

@@ -33,6 +33,6 @@ internal sealed class SecretMaskingPolicy : IDestructuringPolicy
         return true;
     }
 
-    private static bool IsSensitive(object value) =>
-        value is not null && LoggingConstants.SensitiveTypeNames.Contains(value.GetType().Name);
+    private static bool IsSensitive(object value)
+        => value is not null && LoggingConstants.SensitiveTypeNames.Contains(value.GetType().Name);
 }

@@ -1,11 +1,11 @@
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.FakeTls;
 using TgWsProxy.Infrastructure.IO;
+using TgWsProxy.Infrastructure.Transport;
 
 namespace TgWsProxy.Infrastructure.MtProto;
 
@@ -64,7 +64,7 @@ internal sealed class ClientInitReader(
 
         if (firstByte == FakeTlsCodec.RecordHandshake && !string.IsNullOrEmpty(masking))
         {
-            return await ReadFakeTlsAsync(stream, (byte)firstByte, masking, label, cancellationToken)
+            return await ReadFakeTlsAsync(stream, (byte)firstByte, label, cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -99,7 +99,6 @@ internal sealed class ClientInitReader(
     private async Task<ClientInitResult> ReadFakeTlsAsync(
         Stream stream,
         byte firstByte,
-        string masking,
         string label,
         CancellationToken cancellationToken)
     {

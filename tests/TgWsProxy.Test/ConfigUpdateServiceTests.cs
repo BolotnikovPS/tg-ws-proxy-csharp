@@ -87,7 +87,7 @@ public sealed class ConfigUpdateServiceTests : IDisposable
             CancellationToken.None);
 
         Assert.False(result.ListenerRestarted);
-        Assert.Equal(new[] { "maxConnections" }, result.HotReloaded);
+        Assert.Equal(["maxConnections"], result.HotReloaded);
         Assert.Equal(250, _connectionLimiter.Limit);
         Assert.Equal(250, _config.MaxConnections);
     }
@@ -104,7 +104,7 @@ public sealed class ConfigUpdateServiceTests : IDisposable
             CancellationToken.None);
 
         Assert.False(result.ListenerRestarted);
-        Assert.Equal(new[] { "mtproto.publicHost" }, result.HotReloaded);
+        Assert.Equal(["mtproto.publicHost"], result.HotReloaded);
         Assert.Equal("proxy.example.com:1443", _config.MtProto.PublicHost);
         Assert.False(_listener.WasCalled);
     }
@@ -198,7 +198,7 @@ public sealed class ConfigUpdateServiceTests : IDisposable
                 CancellationToken.None));
 
         Assert.Equal(
-            new[] { "mtproto.port", "verbose" },
+            ["mtproto.port", "verbose"],
             exception.StartupOnly.OrderBy(key => key));
         Assert.False(_listener.WasCalled);
         Assert.False(File.Exists(_service.Path));
@@ -217,7 +217,7 @@ public sealed class ConfigUpdateServiceTests : IDisposable
                 new ConfigDto { EnableSwagger = false },
                 CancellationToken.None));
 
-        Assert.Equal(new[] { "enableSwagger" }, exception.StartupOnly.OrderBy(key => key));
+        Assert.Equal(["enableSwagger"], exception.StartupOnly.OrderBy(key => key));
         Assert.False(File.Exists(_service.Path));
         Assert.True(_config.EnableSwagger);
     }

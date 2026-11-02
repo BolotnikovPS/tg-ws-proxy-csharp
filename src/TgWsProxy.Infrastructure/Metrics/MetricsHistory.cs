@@ -24,11 +24,10 @@ public sealed class MetricsHistory : ITimeseriesBufferConfigurator, ITimeseriesR
     /// <summary>Максимальная глубина истории — один час при шаге по умолчанию.</summary>
     public const int Capacity = CapacitySeconds / DefaultStepSeconds;
 
-    private readonly object sync = new();
+    private readonly Lock sync = new();
     private Sample[] samples;
     private int capacityPoints;
     private int stepSeconds;
-    private int windowSeconds;
     private int count;
     private int head;
 
@@ -50,7 +49,7 @@ public sealed class MetricsHistory : ITimeseriesBufferConfigurator, ITimeseriesR
     public MetricsHistory(int stepSeconds, int windowSeconds)
     {
         this.stepSeconds = Math.Max(1, stepSeconds);
-        this.windowSeconds = Math.Max(this.stepSeconds, windowSeconds);
+        WindowSeconds = Math.Max(this.stepSeconds, windowSeconds);
         capacityPoints = Math.Max(2, CapacitySeconds / this.stepSeconds);
         samples = new Sample[capacityPoints];
     }
@@ -74,9 +73,11 @@ public sealed class MetricsHistory : ITimeseriesBufferConfigurator, ITimeseriesR
         {
             lock (sync)
             {
-                return windowSeconds;
+                return field;
             }
         }
+
+        private set;
     }
 
     /// <summary>Максимальное число хранимых точек.</summary>
@@ -104,7 +105,7 @@ public sealed class MetricsHistory : ITimeseriesBufferConfigurator, ITimeseriesR
         lock (sync)
         {
             this.stepSeconds = newStep;
-            this.windowSeconds = newWindow;
+            WindowSeconds = newWindow;
             capacityPoints = newCapacity;
             samples = new Sample[newCapacity];
             count = 0;
@@ -132,14 +133,14 @@ public sealed class MetricsHistory : ITimeseriesBufferConfigurator, ITimeseriesR
     }
 
     /// <summary>
-    /// Строит временной ряд за последние <paramref name="window"/> с шагом <paramref name="step"/>.
+    /// Строит временной ряд за последние <paramref name="window"/> с шагом <paramref name="stepSize"/>.
     /// Ряд — равномерная сетка: метка точки равна концу её интервала, поэтому значения строго
     /// возрастают и не дублируются. Значение точки — последний сэмпл внутри интервала; скорости
     /// считаются по разнице счётчиков с предыдущей точкой, поэтому на первой точке скорость равна нулю.
     /// </summary>
-    public TimeseriesDto Query(TimeSpan window, TimeSpan step, DateTimeOffset now)
+    public TimeseriesDto Query(TimeSpan window, TimeSpan stepSize, DateTimeOffset now)
     {
-        var stepSeconds = Math.Max(1, (int)Math.Round(step.TotalSeconds));
+        var stepSeconds = Math.Max(1, (int)Math.Round(stepSize.TotalSeconds));
         // Окно выравнивается по шагу, чтобы ряд был равномерной сеткой без «хвоста».
         var bucketCount = Math.Max(1, (int)Math.Round(window.TotalSeconds) / stepSeconds);
         var windowSeconds = bucketCount * stepSeconds;

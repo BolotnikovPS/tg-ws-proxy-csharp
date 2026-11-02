@@ -256,7 +256,7 @@ public sealed class ProxyHostedService(
     /// <summary>Останавливает пулы и refresher в порядке F-1.3.</summary>
     private async Task StopSubsystemsAsync()
     {
-        cfDomainRefresher.Stop();
+        cfDomainRefresher.StopRefresh();
         wsPool.Reset();
         cfWorkerPool.Reset();
 

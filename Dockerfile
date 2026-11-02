@@ -50,7 +50,7 @@ RUN chmod +x /usr/local/bin/healthcheck.sh
 # Права важны: сохранение конфигурации из UI пишет временный файл рядом и переименовывает его.
 RUN mkdir -p /app/config && chown -R app:app /app/config
 
-# Путь к конфигурации читается приложением из TGWS_CONFIG, если не задан --config (F-6.1).
+# Путь к конфигурации читается приложением из TGWS_CONFIG (F-6.1).
 ENV TGWS_CONFIG=/app/config/config.json \
     DOTNET_NOLOGO=1 \
     DOTNET_CLI_TELEMETRY_OPTOUT=1

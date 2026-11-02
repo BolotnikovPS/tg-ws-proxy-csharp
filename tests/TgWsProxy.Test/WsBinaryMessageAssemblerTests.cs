@@ -62,7 +62,7 @@ public class WsBinaryMessageAssemblerTests
     public async Task StartFrame_WithFin_ReturnsSameInstance_WithoutCopying()
     {
         var asm = new WsBinaryMessageAssembler();
-        var payload = new byte[] { 0x42, 0x43 };
+        var payload = "BC"u8.ToArray();
 
         var result = await asm.OnFrame(fin: true, opcode: 0x2, payload: payload, cts);
 

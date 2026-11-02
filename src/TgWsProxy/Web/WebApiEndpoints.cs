@@ -73,32 +73,53 @@ internal static class WebApiEndpoints
                 JsonOptions);
         }));
 
-        // F-3.8: если webApiToken задан, все /api/* требуют Authorization: Bearer.
-        // /healthz, /metrics и страница остаются открытыми — их читают Docker и Prometheus.
+        // F-3.8: панель управления (/api/*) требует Authorization: Bearer — всегда.
+        // Fail-closed: если webApiToken пуст, /api/* отключён (иначе при прослушивании
+        // 0.0.0.0:80 менять конфигурацию мог бы любой). /healthz, /metrics и страница
+        // остаются открытыми — их читают Docker и Prometheus.
         app.Use(async (context, next) =>
         {
+            if (!context.Request.Path.StartsWithSegments("/api"))
+            {
+                await next();
+                return;
+            }
+
             var config = context.RequestServices.GetRequiredService<Config>();
             var expected = config.WebApiToken;
 
-            if (!string.IsNullOrWhiteSpace(expected) && context.Request.Path.StartsWithSegments("/api"))
+            if (string.IsNullOrWhiteSpace(expected))
             {
-                var header = context.Request.Headers.Authorization.ToString();
-                if (!IsAuthorized(header, expected))
-                {
-                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    context.Response.Headers.WWWAuthenticate = "Bearer";
-                    context.Response.ContentType = ProblemContentType;
-                    await context.Response.WriteAsJsonAsync(
-                        new ProblemDetails
-                        {
-                            Status = StatusCodes.Status401Unauthorized,
-                            Title = "Unauthorized",
-                            Detail = "A valid bearer token is required: send 'Authorization: Bearer <token>'.",
-                            Instance = context.Request.Path,
-                        },
-                        JsonOptions);
-                    return;
-                }
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                context.Response.ContentType = ProblemContentType;
+                await context.Response.WriteAsJsonAsync(
+                    new ProblemDetails
+                    {
+                        Status = StatusCodes.Status403Forbidden,
+                        Title = "Management API disabled",
+                        Detail = "webApiToken is empty: set it in config.json to enable /api/*.",
+                        Instance = context.Request.Path,
+                    },
+                    JsonOptions);
+                return;
+            }
+
+            var header = context.Request.Headers.Authorization.ToString();
+            if (!IsAuthorized(header, expected))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.Headers.WWWAuthenticate = "Bearer";
+                context.Response.ContentType = ProblemContentType;
+                await context.Response.WriteAsJsonAsync(
+                    new ProblemDetails
+                    {
+                        Status = StatusCodes.Status401Unauthorized,
+                        Title = "Unauthorized",
+                        Detail = "A valid bearer token is required: send 'Authorization: Bearer <token>'.",
+                        Instance = context.Request.Path,
+                    },
+                    JsonOptions);
+                return;
             }
 
             await next();

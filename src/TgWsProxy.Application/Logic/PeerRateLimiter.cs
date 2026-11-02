@@ -14,7 +14,7 @@ public sealed class PeerRateLimiter
     private volatile int _windowSeconds;
     private readonly Func<double> _clock;
     private readonly Dictionary<IPAddress, Counter> _counters = [];
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private double _lastSweep;
 
     public PeerRateLimiter(Config config)

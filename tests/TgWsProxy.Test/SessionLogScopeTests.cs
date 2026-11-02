@@ -18,7 +18,7 @@ public class SessionLogScopeTests
 
         SessionLogScope.Begin(logger, context);
 
-        var state = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object>>(logger.Scopes.Single());
+        var state = Assert.IsType<IReadOnlyDictionary<string, object>>(logger.Scopes.Single(), exactMatch: false);
         Assert.Equal("000001", state["ConnectionId"]);
         Assert.Equal("peer", state["Peer"]);
         Assert.False(state.ContainsKey("TokenId"));
@@ -32,7 +32,7 @@ public class SessionLogScopeTests
 
         SessionLogScope.Begin(logger, context);
 
-        var state = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object>>(logger.Scopes.Single());
+        var state = Assert.IsType<IReadOnlyDictionary<string, object>>(logger.Scopes.Single(), exactMatch: false);
         Assert.Equal("tok-1", state["TokenId"]);
     }
 
@@ -43,7 +43,7 @@ public class SessionLogScopeTests
 
         SessionLogScope.BeginRoute(logger, "tok-2", 5, media: true);
 
-        var state = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object>>(logger.Scopes.Single());
+        var state = Assert.IsType<IReadOnlyDictionary<string, object>>(logger.Scopes.Single(), exactMatch: false);
         Assert.Equal("tok-2", state["TokenId"]);
         Assert.Equal("5", state["Dc"]);
         Assert.Equal(true, state["Media"]);
@@ -56,7 +56,7 @@ public class SessionLogScopeTests
 
         SessionLogScope.BeginRoute(logger, "tok-2", null, media: false);
 
-        var state = Assert.IsAssignableFrom<IReadOnlyDictionary<string, object>>(logger.Scopes.Single());
+        var state = Assert.IsType<IReadOnlyDictionary<string, object>>(logger.Scopes.Single(), exactMatch: false);
         Assert.Equal("-", state["Dc"]);
         Assert.Equal(false, state["Media"]);
     }

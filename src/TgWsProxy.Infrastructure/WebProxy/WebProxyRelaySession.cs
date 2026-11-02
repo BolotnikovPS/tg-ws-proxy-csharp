@@ -2,10 +2,10 @@ using System.Net;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.MtProto;
+using TgWsProxy.Infrastructure.Transport;
 
 namespace TgWsProxy.Infrastructure.WebProxy;
 
@@ -76,7 +76,6 @@ internal sealed class WebProxyRelaySession(
 
         return new WebProxyRelayLease(
             (stream, streamCt) => BridgeStreamAsync(stream, token, scope, peer, streamCt),
-            sessionCts.Token,
             () =>
             {
                 stats.DecConnectionsActive();
@@ -90,7 +89,8 @@ internal sealed class WebProxyRelaySession(
                 // чтобы не разбирать CTS из собственного callback.
                 sessionCts.Cancel();
                 registryLease.Dispose();
-            });
+            },
+            sessionCts.Token);
     }
 
     /// <summary>

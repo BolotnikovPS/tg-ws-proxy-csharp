@@ -2,10 +2,10 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.FakeTls;
 using TgWsProxy.Infrastructure.MtProto;
+using TgWsProxy.Infrastructure.Transport;
 
 namespace TgWsProxy.Test;
 
@@ -136,10 +136,7 @@ public class FakeTlsTests
     }
 
     [Fact]
-    public void WrapTlsRecord_ReturnsEmpty_ForEmptyInput()
-    {
-        Assert.Empty(FakeTlsCodec.WrapTlsRecord([]));
-    }
+    public void WrapTlsRecord_ReturnsEmpty_ForEmptyInput() => Assert.Empty(FakeTlsCodec.WrapTlsRecord([]));
 
     [Fact]
     public void WrapTlsRecord_AddsHeader_ForSmallPayload()

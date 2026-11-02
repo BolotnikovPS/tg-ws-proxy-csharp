@@ -101,4 +101,10 @@ public sealed class ConfigDto
     /// Все ключи блока — «только старт».
     /// </summary>
     public OtelConfigDto? Otel { get; set; }
+
+    /// <summary>
+    /// Настройки локального Telegram Bot API-сервера — вложенный блок <c>botApi</c>. <c>null</c> —
+    /// не менять блок; внутри него подчинённые ключи также nullable. Все ключи блока — «только старт».
+    /// </summary>
+    public BotApiConfigDto? BotApi { get; set; }
 }

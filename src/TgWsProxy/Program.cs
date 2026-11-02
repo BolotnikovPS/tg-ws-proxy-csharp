@@ -21,15 +21,14 @@ var appVersion = typeof(Program).Assembly
     .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
     .Split('+')[0] ?? "unknown";
 
-BootstrapOptions options;
 try
 {
-    options = BootstrapOptions.Parse(args);
+    BootstrapOptions.Parse(args);
 }
 catch (ArgumentException e)
 {
-    // F-1.10: аргументы конфигурацию не задают, поэтому любая опция, кроме --config,
-    // — ошибка, а не молчаливый старт на умолчаниях. Сообщение уходит в stderr: журнал ещё не поднят.
+    // Аргументы конфигурацию не задают (путь к файлу — через TGWS_CONFIG), поэтому любой
+    // аргумент — ошибка, а не молчаливый старт на умолчаниях. Сообщение в stderr: журнал ещё не поднят.
     Console.Error.WriteLine(e.Message);
     return 1;
 }
@@ -43,7 +42,7 @@ bool configPathIsExplicit;
 bool tokensBootstrapped;
 try
 {
-    (configPath, configPathIsExplicit) = ConfigFileLoader.ResolvePath(options.ConfigPath);
+    (configPath, configPathIsExplicit) = ConfigFileLoader.ResolvePath();
     cfg = ConfigFileLoader.Load(configPath, configPathIsExplicit);
 
     // F-8.3: устаревший ключ secret уже перенесён в tokens при чтении; здесь дополняются
@@ -74,8 +73,8 @@ if (tokensBootstrapped && File.Exists(configPath))
     }
 }
 
-// Аргументы в WebApplication не передаются: их разбором владеет BootstrapOptions, а
-// CommandLineConfigurationProvider падал бы на одиночных флагах вида "--config".
+// Аргументы в WebApplication не передаются: их проверкой владеет BootstrapOptions, а
+// CommandLineConfigurationProvider падал бы на одиночных флагах старых версий.
 // Уровень журналирования задаётся только при старте: verbose относится к ключам
 // «только старт», поэтому переключатель не меняется на лету.
 var levelSwitch = new Serilog.Core.LoggingLevelSwitch(
@@ -204,6 +203,8 @@ if (cfg.EnableSwagger)
 // раньше UseDefaultFiles панели (разные порты — общий хост).
 app.MapWebProxyBridge();
 app.MapWebApiEndpoints();
+app.MapBotApi(cfg);
+
 
 using var runtimeLoggerFactory = app.Services.GetRequiredService<ILoggerFactory>();
 var runtimeLogger = runtimeLoggerFactory.CreateLogger("runtime");
@@ -236,8 +237,8 @@ var proxyService = app.Services.GetRequiredService<ProxyHostedService>();
 if (string.IsNullOrWhiteSpace(cfg.WebApiToken))
 {
     startupLogger.LogWarning(
-        "Web API is listening on all interfaces (port 80), and webApiToken is empty: " +
-        "anyone who can reach this port can read metrics and change the configuration");
+        "webApiToken is empty: the management API (/api/*) is disabled (fail-closed). " +
+        "Set webApiToken in config.json to control the proxy from the dashboard");
 }
 else
 {

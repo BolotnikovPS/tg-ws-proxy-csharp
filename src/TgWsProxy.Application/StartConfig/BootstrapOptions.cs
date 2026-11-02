@@ -1,78 +1,50 @@
 namespace TgWsProxy.Application.StartConfig;
 
 /// <summary>
-/// Аргументы командной строки в режиме «только веб» (F-1.9, F-1.10).
+/// Аргументы командной строки в режиме «только веб».
 ///
-/// Конфигурация задаётся исключительно файлом <c>config.json</c> и страницей настроек,
-/// поэтому от CLI осталась единственная bootstrap-опция — путь к файлу конфигурации.
-///
-/// Любой другой аргумент — ошибка, а не молчаливое игнорирование: опечатка вида
-/// <c>--prot 1443</c> иначе привела бы к старту на умолчаниях и к путанице «почему не
-/// применилось». Для известных прежних флагов сообщение содержит JSON-ключ-замену.
+/// Конфигурация задаётся исключительно файлом <c>config.json</c> и страницей настроек;
+/// путь к файлу — только переменной окружения <c>TGWS_CONFIG</c> (иначе <c>config.json</c>
+/// в текущем каталоге). Аргументы конфигурацию не задают, поэтому любой аргумент — ошибка,
+/// а не молчаливое игнорирование: опечатка вида <c>--prot 1443</c> иначе привела бы к старту
+/// на умолчаниях и к путанице «почему не применилось». Для известных прежних флагов
+/// сообщение содержит JSON-ключ-замену.
 /// </summary>
 public sealed record BootstrapOptions
 {
-    /// <summary>Флаг пути к файлу конфигурации. Поддерживаются формы <c>--config PATH</c> и <c>--config=PATH</c>.</summary>
+    /// <summary>Прежний флаг пути к файлу конфигурации. Удалён: путь задаёт только <c>TGWS_CONFIG</c>.</summary>
     public const string ConfigFlag = "--config";
 
-    /// <summary>Путь к файлу конфигурации; <c>null</c> — искать по умолчанию (F-2.3).</summary>
-    public string? ConfigPath { get; init; }
+    /// <summary>Экземпляр для безаргументного запуска.</summary>
+    public static readonly BootstrapOptions Empty = new();
 
     /// <summary>
-    /// Разбирает аргументы командной строки.
-    ///
-    /// Повторный <c>--config</c> разрешён: выигрывает последнее вхождение, как и раньше.
+    /// Проверяет аргументы командной строки и отклоняет любые: конфигурация задаётся файлом,
+    /// а путь к нему — переменной окружения <c>TGWS_CONFIG</c>.
     /// </summary>
     /// <param name="args">Аргументы процесса.</param>
-    /// <returns>Разобранные bootstrap-опции.</returns>
-    /// <exception cref="ArgumentException">
-    /// Аргумент не относится к bootstrap-опциям либо у <c>--config</c> нет значения.
-    /// </exception>
+    /// <returns><see cref="Empty"/> при пустых аргументах.</returns>
+    /// <exception cref="ArgumentException">Передан любой аргумент, включая прежний <c>--config</c>.</exception>
     public static BootstrapOptions Parse(string[] args)
     {
         ArgumentNullException.ThrowIfNull(args);
 
-        string? configPath = null;
-
-        for (var i = 0; i < args.Length; i++)
+        if (args.Length == 0)
         {
-            var arg = args[i];
-
-            if (arg.StartsWith(ConfigFlag + "=", StringComparison.Ordinal))
-            {
-                configPath = RequirePath(arg[(ConfigFlag.Length + 1)..], $"{ConfigFlag}={arg[(ConfigFlag.Length + 1)..]}");
-                continue;
-            }
-
-            switch (arg)
-            {
-                case ConfigFlag:
-                    if (i + 1 >= args.Length)
-                    {
-                        throw new ArgumentException($"{ConfigFlag} requires a path to config.json");
-                    }
-
-                    configPath = RequirePath(args[++i], ConfigFlag);
-                    break;
-
-                default:
-                    throw new ArgumentException(BuildUnknownArgumentMessage(arg));
-            }
+            return Empty;
         }
 
-        return new BootstrapOptions { ConfigPath = configPath };
-    }
+        var arg = args[0];
 
-    /// <summary>Проверяет, что значение пути не пустое.</summary>
-    private static string RequirePath(string raw, string source)
-    {
-        var path = raw.Trim();
-        if (path.Length == 0)
+        // --config удалён: путь к файлу задаёт только переменная окружения TGWS_CONFIG.
+        if (arg == ConfigFlag || arg.StartsWith(ConfigFlag + "=", StringComparison.Ordinal))
         {
-            throw new ArgumentException($"{source} requires a non-empty path to config.json");
+            throw new ArgumentException(
+                $"The {ConfigFlag} argument was removed. Set the TGWS_CONFIG environment variable " +
+                "to point at your config.json, or run without it to use ./config.json in the working directory.");
         }
 
-        return path;
+        throw new ArgumentException(BuildUnknownArgumentMessage(arg));
     }
 
     /// <summary>
@@ -96,7 +68,7 @@ public sealed record BootstrapOptions
         }
 
         return $"Unknown argument: {arg}. The proxy is configured by config.json only; " +
-               $"the only supported argument is {ConfigFlag} <path>.";
+               $"command-line arguments are not supported.";
     }
 
     /// <summary>

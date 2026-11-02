@@ -20,7 +20,7 @@ internal static class IoUtil
         var len = buffer.Length;
         while (pos < len)
         {
-            var n = await stream.ReadAsync(buffer.Slice(pos, len - pos), ct);
+            var n = await stream.ReadAsync(buffer[pos..len], ct);
             if (n == 0)
             {
                 throw new EndOfStreamException();

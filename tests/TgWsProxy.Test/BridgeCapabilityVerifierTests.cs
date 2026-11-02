@@ -133,8 +133,5 @@ public class BridgeCapabilityVerifierTests
     [InlineData("/v1", "v1")]
     [InlineData("/v1/", "v1")]
     [InlineData("/proxy/", "proxy")]
-    public void NormalizeBasePath_ProducesCanonicalForm(string? input, string expected)
-    {
-        Assert.Equal(expected, BridgeCapabilityVerifier.NormalizeBasePath(input));
-    }
+    public void NormalizeBasePath_ProducesCanonicalForm(string? input, string expected) => Assert.Equal(expected, BridgeCapabilityVerifier.NormalizeBasePath(input));
 }

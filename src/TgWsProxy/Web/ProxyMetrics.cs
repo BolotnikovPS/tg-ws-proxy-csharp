@@ -56,10 +56,8 @@ internal sealed class ProxyMetrics
         ("cf_pool_misses_total", "Cloudflare worker pool misses."),
         ("peer_tracking_overflow_total", "Per-peer tracking entries rejected by the registry limit."),
     ];
-
-    private readonly CollectorRegistry registry = Metrics.NewCustomRegistry();
     private readonly MetricFactory factory;
-    private readonly Dictionary<string, Counter> counters = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Counter> counters = [with(StringComparer.Ordinal)];
     private readonly IProxyStats stats;
     private readonly IPeerStatsRegistry peerStats;
     private readonly PeerStatsSnapshotCache snapshotCache;
@@ -74,6 +72,8 @@ internal sealed class ProxyMetrics
     private readonly Counter peerConnectionsTotal;
     private readonly Counter peerWsErrors;
     private readonly Gauge peerConnectionsActive;
+    private readonly Counter botapiRequestsTotal;
+    private readonly Counter botapiRequestErrorsTotal;
 
     // Пары (ip, token), по которым метрики уже экспортированы: нужны, чтобы
     // снимать серии, выпавшие из top-N или исчезнувшие из реестра (N-12).
@@ -92,7 +92,7 @@ internal sealed class ProxyMetrics
         this.peerStats = peerStats;
         this.snapshotCache = snapshotCache;
         this.config = config;
-        factory = Metrics.WithCustomRegistry(registry);
+        factory = Metrics.WithCustomRegistry(Registry);
 
         foreach (var (name, help) in GlobalCounters)
         {
@@ -118,6 +118,11 @@ internal sealed class ProxyMetrics
         peerConnectionsActive = CreateGauge(
             $"{PeerPrefix}_connections_active", "Active client sessions per (IP, token).", labelNames);
 
+        botapiRequestsTotal = CreateCounter(
+            $"{Prefix}_botapi_requests_total", "Bot API HTTP requests received.");
+        botapiRequestErrorsTotal = CreateCounter(
+            $"{Prefix}_botapi_request_errors_total", "Bot API requests that returned an error or a transport failure.");
+
         HealthStatusGauge = CreateGauge(
             "healthcheck_status",
             "Status of each ASP.NET Core health check (0=unhealthy, 1=degraded, 2=healthy).",
@@ -128,7 +133,7 @@ internal sealed class ProxyMetrics
             "Duration of each ASP.NET Core health check in seconds.",
             ["name"]);
 
-        registry.AddBeforeCollectCallback(Update);
+        Registry.AddBeforeCollectCallback(Update);
     }
 
     /// <summary>
@@ -145,7 +150,7 @@ internal sealed class ProxyMetrics
     public Gauge HealthDurationGauge { get; }
 
     /// <summary>Реестр метрик приложения (используется публикатором длительности проверок).</summary>
-    public CollectorRegistry Registry => registry;
+    public CollectorRegistry Registry { get; } = Metrics.NewCustomRegistry();
 
     /// <summary>Секунды с момента старта процесса прокси.</summary>
     public double UptimeSeconds => uptime.Elapsed.TotalSeconds;
@@ -155,8 +160,14 @@ internal sealed class ProxyMetrics
     /// </summary>
     /// <param name="destination">Поток ответа.</param>
     /// <param name="cancellationToken">Токен отмены запроса.</param>
-    public Task CollectAsync(Stream destination, CancellationToken cancellationToken) =>
-        registry.CollectAndExportAsTextAsync(destination, cancellationToken);
+    public Task CollectAsync(Stream destination, CancellationToken cancellationToken)
+        => Registry.CollectAndExportAsTextAsync(destination, cancellationToken);
+
+    /// <summary>Инкремент счётчика входящих Bot API-запросов.</summary>
+    public void IncBotApiRequest() => botapiRequestsTotal.Inc();
+
+    /// <summary>Инкремент счётчика Bot API-запросов, завершившихся ошибкой.</summary>
+    public void IncBotApiRequestError() => botapiRequestErrorsTotal.Inc();
 
     /// <summary>
     /// Снимает значения со счётчиков прокси перед сбором метрик.
@@ -222,9 +233,9 @@ internal sealed class ProxyMetrics
             }
         }
 
-        foreach (var stale in exportedPeers.Where(peer => !current.Contains(peer)).ToArray())
+        foreach (var (Ip, Token) in exportedPeers.Where(peer => !current.Contains(peer)).ToArray())
         {
-            string[] labels = [stale.Ip, stale.Token];
+            string[] labels = [Ip, Token];
             peerBytesUp.RemoveLabelled(labels);
             peerBytesDown.RemoveLabelled(labels);
             peerConnectionsTotal.RemoveLabelled(labels);
@@ -287,10 +298,10 @@ internal sealed class ProxyMetrics
         return result;
     }
 
-    private static bool IsBetter(PeerStatsSnapshot candidate, (long TotalBytes, string Ip) worst) =>
-        candidate.TotalBytes > worst.TotalBytes
-        || (candidate.TotalBytes == worst.TotalBytes
-            && string.CompareOrdinal(candidate.Ip, worst.Ip) < 0);
+    private static bool IsBetter(PeerStatsSnapshot candidate, (long TotalBytes, string Ip) worst)
+        => candidate.TotalBytes > worst.TotalBytes
+        || candidate.TotalBytes == worst.TotalBytes
+            && string.CompareOrdinal(candidate.Ip, worst.Ip) < 0;
 
     private void SetCounter(string name, long value) => counters[name].IncTo(value);
 
@@ -303,12 +314,12 @@ internal sealed class ProxyMetrics
     /// <c>Metrics.DefaultRegistry</c>, поэтому несколько приложений в одном процессе
     /// не конфликтуют именами.
     /// </remarks>
-    private Counter CreateCounter(string name, string help, string[]? labelNames = null) =>
-        factory.CreateCounter(name, help, labelNames ?? []);
+    private Counter CreateCounter(string name, string help, string[]? labelNames = null)
+        => factory.CreateCounter(name, help, labelNames ?? []);
 
     /// <summary>
     /// Создаёт gauge в реестре этого приложения.
     /// </summary>
-    private Gauge CreateGauge(string name, string help, string[]? labelNames = null) =>
-        factory.CreateGauge(name, help, labelNames ?? []);
+    private Gauge CreateGauge(string name, string help, string[]? labelNames = null)
+        => factory.CreateGauge(name, help, labelNames ?? []);
 }

@@ -11,8 +11,8 @@ namespace TgWsProxy.Test;
 /// </summary>
 public class H2PacketCodecTests
 {
-    private static readonly byte[] Key = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
-    private static readonly byte[] Iv = Enumerable.Range(101, 16).Select(i => (byte)i).ToArray();
+    private static readonly byte[] Key = [.. Enumerable.Range(1, 32).Select(i => (byte)i)];
+    private static readonly byte[] Iv = [.. Enumerable.Range(101, 16).Select(i => (byte)i)];
 
     // ---------- abridged ----------
 
@@ -212,18 +212,12 @@ public class H2PacketCodecTests
     }
 
     [Fact]
-    public void EncodeReply_EmptyBody_Throws()
-    {
-        Assert.Throws<InvalidDataException>(
+    public void EncodeReply_EmptyBody_Throws() => Assert.Throws<InvalidDataException>(
             () => H2PacketCodec.EncodeReply([], Protocol.ProtoTagIntermediate));
-    }
 
     [Fact]
-    public void EncodeReply_UnalignedBody_Throws()
-    {
-        Assert.Throws<InvalidDataException>(
+    public void EncodeReply_UnalignedBody_Throws() => Assert.Throws<InvalidDataException>(
             () => H2PacketCodec.EncodeReply(Pattern(30), Protocol.ProtoTagIntermediate));
-    }
 
     [Fact]
     public void EncodeReply_OversizedBody_Throws()
@@ -283,8 +277,8 @@ public class H2PacketCodecTests
         return await H2PacketCodec.ReadPacketAsync(stream, decryptor, protoTag, CancellationToken.None);
     }
 
-    private static byte[] LengthPrefixed(int length, byte[] payload) =>
-        BitConverter.GetBytes(length).Concat(payload).ToArray();
+    private static byte[] LengthPrefixed(int length, byte[] payload)
+        => [.. BitConverter.GetBytes(length), .. payload];
 
     private static byte[] Pattern(int length)
     {

@@ -8,48 +8,38 @@ namespace TgWsProxy.Infrastructure.WebProxy;
 /// <see cref="IRelayFrameSink"/> (аренда буфера из <see cref="ArrayPool{T}"/>, без копирования
 /// в исходящий буфер).
 /// </summary>
-internal sealed class RelayMultiplexer : IAsyncDisposable
+/// <param name="sink">Куда сериализуются исходящие кадры.</param>
+/// <param name="startBridge">Запуск моста для открытого потока.</param>
+/// <param name="initialSendWindow">Начальный кредит отправки потока.</param>
+/// <param name="maxStreams">
+/// Предел одновременных потоков в сессии (<c>webProxy.maxStreamsPerSession</c>); <c>0</c> — без
+/// ограничения. OPEN сверх предела отклоняется кадром <c>CLOSE</c> (F-W.25).
+/// </param>
+/// <param name="tryAcquireGlobalStream">
+/// Резерв слота в глобальном бюджете потоков (<c>webProxy.maxStreams</c>); <c>null</c> — бюджет
+/// не ведётся. Отказ также отклоняет OPEN кадром <c>CLOSE</c>.
+/// </param>
+/// <param name="releaseGlobalStream">Возврат ранее зарезервированного глобального слота.</param>
+internal sealed class RelayMultiplexer(
+    IRelayFrameSink sink,
+    Func<RelayStream, CancellationToken, Task>? startBridge = null,
+    long initialSendWindow = RelayFrameCodec.InitialStreamWindow,
+    int maxStreams = 0,
+    Func<bool>? tryAcquireGlobalStream = null,
+    Action? releaseGlobalStream = null) : IAsyncDisposable
 {
-    private readonly IRelayFrameSink _sink;
-    private readonly Func<RelayStream, CancellationToken, Task>? _startBridge;
-    private readonly long _initialSendWindow;
-    private readonly int _maxStreams;
-    private readonly Func<bool>? _tryAcquireGlobalStream;
-    private readonly Action? _releaseGlobalStream;
-    private readonly Dictionary<int, RelayStream> _streams = new();
+    private readonly IRelayFrameSink _sink = sink;
+    private readonly Func<RelayStream, CancellationToken, Task>? _startBridge = startBridge;
+    private readonly long _initialSendWindow = initialSendWindow;
+    private readonly int _maxStreams = maxStreams;
+    private readonly Func<bool>? _tryAcquireGlobalStream = tryAcquireGlobalStream;
+    private readonly Action? _releaseGlobalStream = releaseGlobalStream;
+    private readonly Dictionary<int, RelayStream> _streams = [];
     private readonly HashSet<int> _globalSlots = [];
-    private readonly List<Task> _bridges = new();
+    private readonly List<Task> _bridges = [];
     private readonly CancellationTokenSource _sessionCts = new();
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private int _closed;
-
-    /// <param name="sink">Куда сериализуются исходящие кадры.</param>
-    /// <param name="startBridge">Запуск моста для открытого потока.</param>
-    /// <param name="initialSendWindow">Начальный кредит отправки потока.</param>
-    /// <param name="maxStreams">
-    /// Предел одновременных потоков в сессии (<c>webProxy.maxStreamsPerSession</c>); <c>0</c> — без
-    /// ограничения. OPEN сверх предела отклоняется кадром <c>CLOSE</c> (F-W.25).
-    /// </param>
-    /// <param name="tryAcquireGlobalStream">
-    /// Резерв слота в глобальном бюджете потоков (<c>webProxy.maxStreams</c>); <c>null</c> — бюджет
-    /// не ведётся. Отказ также отклоняет OPEN кадром <c>CLOSE</c>.
-    /// </param>
-    /// <param name="releaseGlobalStream">Возврат ранее зарезервированного глобального слота.</param>
-    public RelayMultiplexer(
-        IRelayFrameSink sink,
-        Func<RelayStream, CancellationToken, Task>? startBridge = null,
-        long initialSendWindow = RelayFrameCodec.InitialStreamWindow,
-        int maxStreams = 0,
-        Func<bool>? tryAcquireGlobalStream = null,
-        Action? releaseGlobalStream = null)
-    {
-        _sink = sink;
-        _startBridge = startBridge;
-        _initialSendWindow = initialSendWindow;
-        _maxStreams = maxStreams;
-        _tryAcquireGlobalStream = tryAcquireGlobalStream;
-        _releaseGlobalStream = releaseGlobalStream;
-    }
 
     /// <summary>Число активных потоков (для тестов и диагностики).</summary>
     public int ActiveStreamCount
@@ -128,9 +118,9 @@ internal sealed class RelayMultiplexer : IAsyncDisposable
         Task[] bridges;
         lock (_sync)
         {
-            streams = _streams.Values.ToArray();
+            streams = [.. _streams.Values];
             _streams.Clear();
-            bridges = _bridges.ToArray();
+            bridges = [.. _bridges];
             _bridges.Clear();
         }
 
@@ -232,7 +222,7 @@ internal sealed class RelayMultiplexer : IAsyncDisposable
             return;
         }
 
-        var released = false;
+        bool released;
         lock (_sync)
         {
             released = _globalSlots.Remove(streamId);
@@ -252,7 +242,11 @@ internal sealed class RelayMultiplexer : IAsyncDisposable
             _streams.TryGetValue(frame.StreamId, out stream);
         }
 
-        stream?.EnqueueData(frame.Payload);
+        if (stream is not null && !stream.EnqueueData(frame.Payload))
+        {
+            // Превышен входящий лимит буфера потока — закрываем его (F-W.25, симметрично исходящей очереди).
+            HandleClose(frame.StreamId);
+        }
     }
 
     private void HandleWindow(RelayFrame frame)

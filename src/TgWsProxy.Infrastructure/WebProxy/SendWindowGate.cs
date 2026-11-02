@@ -5,13 +5,11 @@ namespace TgWsProxy.Infrastructure.WebProxy;
 /// и блокируется, пока противоположная сторона не вернёт кредит кадром <c>Window</c>.
 /// Один писатель на поток; кредит добавляется из inbound-задачи мультиплексора.
 /// </summary>
-internal sealed class SendWindowGate
+internal sealed class SendWindowGate(long initial)
 {
-    private readonly object _sync = new();
-    private long _available;
+    private readonly Lock _sync = new();
+    private long _available = initial;
     private TaskCompletionSource? _waiter;
-
-    public SendWindowGate(long initial) => _available = initial;
 
     /// <summary>Возвращает доступный кредит (&gt; 0), блокируясь до его появления.</summary>
     public async ValueTask<long> WaitAsync(CancellationToken ct)

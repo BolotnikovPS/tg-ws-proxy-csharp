@@ -11,10 +11,10 @@ namespace TgWsProxy.Application.Abstractions;
 public interface ITimeseriesReader
 {
     /// <summary>
-    /// Возвращает точки ряда за окно <paramref name="window"/> с шагом <paramref name="step"/>.
+    /// Возвращает точки ряда за окно <paramref name="window"/> с шагом <paramref name="stepSize"/>.
     /// </summary>
     /// <param name="window">Запрошенное окно истории.</param>
-    /// <param name="step">Запрошенный шаг агрегации.</param>
+    /// <param name="stepSize">Запрошенный шаг агрегации.</param>
     /// <param name="now">Момент отсчёта (передаётся явно ради воспроизводимости в тестах).</param>
-    TimeseriesDto Query(TimeSpan window, TimeSpan step, DateTimeOffset now);
+    TimeseriesDto Query(TimeSpan window, TimeSpan stepSize, DateTimeOffset now);
 }

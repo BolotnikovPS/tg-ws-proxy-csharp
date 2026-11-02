@@ -42,7 +42,12 @@ public readonly record struct WebProxyCreateResult(
 /// base64url (43 символа); клиент не интерпретирует их раскладку, поэтому происхождение
 /// подтверждается хранением в памяти, а не HMAC-подписью.
 /// </summary>
-public sealed class WebProxySessionManager
+public sealed class WebProxySessionManager(
+    IWebProxyRelaySession relay,
+    WebProxyStreamBudget budget,
+    Config config,
+    ILogger<WebProxySessionManager> logger,
+    TimeProvider? time = null)
 {
     private sealed class BootstrapEntry
     {
@@ -55,33 +60,24 @@ public sealed class WebProxySessionManager
         public required WebProxyHttpSession Session;
         public required WebProxyRelayLease Lease;
         public IPAddress? Peer;
+        public long LastActivityUtcTicks;
     }
 
     private static readonly TimeSpan BootstrapTtl = TimeSpan.FromMinutes(2);
 
+    /// <summary>Минимальный интервал между сканированиями на бездействие (тротлинг вытеснения).</summary>
+    private static readonly TimeSpan ReapInterval = TimeSpan.FromSeconds(30);
+
     private readonly ConcurrentDictionary<string, BootstrapEntry> _bootstraps = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, SessionRecord> _sessions = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<IPAddress, int> _sessionsPerIp = new();
-    private readonly IWebProxyRelaySession _relay;
-    private readonly WebProxyStreamBudget _budget;
-    private readonly Config _config;
-    private readonly ILogger<WebProxySessionManager> _logger;
-    private readonly TimeProvider _time;
+    private readonly IWebProxyRelaySession _relay = relay;
+    private readonly WebProxyStreamBudget _budget = budget;
+    private readonly Config _config = config;
+    private readonly ILogger<WebProxySessionManager> _logger = logger;
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
     private int _sessionCount;
-
-    public WebProxySessionManager(
-        IWebProxyRelaySession relay,
-        WebProxyStreamBudget budget,
-        Config config,
-        ILogger<WebProxySessionManager> logger,
-        TimeProvider? time = null)
-    {
-        _relay = relay;
-        _budget = budget;
-        _config = config;
-        _logger = logger;
-        _time = time ?? TimeProvider.System;
-    }
+    private long _lastReapTicks;
 
     /// <summary>Число живых сессий (для тестов и диагностики).</summary>
     public int SessionCount => Volatile.Read(ref _sessionCount);
@@ -114,6 +110,8 @@ public sealed class WebProxySessionManager
         IPAddress? peer,
         string scope)
     {
+        ReapIdleSessionsIfDue();
+
         if (!TryConsumeBootstrap(bootstrap, out var token))
         {
             return new WebProxyCreateResult(WebProxyCreateStatus.NotFound, null, null, CurrentCarrierMode);
@@ -146,7 +144,13 @@ public sealed class WebProxySessionManager
             };
 
             var id = NewToken();
-            _sessions[id] = new SessionRecord { Session = session, Lease = lease, Peer = peer };
+            _sessions[id] = new SessionRecord
+            {
+                Session = session,
+                Lease = lease,
+                Peer = peer,
+                LastActivityUtcTicks = _time.GetUtcNow().UtcTicks,
+            };
 
             // Внешний разрыв (отзыв токена / перезапуск слушателя) закрывает сессию.
             var sessionId = id;
@@ -163,7 +167,18 @@ public sealed class WebProxySessionManager
 
     /// <summary>Возвращает живую сессию по session-токену либо <see langword="null"/>.</summary>
     public WebProxyHttpSession? GetSession(string sessionToken)
-        => _sessions.TryGetValue(sessionToken, out var record) ? record.Session : null;
+    {
+        ReapIdleSessionsIfDue();
+
+        if (_sessions.TryGetValue(sessionToken, out var record))
+        {
+            // Касание: входящий запрос (/up или /down) продлевает жизнь сессии.
+            record.LastActivityUtcTicks = _time.GetUtcNow().UtcTicks;
+            return record.Session;
+        }
+
+        return null;
+    }
 
     /// <summary>Закрывает сессию и возвращает признак того, что она существовала.</summary>
     public bool CloseSession(string sessionToken)
@@ -240,6 +255,43 @@ public sealed class WebProxySessionManager
         }
 
         _sessionsPerIp.AddOrUpdate(peer, 0, static (_, value) => value - 1);
+    }
+
+    /// <summary>
+    /// Ленивое вытеснение сессий по бездействию: вызывается на трафике
+    /// (<see cref="GetSession"/>/<see cref="CreateSession"/>), поэтому закрытие происходит
+    /// по мере нагрузки, а не отдельным потоком. Лимит читается из конфига на каждый вызов
+    /// (горячая правка <c>webProxy.idleSessionTimeoutSeconds</c>); троттлинг через
+    /// <see cref="ReapInterval"/>.
+    /// </summary>
+    private void ReapIdleSessionsIfDue()
+    {
+        var idleSeconds = _config.WebProxy.IdleSessionTimeoutSeconds;
+        if (idleSeconds <= 0)
+        {
+            return;
+        }
+
+        var now = _time.GetUtcNow().UtcTicks;
+        var last = Volatile.Read(ref _lastReapTicks);
+        if (now - last < ReapInterval.Ticks)
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _lastReapTicks, now, last) != last)
+        {
+            return;
+        }
+
+        var cutoff = now - idleSeconds * TimeSpan.TicksPerSecond;
+        foreach (var pair in _sessions)
+        {
+            if (pair.Value.LastActivityUtcTicks <= cutoff)
+            {
+                CloseSession(pair.Key);
+            }
+        }
     }
 
     private bool TryConsumeBootstrap(string bootstrap, out ProxyTokenEntry token)

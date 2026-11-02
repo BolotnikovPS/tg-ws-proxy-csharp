@@ -81,7 +81,7 @@ public static class BridgeCapabilityVerifier
         public static string Encode(ReadOnlySpan<byte> data)
         {
             var base64 = Convert.ToBase64String(data);
-            Span<char> buffer = base64.Length <= 256 ? stackalloc char[base64.Length] : new char[base64.Length];
+            var buffer = base64.Length <= 256 ? stackalloc char[base64.Length] : new char[base64.Length];
             var written = 0;
             for (var i = 0; i < base64.Length; i++)
             {
@@ -119,7 +119,7 @@ public static class BridgeCapabilityVerifier
             var padding = rem == 0 ? 0 : 4 - rem;
             var base64Length = input.Length + padding;
             char[]? rented = null;
-            Span<char> base64 = base64Length <= 512
+            var base64 = base64Length <= 512
                 ? stackalloc char[base64Length]
                 : (rented = System.Buffers.ArrayPool<char>.Shared.Rent(base64Length)).AsSpan(0, base64Length);
 

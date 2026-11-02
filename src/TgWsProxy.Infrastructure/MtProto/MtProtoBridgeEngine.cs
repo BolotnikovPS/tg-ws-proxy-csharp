@@ -4,10 +4,10 @@ using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.Instances;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Infrastructure.MtProto;
@@ -188,8 +188,8 @@ internal sealed class MtProtoBridgeEngine(
     /// </summary>
     private static bool IsExpectedDisconnect(IOException ex)
         => ex is EndOfStreamException ||
-        (ex.InnerException is SocketException se &&
-         se.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted) ||
+        ex.InnerException is SocketException se &&
+         se.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted ||
         string.Equals(ex.Message, "Connection closed", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>

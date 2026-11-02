@@ -277,8 +277,8 @@ internal sealed class PeerStatsRegistry : IPeerStatsRegistry
     }
 
     /// <summary>Запись без единого события: ни соединений, ни байт, ни отказов.</summary>
-    private static bool IsEmpty(PeerStatsSnapshot snapshot) =>
-        snapshot.ActiveConnections == 0
+    private static bool IsEmpty(PeerStatsSnapshot snapshot)
+        => snapshot.ActiveConnections == 0
         && snapshot.TotalConnections == 0
         && snapshot.BlockedConnections == 0
         && snapshot.LimitedConnections == 0
@@ -290,7 +290,7 @@ internal sealed class PeerStatsRegistry : IPeerStatsRegistry
         && snapshot.PoolMisses == 0;
 
     /// <summary>Собирает снимок одной пары с согласованным чтением счётчиков.</summary>
-    private PeerStatsSnapshot ToSnapshot(
+    private static PeerStatsSnapshot ToSnapshot(
         PeerKey key,
         PeerCounter counter,
         double nowMono,

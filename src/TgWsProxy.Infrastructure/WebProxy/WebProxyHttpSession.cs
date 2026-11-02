@@ -35,8 +35,8 @@ public sealed class WebProxyHttpSession : IAsyncDisposable
     }
 
     private readonly RelayMultiplexer _multiplexer;
-    private readonly object _sync = new();
-    private readonly List<byte[]> _pending = new();
+    private readonly Lock _sync = new();
+    private readonly List<byte[]> _pending = [];
     private readonly SemaphoreSlim _upGate = new(1, 1);
     private readonly int _maxPendingBytes;
     private readonly int _maxPendingItems;

@@ -31,6 +31,6 @@ public static class SecretMask
     /// </summary>
     /// <param name="value">Значение из запроса.</param>
     /// <returns><see langword="true"/>, если значение выглядит как маска.</returns>
-    public static bool IsMasked(string? value) =>
-        value is not null && (value.Contains('…') || value.Contains('*'));
+    public static bool IsMasked(string? value)
+        => value is not null && (value.Contains('…') || value.Contains('*'));
 }

@@ -78,7 +78,7 @@ internal static class H2PacketCodec
             }
             else
             {
-                packetLength = 24 + ((length - 24) / 16 * 16);
+                packetLength = 24 + (length - 24) / 16 * 16;
                 maxPadding = 15;
             }
 

@@ -7,9 +7,9 @@ using System.Security.Authentication;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Domain.Exceptions;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Infrastructure.Instances;
@@ -34,7 +34,7 @@ internal sealed class CfH2Lane : IAsyncDisposable
     private const int ReadChunkBytes = 64 * 1024;
 
     private readonly AsyncCapacityGate _capacity = new(MaxLaneRequests, MaxLaneBytes);
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private readonly HashSet<CfH2Channel> _channels = [];
     private readonly IProxyStats _stats;
     private readonly ILogger _logger;
@@ -48,9 +48,9 @@ internal sealed class CfH2Lane : IAsyncDisposable
     private long _replays;
     private long _slowHeaders;
     private long _slowBodies;
-    private bool _closed;
 
-    public CfH2Lane(string host, int laneId, IProxyStats stats, ILogger logger)
+    /// <param name="allowInvalidCertificates">Разрешает невалидные сертификаты (диагностика).</param>
+    public CfH2Lane(string host, int laneId, IProxyStats stats, ILogger logger, bool allowInvalidCertificates)
     {
         Host = host;
         LaneId = laneId;
@@ -66,8 +66,11 @@ internal sealed class CfH2Lane : IAsyncDisposable
             EnableMultipleHttp2Connections = false,
             SslOptions = new SslClientAuthenticationOptions
             {
-                // Cloudflare-эндпоинты проверяются по SNI, цепочку upstream тоже не валидирует.
-                RemoteCertificateValidationCallback = static (_, _, _, _) => true,
+                // По умолчанию цепочку сертификатов Cloudflare проверяем полностью (fail-closed).
+                // --allow-invalid-certs (mtproto.allowInvalidCertificates) отключает проверку
+                // для диагностики — как в DcReachabilityChecker и RawWebSocketFactory.
+                RemoteCertificateValidationCallback = (_, _, _, errors) =>
+                    allowInvalidCertificates || errors == SslPolicyErrors.None,
                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
             },
         };
@@ -97,9 +100,11 @@ internal sealed class CfH2Lane : IAsyncDisposable
         {
             lock (_sync)
             {
-                return _closed;
+                return field;
             }
         }
+
+        private set;
     }
 
     /// <summary>Число установленных TCP-соединений HTTP/2 (для диагностики).</summary>
@@ -125,8 +130,8 @@ internal sealed class CfH2Lane : IAsyncDisposable
     /// <param name="length">Размер запроса в байтах.</param>
     /// <param name="wait">Ожидать освобождения места.</param>
     /// <param name="cancellationToken">Токен отмены.</param>
-    public Task<bool> ReserveAsync(int length, bool wait, CancellationToken cancellationToken) =>
-        _capacity.ReserveAsync(length, wait, cancellationToken);
+    public Task<bool> ReserveAsync(int length, bool wait, CancellationToken cancellationToken)
+        => _capacity.ReserveAsync(length, wait, cancellationToken);
 
     /// <summary>Освобождает место в lane.</summary>
     /// <param name="length">Размер завершённого запроса в байтах.</param>
@@ -333,7 +338,7 @@ internal sealed class CfH2Lane : IAsyncDisposable
                 _responses++;
             }
 
-            channel.OnHttpResponse(content.Length);
+            channel.OnHttpResponse();
 
             var bodySeconds = (DateTimeOffset.UtcNow - headersAt).TotalSeconds;
             if (headersSeconds + bodySeconds >= SlowResponseSeconds)
@@ -400,7 +405,7 @@ internal sealed class CfH2Lane : IAsyncDisposable
     {
         lock (_sync)
         {
-            _closed = true;
+            Closed = true;
         }
 
         _capacity.Close();
@@ -411,8 +416,8 @@ internal sealed class CfH2Lane : IAsyncDisposable
     /// <summary>Текущее монотонное время в секундах (аналог <c>time.monotonic()</c>).</summary>
     internal static double CurrentTime() => Environment.TickCount64 / 1000.0;
 
-    private static string GetCfRay(HttpResponseMessage response) =>
-        response.Headers.TryGetValues("cf-ray", out var values) ? string.Concat(values) : "-";
+    private static string GetCfRay(HttpResponseMessage response)
+        => response.Headers.TryGetValues("cf-ray", out var values) ? string.Concat(values) : "-";
 
     /// <summary>
     /// Читает тело ответа с ограничением размера и учётом буфера lane.

@@ -24,7 +24,7 @@
 services:
   tg-ws-proxy:
     container_name: tg-ws-proxy
-    image: pboldev/tg-ws-proxy:3.2.0-beta2
+    image: pboldev/tg-ws-proxy:3.2.0-beta3
     restart: unless-stopped
     ports:
       - "${TG_PORT:-1443}:1443"

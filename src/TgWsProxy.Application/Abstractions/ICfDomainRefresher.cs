@@ -16,5 +16,5 @@ public interface ICfDomainRefresher
     /// <summary>
     /// Останавливает фоновое обновление списка доменов.
     /// </summary>
-    void Stop();
+    void StopRefresh();
 }

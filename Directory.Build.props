@@ -4,5 +4,7 @@
 	  <ImplicitUsings>enable</ImplicitUsings>
 	  <Nullable>enable</Nullable>
 	  <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+      <EnableNETAnalyzers>false</EnableNETAnalyzers>
+      <AnalysisMode>Recommended</AnalysisMode>
   </PropertyGroup>
 </Project>

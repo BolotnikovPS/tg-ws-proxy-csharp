@@ -9,7 +9,7 @@ namespace TgWsProxy.Infrastructure.Wire;
 /// <param name="maxBytes">Максимум суммарного объёма зарезервированных байт.</param>
 internal sealed class AsyncCapacityGate(int maxRequests, long maxBytes)
 {
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private readonly List<Waiter> _waiters = [];
     private int _requests;
     private long _bytes;

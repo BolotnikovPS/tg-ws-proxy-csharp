@@ -11,6 +11,7 @@ public sealed class RelayStream : Stream
 {
     private readonly Channel<ReadOnlyMemory<byte>> _inbound = Channel.CreateUnbounded<ReadOnlyMemory<byte>>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+    private long _inboundBytes;
     private readonly RelayFrameSender _sender;
     private readonly SendWindowGate _sendWindow;
     private readonly byte[] _windowCreditBuffer = new byte[RelayFrameCodec.WindowCreditSize];
@@ -36,8 +37,20 @@ public sealed class RelayStream : Stream
 
     public override bool CanSeek => false;
 
-    /// <summary>Помещает payload кадра <c>Data</c> во входящую очередь (вызывается мультиплексором).</summary>
-    internal void EnqueueData(ReadOnlyMemory<byte> payload) => _inbound.Writer.TryWrite(payload.ToArray());
+    /// <summary>
+    /// Помещает payload кадра <c>Data</c> во входящую очередь. Возвращает <see langword="false"/>,
+    /// если после добавления невычитанный входящий объём превысит <see cref="RelayFrameCodec.InitialStreamWindow"/>
+    /// — кадр отклоняется, поток закрывается мультиплексором (F-W.25, симметрично исходящей очереди).
+    /// </summary>
+    internal bool EnqueueData(ReadOnlyMemory<byte> payload)
+    {
+        if (Interlocked.Add(ref _inboundBytes, payload.Length) > RelayFrameCodec.InitialStreamWindow)
+        {
+            return false; // счётчик сбрасывается при закрытии потока
+        }
+
+        return _inbound.Writer.TryWrite(payload.ToArray());
+    }
 
     /// <summary>Завершает входящую очередь (кадр <c>Close</c>/<c>Bye</c> или разрыв соединения).</summary>
     internal void CompleteInbound() => _inbound.Writer.TryComplete();
@@ -45,11 +58,11 @@ public sealed class RelayStream : Stream
     /// <summary>Возвращает кредит окна отправки (кадр <c>Window</c> от противоположной стороны).</summary>
     internal void AddSendCredit(int credit) => _sendWindow.Add(credit);
 
-    public override async ValueTask<int> ReadAsync(Memory<byte> destination, CancellationToken ct = default)
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         while (_current.IsEmpty)
         {
-            if (!await _inbound.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
+            if (!await _inbound.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 return 0; // EOF
             }
@@ -57,53 +70,54 @@ public sealed class RelayStream : Stream
             if (_inbound.Reader.TryRead(out var payload))
             {
                 _current = payload;
+                Interlocked.Add(ref _inboundBytes, -payload.Length);
             }
         }
 
-        var count = Math.Min(_current.Length, destination.Length);
-        _current.Span[..count].CopyTo(destination.Span);
+        var count = Math.Min(_current.Length, buffer.Length);
+        _current.Span[..count].CopyTo(buffer.Span);
         _current = _current[count..];
 
         // Вернуть клиенту кредит приёмного окна: сервер потребил count байт.
         RelayFrameCodec.WriteWindowCredit(_windowCreditBuffer, count);
-        await _sender(RelayFrameType.Window, StreamId, _windowCreditBuffer, ct).ConfigureAwait(false);
+        await _sender(RelayFrameType.Window, StreamId, _windowCreditBuffer, cancellationToken).ConfigureAwait(false);
         return count;
     }
 
-    public override async ValueTask WriteAsync(ReadOnlyMemory<byte> source, CancellationToken ct = default)
+    public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
     {
-        var remaining = source;
+        var remaining = buffer;
         while (!remaining.IsEmpty)
         {
-            var credit = await _sendWindow.WaitAsync(ct).ConfigureAwait(false);
+            var credit = await _sendWindow.WaitAsync(cancellationToken).ConfigureAwait(false);
             var chunk = Math.Min(remaining.Length, (int)Math.Min(credit, RelayFrameCodec.MaxFramePayload));
-            await _sender(RelayFrameType.Data, StreamId, remaining[..chunk], ct).ConfigureAwait(false);
+            await _sender(RelayFrameType.Data, StreamId, remaining[..chunk], cancellationToken).ConfigureAwait(false);
             _sendWindow.Consume(chunk);
             remaining = remaining[chunk..];
         }
     }
 
-    public override Task FlushAsync(CancellationToken ct = default) => Task.CompletedTask;
+    public override Task FlushAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public override async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
         {
-            return;
+            _inbound.Writer.TryComplete();
+            try
+            {
+                await _sender(RelayFrameType.Close, StreamId, ReadOnlyMemory<byte>.Empty, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                // Транспорт уже закрыт — Close не критичен.
+            }
+
+            OnDisposed?.Invoke(this);
         }
 
-        _inbound.Writer.TryComplete();
-        try
-        {
-            await _sender(RelayFrameType.Close, StreamId, ReadOnlyMemory<byte>.Empty, CancellationToken.None)
-                .ConfigureAwait(false);
-        }
-        catch
-        {
-            // Транспорт уже закрыт — Close не критичен.
-        }
-
-        OnDisposed?.Invoke(this);
+        await base.DisposeAsync().ConfigureAwait(false);
     }
 
     public override long Length => throw new NotSupportedException();

@@ -45,12 +45,9 @@ public sealed class WebProxyLinkBuilderTests
     }
 
     [Fact]
-    public void BuildMarkerSecret_Root_Returns_Plain_Secret()
-    {
-        Assert.Equal(
+    public void BuildMarkerSecret_Root_Returns_Plain_Secret() => Assert.Equal(
             TestConfig.TokenSecret,
             WebProxyLinkBuilder.BuildMarkerSecret(TestConfig.TokenSecret, ""));
-    }
 
     [Fact]
     public void BuildMarkerSecret_BasePath_Uses_Base64Url_Without_Padding()
@@ -117,16 +114,10 @@ public sealed class WebProxyLinkBuilderTests
     [InlineData("127.1", null)]
     [InlineData("0x7f.1", null)]
     [InlineData("", null)]
-    public void NormalizeHost_Rejects_Ip_And_Non_Domain_Forms(string input, string? expected)
-    {
-        Assert.Equal(expected, WebProxyLinkBuilder.NormalizeHost(input));
-    }
+    public void NormalizeHost_Rejects_Ip_And_Non_Domain_Forms(string input, string? expected) => Assert.Equal(expected, WebProxyLinkBuilder.NormalizeHost(input));
 
     [Fact]
-    public void NormalizeHost_Converts_Idn_To_Ace()
-    {
-        Assert.Equal("xn--bcher-kva.example", WebProxyLinkBuilder.NormalizeHost("bücher.example"));
-    }
+    public void NormalizeHost_Converts_Idn_To_Ace() => Assert.Equal("xn--bcher-kva.example", WebProxyLinkBuilder.NormalizeHost("bücher.example"));
 
     [Fact]
     public void BuildShareLink_Uses_Ace_Form_For_Idn_Host()

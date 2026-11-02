@@ -288,12 +288,12 @@ public sealed class ConfigFileTests : IDisposable
     }
 
     [Fact]
-    public void ConfigFlagIsNotAppliedAsUnknownArgument()
+    public void RemovedConfigFlagPointsToEnvironmentVariable()
     {
-        // --config остаётся единственным флагом и не должен трактоваться как неизвестный аргумент.
-        var options = BootstrapOptions.Parse(["--config", "ignored.json"]);
+        // --config удалён: путь к файлу задаёт только переменная окружения TGWS_CONFIG.
+        var exception = Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--config", "ignored.json"]));
 
-        Assert.Equal("ignored.json", options.ConfigPath);
+        Assert.Contains("TGWS_CONFIG", exception.Message);
     }
 
     [Fact]

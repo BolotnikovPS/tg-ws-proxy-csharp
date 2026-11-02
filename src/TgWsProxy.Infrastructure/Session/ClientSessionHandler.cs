@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Sockets;
 using System.Text;
 using Microsoft.Extensions.Logging;
@@ -173,7 +174,7 @@ internal sealed class ClientSessionHandler(
                 context.Scope,
                 context.Peer,
                 sessionToken,
-                sessionDc?.ToString() ?? "-",
+                sessionDc?.ToString(CultureInfo.InvariantCulture) ?? "-",
                 sessionMedia,
                 sessionRoute,
                 sessionUp,
@@ -265,8 +266,8 @@ internal sealed class ClientSessionHandler(
     /// </summary>
     private static bool IsExpectedDisconnect(IOException ex)
         => ex is EndOfStreamException ||
-        (ex.InnerException is SocketException se &&
-         se.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted) ||
+        ex.InnerException is SocketException se &&
+         se.SocketErrorCode is SocketError.ConnectionReset or SocketError.ConnectionAborted ||
         string.Equals(ex.Message, "Connection closed", StringComparison.OrdinalIgnoreCase);
 
 }

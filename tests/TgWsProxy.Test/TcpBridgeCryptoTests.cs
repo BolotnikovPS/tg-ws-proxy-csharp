@@ -1,6 +1,6 @@
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Instances;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Test;
@@ -17,14 +17,14 @@ namespace TgWsProxy.Test;
 /// </remarks>
 public class TcpBridgeCryptoTests
 {
-    private static readonly byte[] CltDecKey = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
-    private static readonly byte[] CltDecIv = Enumerable.Range(41, 16).Select(i => (byte)i).ToArray();
-    private static readonly byte[] CltEncKey = Enumerable.Range(61, 32).Select(i => (byte)i).ToArray();
-    private static readonly byte[] CltEncIv = Enumerable.Range(101, 16).Select(i => (byte)i).ToArray();
-    private static readonly byte[] TgEncKey = Enumerable.Range(121, 32).Select(i => (byte)i).ToArray();
-    private static readonly byte[] TgEncIv = Enumerable.Range(161, 16).Select(i => (byte)i).ToArray();
-    private static readonly byte[] TgDecKey = Enumerable.Range(181, 32).Select(i => (byte)i).ToArray();
-    private static readonly byte[] TgDecIv = Enumerable.Range(221, 16).Select(i => (byte)i).ToArray();
+    private static readonly byte[] CltDecKey = [.. Enumerable.Range(1, 32).Select(i => (byte)i)];
+    private static readonly byte[] CltDecIv = [.. Enumerable.Range(41, 16).Select(i => (byte)i)];
+    private static readonly byte[] CltEncKey = [.. Enumerable.Range(61, 32).Select(i => (byte)i)];
+    private static readonly byte[] CltEncIv = [.. Enumerable.Range(101, 16).Select(i => (byte)i)];
+    private static readonly byte[] TgEncKey = [.. Enumerable.Range(121, 32).Select(i => (byte)i)];
+    private static readonly byte[] TgEncIv = [.. Enumerable.Range(161, 16).Select(i => (byte)i)];
+    private static readonly byte[] TgDecKey = [.. Enumerable.Range(181, 32).Select(i => (byte)i)];
+    private static readonly byte[] TgDecIv = [.. Enumerable.Range(221, 16).Select(i => (byte)i)];
 
     [Fact]
     public void TransformUpstream_ReEncryptsPlaintext_NotClientCiphertext()
@@ -139,9 +139,9 @@ public class TcpBridgeCryptoTests
     private static byte[] BuildAbridgedPacket(byte[] payload)
     {
         Assert.True(payload.Length % 4 == 0 && payload.Length / 4 < 0x7f);
-        return new byte[] { (byte)(payload.Length / 4) }.Concat(payload).ToArray();
+        return [(byte)(payload.Length / 4), .. payload];
     }
 
-    private static byte[] Pattern(int length) =>
-        Enumerable.Range(0, length).Select(i => (byte)((i * 7) + 3)).ToArray();
+    private static byte[] Pattern(int length)
+        => [.. Enumerable.Range(0, length).Select(i => (byte)(i * 7 + 3))];
 }

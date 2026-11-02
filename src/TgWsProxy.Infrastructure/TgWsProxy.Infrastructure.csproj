@@ -5,10 +5,11 @@
 		<InternalsVisibleTo Include="TgWsProxy.Benchmarks" />
 	</ItemGroup>
 
-	<ItemGroup>
-		<!-- Microsoft.Extensions.Hosting.Abstractions (IHostedService и др.) входит в общий framework net11.0 — отдельный PackageReference не нужен (NU1510). -->
-	</ItemGroup>
-
+    <ItemGroup>
+        <Compile Update="**\MtProto\TL.*.cs">
+            <DependentUpon>\MtProto\TL.cs</DependentUpon>
+        </Compile>
+    </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\TgWsProxy.Application\TgWsProxy.Application.csproj" />
   </ItemGroup>

@@ -9,9 +9,9 @@ using Microsoft.Extensions.Logging;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Exceptions;
+using TgWsProxy.Infrastructure.Transport;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -150,7 +150,7 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
                 throw;
             }
 
-            var (lines, leftover) = await ReadResponseHead(transport, handshakeTimeout, scope, domain);
+            var (lines, leftover) = await ReadResponseHead(transport, handshakeTimeout, domain);
 
             if (lines.Count == 0 || !lines[0].Contains(" 101 "))
             {
@@ -163,7 +163,7 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
 
             // Байты, попавшие в буфер вместе с заголовками, отдаём обратно потоку,
             // иначе потеряем начало первых WS-фреймов.
-            Stream wsTransport = leftover.Length > 0
+            var wsTransport = leftover.Length > 0
                 ? new PrebufferedStream(transport, leftover)
                 : transport;
 
@@ -184,7 +184,6 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
     private static async Task<(List<string> Lines, byte[] Leftover)> ReadResponseHead(
         Stream transport,
         TimeSpan timeout,
-        string scope,
         string domain)
     {
         // Заголовки читаются на каждом новом WS-соединении (в том числе при прогреве пула),
@@ -325,13 +324,8 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
             using var dnsCts = new CancellationTokenSource(timeout);
             var addresses = await Dns.GetHostAddressesAsync(host, dnsCts.Token).ConfigureAwait(false);
 
-            var chosen = Array.Find(addresses, a => a.AddressFamily == AddressFamily.InterNetwork)
-                         ?? Array.Find(addresses, a => a.AddressFamily == AddressFamily.InterNetworkV6);
-            if (chosen is null)
-            {
-                throw new SocketException((int)SocketError.HostNotFound);
-            }
-
+            var chosen = (Array.Find(addresses, a => a.AddressFamily == AddressFamily.InterNetwork)
+                         ?? Array.Find(addresses, a => a.AddressFamily == AddressFamily.InterNetworkV6)) ?? throw new SocketException((int)SocketError.HostNotFound);
             logger.LogDebug("[{Scope}] Resolved {Host} -> {Address} ({Domain})", scope, host, chosen, domain);
             return chosen;
         }

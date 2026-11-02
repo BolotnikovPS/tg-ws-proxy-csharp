@@ -14,9 +14,13 @@ namespace TgWsProxy.Infrastructure.Wire;
 /// Буферы компактизируются, а не сдвигаются на каждый пакет (в отличие от старой
 /// реализации со списком и <c>RemoveRange</c>).
 /// </remarks>
-public sealed class MsgSplitter
+/// <remarks>
+/// Создаёт разборщик для указанного proto tag.
+/// </remarks>
+/// <param name="protoInt">Proto tag как 32-битное число (abridged/intermediate/padded).</param>
+public sealed class MsgSplitter(int protoInt)
 {
-    private readonly int _proto;
+    private readonly int _proto = protoInt;
     private byte[] _cipher = new byte[8192];
     private byte[] _plain = new byte[8192];
 
@@ -26,17 +30,8 @@ public sealed class MsgSplitter
     /// <summary>Смещение первого неразобранного байта.</summary>
     private int _start;
 
-    /// <summary>Признак отключения разбора (некорректный поток — данные идут как есть).</summary>
-    private bool _disabled;
-
-    /// <summary>
-    /// Создаёт разборщик для указанного proto tag.
-    /// </summary>
-    /// <param name="protoInt">Proto tag как 32-битное число (abridged/intermediate/padded).</param>
-    public MsgSplitter(int protoInt) => _proto = protoInt;
-
     /// <summary>Признак того, что разбор отключён и данные передаются без разбиения.</summary>
-    public bool Disabled => _disabled;
+    public bool Disabled { get; private set; }
 
     /// <summary>
     /// Добавляет очередной фрагмент и возвращает готовые пакеты (срезы шифротекста).
@@ -58,7 +53,7 @@ public sealed class MsgSplitter
             return [];
         }
 
-        if (_disabled)
+        if (Disabled)
         {
             // Отключённый разбор: фрагмент приходит из арендованного пула вызывающей
             // стороны и не переживает её кадр, поэтому копируем.
@@ -88,7 +83,7 @@ public sealed class MsgSplitter
                 // Некорректный поток: отдаём остаток целиком и отключаем разбор.
                 parts.Add(_cipher.AsMemory(offset, _len - offset));
                 offset = _len;
-                _disabled = true;
+                Disabled = true;
                 break;
             }
 

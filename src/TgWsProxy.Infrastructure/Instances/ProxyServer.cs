@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
@@ -31,7 +32,7 @@ internal sealed class ProxyServer(
     private const int ListenerRestartDelayMs = 1000;
 
     /// <summary>Синхронизация запросов перепривязки (F-7.6: одновременно не более одного).</summary>
-    private readonly object _rebindSync = new();
+    private readonly Lock _rebindSync = new();
 
     private long _connectionSeq;
 
@@ -328,7 +329,7 @@ internal sealed class ProxyServer(
                     return true;
                 }
 
-                var connectionId = Interlocked.Increment(ref _connectionSeq).ToString("D6");
+                var connectionId = Interlocked.Increment(ref _connectionSeq).ToString("D6", CultureInfo.InvariantCulture);
                 var peer = client.RemoteEndPoint?.ToString() ?? "?";
                 var scope = $"{peer}|{connectionId}";
 

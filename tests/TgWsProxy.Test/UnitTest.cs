@@ -1,11 +1,12 @@
+using System.Globalization;
 using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.Instances;
 using TgWsProxy.Infrastructure.MtProto;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Test;
@@ -61,35 +62,23 @@ public class UnitTest
     }
 
     [Fact]
-    public void BootstrapOptions_Defaults_To_No_ConfigPath()
+    public void BootstrapOptions_Empty_Args_Are_Accepted()
     {
         var options = BootstrapOptions.Parse([]);
 
-        Assert.Null(options.ConfigPath);
-    }
-
-    [Theory]
-    [InlineData(new[] { "--config", "a.json" }, "a.json")]
-    [InlineData(new[] { "--config=a.json" }, "a.json")]
-    public void BootstrapOptions_Parses_Config_Both_Forms(string[] args, string expected)
-    {
-        Assert.Equal(expected, BootstrapOptions.Parse(args).ConfigPath);
+        Assert.Same(BootstrapOptions.Empty, options);
     }
 
     [Fact]
-    public void BootstrapOptions_Last_Config_Wins()
+    public void BootstrapOptions_Rejects_Removed_Config_Flag()
     {
-        var options = BootstrapOptions.Parse(["--config", "a.json", "--config=b.json"]);
-
-        Assert.Equal("b.json", options.ConfigPath);
-    }
-
-    [Fact]
-    public void BootstrapOptions_Rejects_Missing_Config_Path()
-    {
+        // --config удалён: путь к файлу задаёт только переменная окружения TGWS_CONFIG.
+        Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--config", "a.json"]));
+        Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--config=a.json"]));
         Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--config"]));
-        Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--config="]));
-        Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--config", "   "]));
+
+        var exception = Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse(["--config", "ignored.json"]));
+        Assert.Contains("TGWS_CONFIG", exception.Message);
     }
 
     [Theory]
@@ -97,10 +86,8 @@ public class UnitTest
     [InlineData("--help")]
     [InlineData("--version")]
     public void BootstrapOptions_Rejects_Info_Flags(string flag)
-    {
-        // Справка и версия удалены: проект — веб-сервис, единственная опция — --config.
-        Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse([flag]));
-    }
+        // Справка и версия удалены: аргументы командной строки не поддерживаются.
+        => Assert.Throws<ArgumentException>(() => BootstrapOptions.Parse([flag]));
 
     [Theory]
     [InlineData("--port", "mtproto.port")]
@@ -177,14 +164,11 @@ public class UnitTest
     }
 
     [Fact]
-    public void ConfigValidator_Rejects_Timeseries_Step_Above_Window()
-    {
-        Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c =>
-        {
-            c.TimeseriesWindowSeconds = 60;
-            c.TimeseriesStepSeconds = 120;
-        })));
-    }
+    public void ConfigValidator_Rejects_Timeseries_Step_Above_Window() => Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c =>
+                                                                               {
+                                                                                   c.TimeseriesWindowSeconds = 60;
+                                                                                   c.TimeseriesStepSeconds = 120;
+                                                                               })));
 
     [Fact]
     public void Config_Default_WsTimeout_Is_Ten_Seconds()
@@ -249,7 +233,7 @@ public class UnitTest
                 {
                     Id = "token-" + i,
                     Name = "token-" + i,
-                    Secret = i.ToString("x8").PadLeft(32, '0'),
+                    Secret = i.ToString("x8", CultureInfo.InvariantCulture).PadLeft(32, '0'),
                     Enabled = true,
                 });
             }
@@ -327,8 +311,8 @@ public class UnitTest
         var protoTag = protoInt switch
         {
             Protocol.ProtoAbridgedInt => new byte[] { 0xEF, 0xEF, 0xEF, 0xEF },
-            Protocol.ProtoIntermediateInt => new byte[] { 0xEE, 0xEE, 0xEE, 0xEE },
-            _ => new byte[] { 0xDD, 0xDD, 0xDD, 0xDD },
+            Protocol.ProtoIntermediateInt => [0xEE, 0xEE, 0xEE, 0xEE],
+            _ => [0xDD, 0xDD, 0xDD, 0xDD],
         };
         var init = BuildClientInit(secret, protoTag, dcIdx: -2);
 

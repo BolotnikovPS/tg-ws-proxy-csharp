@@ -9,7 +9,7 @@ namespace TgWsProxy.Application.StartConfig;
 /// Чтение и запись файла конфигурации <c>config.json</c>.
 ///
 /// Модель приоритетов (F-2.2): встроенные умолчания → файл. Аргументы командной строки
-/// конфигурацию не задают — от CLI остался только путь к файлу (<see cref="BootstrapOptions"/>).
+/// конфигурацию не задают; путь к файлу — только переменная окружения <c>TGWS_CONFIG</c>.
 ///
 /// Файл читается в два шага. Сначала документ разбирается как дерево
 /// <see cref="JsonDocument"/>: это позволяет выдать точные ошибки по неизвестным ключам и
@@ -40,19 +40,13 @@ public static class ConfigFileLoader
 
     /// <summary>
     /// Разрешает путь к файлу конфигурации.
-    /// Явно указанный путь (CLI или <c>TGWS_CONFIG</c>) используется как есть, без проверки
+    /// Явно указанный путь (<c>TGWS_CONFIG</c>) используется как есть, без проверки
     /// существования: вызывающая сторона решает, ошибка это или нет.
-    /// Без явного пути берётся <c>config.json</c> в текущем каталоге.
+    /// Без переменной окружения берётся <c>config.json</c> в текущем каталоге.
     /// </summary>
-    /// <param name="explicitPath">Путь из CLI.</param>
     /// <returns>Абсолютный или относительный путь и признак того, что он задан явно.</returns>
-    public static (string Path, bool IsExplicit) ResolvePath(string? explicitPath)
+    public static (string Path, bool IsExplicit) ResolvePath()
     {
-        if (!string.IsNullOrWhiteSpace(explicitPath))
-        {
-            return (explicitPath.Trim(), true);
-        }
-
         var fromEnvironment = Environment.GetEnvironmentVariable("TGWS_CONFIG");
         if (!string.IsNullOrWhiteSpace(fromEnvironment))
         {
@@ -70,7 +64,7 @@ public static class ConfigFileLoader
     /// проигнорировать опечатку в пути хуже, чем упасть при старте.
     /// </summary>
     /// <param name="path">Путь к файлу.</param>
-    /// <param name="isExplicit">Задан ли путь явно (<c>--config</c> или <c>TGWS_CONFIG</c>).</param>
+    /// <param name="isExplicit">Задан ли путь явно (переменной <c>TGWS_CONFIG</c>).</param>
     /// <returns>Конфигурация: умолчания, перекрытые файлом.</returns>
     /// <exception cref="ArgumentException">Файл задан явно, но не найден; файл некорректен.</exception>
     public static Config Load(string path, bool isExplicit)
@@ -155,10 +149,7 @@ public static class ConfigFileLoader
 
                 // Плоские лог-ключи прежних версий переносятся во вложенный блок logs.
                 // Новый блок logs имеет приоритет: если он уже задан, плоские ключи игнорируются.
-                if (dto.Logs is null)
-                {
-                    dto.Logs = TryReadLegacyLogs(document.RootElement);
-                }
+                dto.Logs ??= TryReadLegacyLogs(document.RootElement);
 
                 return dto;
             }
@@ -221,8 +212,20 @@ public static class ConfigFileLoader
         var tempPath = path + ".tmp";
         File.WriteAllText(tempPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
+        // Ограничиваем доступ к секретам (webApiToken, mtproto.secret) ещё во временном файле.
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(tempPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+
         // File.Move с overwrite атомарен в пределах одной файловой системы на Windows и Unix.
         File.Move(tempPath, path, overwrite: true);
+
+        // rename сохраняет атрибуты источника, но на всякий случай фиксируем 0600 и на цели.
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
     }
 
     /// <summary>Настройки чтения: комментарии и висячие запятые — для ручного редактирования.</summary>

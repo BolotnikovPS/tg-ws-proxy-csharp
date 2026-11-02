@@ -4,10 +4,10 @@ using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Domain.Exceptions;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Infrastructure.Instances;
@@ -42,7 +42,7 @@ internal sealed class TcpBridgeService(
     private readonly Dictionary<(string Dst, int Port), int> tcpFailures = [];
     private readonly Dictionary<(string Dst, int Port), DateTimeOffset> tcpRetryAfter = [];
     private readonly HashSet<(string Dst, int Port)> tcpConnecting = [];
-    private readonly object tcpSync = new();
+    private readonly Lock tcpSync = new();
 
     /// <inheritdoc />
     public async Task BridgeWsReencrypt(
@@ -426,7 +426,7 @@ internal sealed class TcpBridgeService(
         lock (tcpSync)
         {
             if (tcpConnecting.Contains(key) ||
-                (tcpRetryAfter.TryGetValue(key, out var after) && DateTimeOffset.UtcNow < after))
+                tcpRetryAfter.TryGetValue(key, out var after) && DateTimeOffset.UtcNow < after)
             {
                 logger.LogDebug(
                     "[{Scope}] TCP fallback to {Dst}:{Port} skipped (backoff or connecting)",

@@ -3,9 +3,9 @@ using Microsoft.Extensions.Logging;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
+using TgWsProxy.Infrastructure.Transport;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -18,7 +18,7 @@ internal sealed class CfWorkerPool(
     Dictionary<int, string> dcOpt,
     IRawWebSocketFactory wsFactory,
     IProxyStats stats,
-    ILogger<CfWorkerPool> logger) : ICfWorkerPool
+    ILogger<CfWorkerPool> logger) : ICfWorkerPool, IDisposable
 {
     /// <summary>Максимальный возраст соединения воркера (WS_POOL_MAX_AGE).</summary>
     private static readonly TimeSpan MaxAge = TimeSpan.FromSeconds(100);
@@ -98,10 +98,7 @@ internal sealed class CfWorkerPool(
     /// <remarks>
     /// Соответствует upstream, где обработка лимита воркера (HTTP 429) закомментирована как TODO.
     /// </remarks>
-    public void ReportFailure(string workerDomain, Exception exception)
-    {
-        logger.LogDebug(exception, "CF worker {Domain} connect failed", workerDomain);
-    }
+    public void ReportFailure(string workerDomain, Exception exception) => logger.LogDebug(exception, "CF worker {Domain} connect failed", workerDomain);
 
     /// <inheritdoc />
     public void Warmup()
@@ -143,6 +140,13 @@ internal sealed class CfWorkerPool(
         idle.Clear();
         refilling.Clear();
         exhaustedUntil.Clear();
+    }
+
+    /// <summary>Останавливает фоновое наполнение пула и освобождает ресурсы.</summary>
+    public void Dispose()
+    {
+        lifetime.Cancel();
+        lifetime.Dispose();
     }
 
     /// <summary>

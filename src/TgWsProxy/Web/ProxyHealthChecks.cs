@@ -64,7 +64,7 @@ internal sealed class ConfigHealthCheck(Config config, ConfigRuntime runtime) : 
                 "configuration is invalid", exception));
         }
 
-        // Путь может быть относительным (--config config.json): GetDirectoryName вернул бы
+        // Путь может быть относительным (например, ./config.json из TGWS_CONFIG): GetDirectoryName вернул бы
         // пустую строку, и проверка ложно сообщала бы об отсутствии каталога.
         var path = Path.GetFullPath(runtime.Path);
         if (File.Exists(path))

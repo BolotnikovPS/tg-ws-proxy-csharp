@@ -3,8 +3,8 @@ using Microsoft.Extensions.Logging;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Domain;
+using TgWsProxy.Infrastructure.Transport;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -60,7 +60,7 @@ internal sealed class CfDomainRefresher(
     /// <summary>
     /// Останавливает фоновое обновление списка доменов.
     /// </summary>
-    public void Stop()
+    public void StopRefresh()
     {
         lifetime?.Cancel();
         lifetime?.Dispose();

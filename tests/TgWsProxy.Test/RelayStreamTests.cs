@@ -47,13 +47,13 @@ public class RelayStreamTests
             .Where(f => f.Type == RelayFrameType.Window)
             .Select(f => RelayFrameCodec.ParseWindowCredit(f.Payload.Span))
             .ToArray();
-        Assert.Equal(new[] { 2, 3 }, credits);
+        Assert.Equal([2, 3], credits);
     }
 
     [Fact]
     public async Task ReadAsync_ReturnsZeroOnComplete()
     {
-        var stream = NewStream(1, new List<RelayFrame>());
+        var stream = NewStream(1, []);
         stream.CompleteInbound();
 
         var n = await stream.ReadAsync(new byte[10]);
@@ -133,8 +133,8 @@ public class RelayStreamTests
 
     private static RelayStream NewStream(int streamId, List<RelayFrame> frames) => new(streamId, CapturingSender(frames));
 
-    private static RelayFrameSender CapturingSender(List<RelayFrame> frames) =>
-        (type, streamId, payload, ct) =>
+    private static RelayFrameSender CapturingSender(List<RelayFrame> frames)
+        => (type, streamId, payload, ct) =>
         {
             lock (frames)
             {

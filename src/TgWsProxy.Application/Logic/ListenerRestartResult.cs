@@ -15,10 +15,10 @@ public sealed record ListenerRestartResult(
     string? Error)
 {
     /// <summary>Успешный перезапуск.</summary>
-    public static ListenerRestartResult Ok(int droppedSessions) =>
-        new(true, droppedSessions, false, null);
+    public static ListenerRestartResult Ok(int droppedSessions)
+        => new(true, droppedSessions, false, null);
 
     /// <summary>Неудачная привязка с откатом на прежний адрес.</summary>
-    public static ListenerRestartResult Failed(string error) =>
-        new(false, 0, true, error);
+    public static ListenerRestartResult Failed(string error)
+        => new(false, 0, true, error);
 }

@@ -73,7 +73,7 @@ docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
 3. Запуск и смоук по обоим носителям:
 
    ```powershell
-   dotnet run --project src/TgWsProxy -- --config config.json
+   dotnet run --project src/TgWsProxy
    node tools/web-proxy-smoke.mjs --host lvh.me --secret <32hex> --carrier websocket --ca certs/bridge-local.pem
    node tools/web-proxy-smoke.mjs --host lvh.me --secret <32hex> --carrier https --ca certs/bridge-local.pem
    ```

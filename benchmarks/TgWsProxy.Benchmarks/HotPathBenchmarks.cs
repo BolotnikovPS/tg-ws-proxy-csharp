@@ -4,8 +4,8 @@ using System.Security.Cryptography;
 using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Application.Logic;
-using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Instances;
+using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
 
 namespace TgWsProxy.Benchmarks;
@@ -19,21 +19,21 @@ namespace TgWsProxy.Benchmarks;
 /// </summary>
 
 [MemoryDiagnoser]
-public class CryptoBenchmarks
+internal class CryptoBenchmarks
 {
     private IncrementalCipher _cipher = null!;
     private byte[] _input = null!;
     private byte[] _output = null!;
 
     [Params(1024, 8192)]
-    public int Size;
+    public int Size { get; set; }
 
     [GlobalSetup]
     public void Setup()
     {
         _cipher = new IncrementalCipher(
-            Enumerable.Range(1, 32).Select(i => (byte)i).ToArray(),
-            Enumerable.Range(41, 16).Select(i => (byte)i).ToArray());
+            [.. Enumerable.Range(1, 32).Select(i => (byte)i)],
+            [.. Enumerable.Range(41, 16).Select(i => (byte)i)]);
         _input = new byte[Size];
         _output = new byte[Size];
         RandomNumberGenerator.Fill(_input);
@@ -116,7 +116,7 @@ public class PeerStatsBenchmarks
 
         for (var i = 0; i < Peers; i++)
         {
-            var ip = new IPAddress(new byte[] { 10, (byte)(i >> 16), (byte)(i >> 8), (byte)i });
+            var ip = new IPAddress([10, (byte)(i >> 16), (byte)(i >> 8), (byte)i]);
             _registry.ConnectionOpened(ip);
             _registry.AddBytesUp(ip, null, 1000);
             _registry.AddBytesDown(ip, null, 2000);

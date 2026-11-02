@@ -19,10 +19,7 @@ public class ConfigValidatorWebProxyTests
     }
 
     [Fact]
-    public void WebProxyCarrierModes_ContainHttpsAndWebSocket()
-    {
-        Assert.Equal(["https", "websocket"], ConfigValidator.WebProxyCarrierModes);
-    }
+    public void WebProxyCarrierModes_ContainHttpsAndWebSocket() => Assert.Equal(["https", "websocket"], ConfigValidator.WebProxyCarrierModes);
 
     [Theory]
     [InlineData("https")]
