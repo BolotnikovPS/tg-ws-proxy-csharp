@@ -223,6 +223,67 @@ public sealed class ConfigUpdateServiceTests : IDisposable
     }
 
     /// <summary>
+    /// Блок <c>botApi</c> целиком «только старт»: маршруты Bot API регистрируются при старте,
+    /// а <c>BotGateway</c> и лимитер получают снимок конфигурации в конструкторе, поэтому
+    /// правка на лету не влияет на работающий шлюз и должна отклоняться с 409 (docs/bot-api.md).
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_BotApiEnabled_IsStartupOnly()
+    {
+        _config.BotApi.Enabled = true;
+
+        var exception = await Assert.ThrowsAsync<StartupOnlyKeysException>(() =>
+            _service.ApplyAsync(
+                new ConfigDto { BotApi = new BotApiConfigDto { Enabled = false } },
+                CancellationToken.None));
+
+        Assert.Equal(["botApi.enabled"], exception.StartupOnly);
+        Assert.False(File.Exists(_service.Path));
+        Assert.True(_config.BotApi.Enabled);
+    }
+
+    /// <summary>
+    /// Ни один ключ <c>botApi.*</c> не применяется на лету — проверяем весь набор сразу.
+    /// </summary>
+    [Fact]
+    public async Task ApplyAsync_AllBotApiKeys_AreStartupOnly()
+    {
+        var exception = await Assert.ThrowsAsync<StartupOnlyKeysException>(() =>
+            _service.ApplyAsync(
+                new ConfigDto
+                {
+                    BotApi = new BotApiConfigDto
+                    {
+                        Enabled = true,
+                        DataDir = "./other-sessions",
+                        Host = "149.154.167.51",
+                        Port = 8443,
+                        Secret = "00112233445566778899aabbccddeeff",
+                        MaxUploadBytes = 1024,
+                        MaxFileCacheBytes = 2048,
+                        RequestsPerSecondPerToken = 2,
+                    },
+                },
+                CancellationToken.None));
+
+        Assert.Equal(
+            [
+                "botApi.dataDir",
+                "botApi.enabled",
+                "botApi.host",
+                "botApi.maxFileCacheBytes",
+                "botApi.maxUploadBytes",
+                "botApi.port",
+                "botApi.requestsPerSecondPerToken",
+                "botApi.secret",
+            ],
+            exception.StartupOnly.OrderBy(key => key));
+        Assert.False(File.Exists(_service.Path));
+        Assert.Equal(30, _config.BotApi.RequestsPerSecondPerToken);
+        Assert.Equal("./bot-sessions", _config.BotApi.DataDir);
+    }
+
+    /// <summary>
     /// Маскированное значение из формы не должно затирать настоящий секрет в файле (F-2.10, F-8.8).
     /// </summary>
     [Fact]

@@ -120,6 +120,17 @@ public sealed class ConfigUpdateService(
         "otel.exportTraces",
         "otel.exportLogs",
         "otel.exportMetrics",
+        // Bot API: маршруты регистрируются при старте (MapBotApi выходит сразу при
+        // enabled=false), а BotGateway и BotApiRateLimiter получают снимок блока в конструкторе.
+        // Поэтому любая правка botApi.* читается только после перезапуска (docs/bot-api.md).
+        "botApi.enabled",
+        "botApi.dataDir",
+        "botApi.host",
+        "botApi.port",
+        "botApi.secret",
+        "botApi.maxUploadBytes",
+        "botApi.maxFileCacheBytes",
+        "botApi.requestsPerSecondPerToken",
     ];
 
     private static readonly JsonSerializerOptions DiffOptions = new()
@@ -444,12 +455,12 @@ public sealed class ConfigUpdateService(
     {
         var warnings = new List<string>();
 
-        // Веб-сервер всегда слушает 0.0.0.0:80 (публично), поэтому без webApiToken API
-        // достижим без аутентификации — предупреждаем об этом явно.
+        // Веб-сервер всегда слушает 0.0.0.0:80 (публично). Без webApiToken управляющий
+        // API /api/* отключён (fail-closed) — предупреждаем об этом явно.
         if (string.IsNullOrWhiteSpace(candidate.WebApiToken))
         {
             warnings.Add(
-                "webApiToken is empty: the Web API is reachable without authentication.");
+                "webApiToken is empty: the Web API /api/* is disabled (fail-closed).");
         }
 
         if (!candidate.Stats.Enabled)

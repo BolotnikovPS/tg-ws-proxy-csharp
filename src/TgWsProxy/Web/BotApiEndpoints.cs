@@ -41,10 +41,8 @@ internal static class BotApiEndpoints
             && !rateLimiter.TryAcquire(botId, config.BotApi.RequestsPerSecondPerToken))
         {
             metrics.IncBotApiRequestError();
-            ctx.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-            await ctx.Response.WriteAsJsonAsync(
-                new { ok = false, error_code = 429, description = "Too Many Requests: rate limit exceeded" },
-                ctx.RequestAborted).ConfigureAwait(false);
+            await WriteErrorAsync(ctx, StatusCodes.Status429TooManyRequests, "Too Many Requests: rate limit exceeded")
+                .ConfigureAwait(false);
             return;
         }
 
@@ -53,13 +51,12 @@ internal static class BotApiEndpoints
         {
             args = await ReadArgsAsync(ctx, config.BotApi.MaxUploadBytes).ConfigureAwait(false);
         }
-        catch (BotGatewayException e) when (e.ErrorCode == StatusCodes.Status413PayloadTooLarge)
+        catch (BotGatewayException e)
         {
+            // 413 (тело больше maxUploadBytes) и 400 (не разобран JSON) — отказы уровня
+            // транспорта: до шлюза и до сети они не доходят, статус отдаётся сразу.
             metrics.IncBotApiRequestError();
-            ctx.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
-            await ctx.Response.WriteAsJsonAsync(
-                new { ok = false, error_code = e.ErrorCode, description = e.Message },
-                ctx.RequestAborted).ConfigureAwait(false);
+            await WriteErrorAsync(ctx, e.ErrorCode, e.Message).ConfigureAwait(false);
             return;
         }
 
@@ -77,10 +74,24 @@ internal static class BotApiEndpoints
         else
         {
             metrics.IncBotApiRequestError();
-            await ctx.Response.WriteAsJsonAsync(
-                new { ok = false, error_code = result.ErrorCode, description = result.Description },
-                ctx.RequestAborted).ConfigureAwait(false);
+            await WriteErrorAsync(ctx, result.ErrorCode ?? 500, result.Description).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Пишет ошибку в формате Bot API: <c>{ok:false, error_code, description}</c>.
+    /// HTTP-статус равен <c>error_code</c> — как в официальном Bot API, иначе клиенты,
+    /// проверяющие статус ответа (<c>raise_for_status()</c> и аналоги), принимают ошибку
+    /// за успех. Некорректный как HTTP-статус код (например <c>0</c>) подменяется на 500.
+    /// </summary>
+    private static Task WriteErrorAsync(HttpContext ctx, int errorCode, string? description)
+    {
+        ctx.Response.StatusCode = errorCode is >= 100 and <= 599
+            ? errorCode
+            : StatusCodes.Status500InternalServerError;
+        return ctx.Response.WriteAsJsonAsync(
+            new { ok = false, error_code = errorCode, description },
+            ctx.RequestAborted);
     }
 
     private static int? ReadApiId(HttpContext ctx)
@@ -173,10 +184,13 @@ internal static class BotApiEndpoints
                 args = body;
             }
         }
-        catch (JsonException)
+        catch (JsonException e)
         {
-            // Invalid JSON: gateway returns 400 (args are unused for getMe).
-            return new Dictionary<string, object> { ["__bad_json__"] = true };
+            // Некорректный JSON — ошибка клиента, а не «пустые аргументы»: иначе метод
+            // сообщал бы о недостающем параметре вместо причины (F-2.7, REQ-09).
+            throw new BotGatewayException(
+                StatusCodes.Status400BadRequest,
+                $"Bad Request: can't parse JSON object: {e.Message}");
         }
 
         return args;
@@ -196,9 +210,6 @@ internal static class BotApiEndpoints
             return;
         }
 
-        ctx.Response.StatusCode = StatusCodes.Status404NotFound;
-        await ctx.Response.WriteAsJsonAsync(
-            new { ok = false, error_code = 404, description = "file not found" },
-            ctx.RequestAborted).ConfigureAwait(false);
+        await WriteErrorAsync(ctx, StatusCodes.Status404NotFound, "file not found").ConfigureAwait(false);
     }
 }

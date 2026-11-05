@@ -114,6 +114,9 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     {
         if (!_config.Enabled)
         {
+            // Маршруты не регистрируются при botApi.enabled=false (BotApiEndpoints.MapBotApi
+            // выходит сразу), поэтому сюда запрос не доходит. Ветка оставлена как защита от
+            // прямого вызова HandleAsync (тесты, будущие транспорты).
             return BotApiResult.Fail(403, "Bot API is disabled");
         }
 
@@ -125,6 +128,18 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         catch (Exception e)
         {
             return BotApiResult.Fail(400, e.Message);
+        }
+
+        // Чистая валидация аргументов идёт до логина: без неё запрос без chat_id или с
+        // неверным parse_mode упирался в ImportBotAuthorization и отдавал 401 «нужны
+        // заголовки api_id/api_hash», хотя заголовки к ошибке в параметрах отношения не имеют.
+        try
+        {
+            ValidateArgsBeforeNetwork(method, args);
+        }
+        catch (BotGatewayException e)
+        {
+            return BotApiResult.Fail(e.ErrorCode, e.Message);
         }
 
         try
@@ -836,6 +851,119 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             // ⚠️ messages.editInlineBotMessage отсутствует в текущем TL-слое — inline-редактирование не реализовано.
             throw new BotGatewayException(400, $"inline_message_id editing is not supported for {methodName}");
         }
+    }
+
+    /// <summary>
+    /// Методы, требующие цель-чат: <c>chat_id</c>, raw <c>peer</c> или (для edit*) <c>inline_message_id</c>.
+    /// Проверяются до сети, чтобы отсутствие цели давало 400, а не 401 про заголовки логина.
+    /// </summary>
+    private static readonly HashSet<string> ChatTargetMethods = new(StringComparer.Ordinal)
+    {
+        "sendMessage",
+        "sendPhoto",
+        "sendDocument",
+        "sendAudio",
+        "sendVideo",
+        "sendAnimation",
+        "sendVoice",
+        "sendVideoNote",
+        "sendSticker",
+        "sendMediaGroup",
+        "sendChatAction",
+        "deleteMessage",
+        "forwardMessage",
+        "copyMessage",
+        "getChat",
+        "getChatAdministrators",
+        "getChatMember",
+        "getChatMemberCount",
+        "setChatTitle",
+        "setChatDescription",
+        "setChatPhoto",
+        "leaveChat",
+        "banChatMember",
+    };
+
+    /// <summary>Методы edit*: цель — пара chat_id+message_id либо inline_message_id.</summary>
+    private static readonly HashSet<string> EditTargetMethods = new(StringComparer.Ordinal)
+    {
+        "editMessageText",
+        "editMessageCaption",
+        "editMessageMedia",
+    };
+
+    /// <summary>Методы, у которых <c>parse_mode</c> реально разбирается в текст/сущности.</summary>
+    private static readonly HashSet<string> ParseModeMethods = new(StringComparer.Ordinal)
+    {
+        "sendMessage",
+        "sendPhoto",
+        "sendDocument",
+        "sendAudio",
+        "sendVideo",
+        "sendAnimation",
+        "sendVoice",
+        "sendVideoNote",
+        "sendSticker",
+        "editMessageText",
+        "editMessageCaption",
+    };
+
+    /// <summary>
+    /// Валидация аргументов, не требующая сети: выполняется до <c>auth.importBotAuthorization</c>.
+    /// Бросает <see cref="BotGatewayException"/> с кодом 400 — как это делает реальный Bot API
+    /// для отсутствующих/некорректных параметров.
+    /// </summary>
+    internal static void ValidateArgsBeforeNetwork(string method, IReadOnlyDictionary<string, object> args)
+    {
+        if (args == null || string.IsNullOrEmpty(method))
+        {
+            return;
+        }
+
+        if (ParseModeMethods.Contains(method))
+        {
+            ValidateParseModeValue(ReadStringArg(args, "parse_mode"));
+        }
+
+        if (EditTargetMethods.Contains(method))
+        {
+            // У edit* своя пара требований; raw 'peer' тоже принимается как цель.
+            if (!args.ContainsKey("peer"))
+            {
+                ValidateEditTarget(args, method);
+            }
+
+            return;
+        }
+
+        if (!ChatTargetMethods.Contains(method))
+        {
+            return;
+        }
+
+        if (args.ContainsKey("peer") || args.ContainsKey("chat_id"))
+        {
+            return;
+        }
+
+        throw new BotGatewayException(400, $"chat_id is required for {method}");
+    }
+
+    /// <summary>Проверяет только значение <c>parse_mode</c>, без построения сущностей.</summary>
+    private static void ValidateParseModeValue(string parseMode)
+    {
+        if (string.IsNullOrWhiteSpace(parseMode) || parseMode == "HTML")
+        {
+            return;
+        }
+
+        if (parseMode is "Markdown" or "MarkdownV2")
+        {
+            throw new BotGatewayException(
+                400, $"parse_mode '{parseMode}' is not implemented; pass 'entities' instead");
+        }
+
+        throw new BotGatewayException(400, $"unknown parse_mode '{parseMode}'");
     }
 
     /// <summary>Резолв цели редактирования (peer + message_id) после валидации; требует selfId для self-пира.</summary>
