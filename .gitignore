@@ -382,3 +382,7 @@ DocumentLayout.backup.json
 # Образцы для репозитория — config.example.json и DockerCompose/config.docker.json.
 src/TgWsProxy/config.json
 src/TgWsProxy/config.*.json
+
+# Локальные артефакты e2e-прогонов Bot API: скрипты и логи содержат реальные
+# bot token / api_hash, в репозиторий не попадают.
+tests/_botapi-e2e/
