@@ -28,9 +28,11 @@
     <Project Path="benchmarks/TgWsProxy.Benchmarks/TgWsProxy.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/docs/">
+    <File Path="docs/logging.md" />
     <File Path="docs/README.md" />
     <File Path="docs/architecture.md" />
     <File Path="docs/benchmarks.md" />
+    <File Path="docs/bot-api.md" />
     <File Path="docs/build.md" />
     <File Path="docs/configuration.md" />
     <File Path="docs/diagnostics.md" />

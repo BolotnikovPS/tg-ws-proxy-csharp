@@ -181,7 +181,8 @@ function showBanner(message, level = 'warn') {
   banner.append(el('span', '', message));
 
   if (level === 'auth' || level === 'error-auth') {
-    // Если включён webApiToken, странице нужен Bearer-токен для /api/* (F-3.8).
+    // /api/* закрыт без Bearer-токена webApiToken (fail-closed), поэтому страница
+    // запрашивает токен при 401/403 (F-3.8).
     const form = el('form', 'input-row');
     const input = el('input');
     input.type = 'password';
@@ -655,7 +656,7 @@ const CONFIG_GROUPS = [
     fields: [
       // Токены прокси больше не редактируются здесь: у них своя панель (F-8.8), а в
       // config.json они живут списком tokens[], а не ключом secret.
-      { key: 'webApiToken', label: 'Bearer-токен Web API', type: 'secret', hint: 'Пусто — /api/* без аутентификации; меняется на лету' },
+      { key: 'webApiToken', label: 'Bearer-токен Web API', type: 'secret', hint: 'Обязателен для /api/*; пусто — управляющий API отключён (fail-closed). Меняется на лету' },
       { key: 'allowIp', label: 'Разрешённые IP / CIDR', type: 'list', hint: 'Список адресов: по одному в строке (можно через запятую или точку с запятой). Одиночный адрес — 203.0.113.7, подсеть — 198.51.100.0/24, IPv6 — 2001:db8::/32. Пусто — разрешены все адреса' },
       { key: 'denyIp', label: 'Запрещённые IP / CIDR', type: 'list', hint: 'Тот же формат: адрес или подсеть, по одному в строке. Запрет проверяется первым и важнее allowIp, поэтому адрес из обоих списков будет отклонён' },
       { key: 'disableSecure', label: 'Отключить Secure (fake-TLS)', type: 'bool', listener: true },

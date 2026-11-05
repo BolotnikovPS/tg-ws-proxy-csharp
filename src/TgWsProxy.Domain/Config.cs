@@ -51,8 +51,9 @@ public sealed class Config
     public int RateLimitWindowSeconds { get; set; } = 60;
 
     /// <summary>
-    /// Bearer-токен для служебного Web API. Пусто — аутентификация выключена и эндпоинты
-    /// открыты всем, кто может достучаться до веб-сервера. Расширение порта, в upstream отсутствует.
+    /// Bearer-токен для служебного Web API — обязателен. Пусто — управляющий API /api/*
+    /// отключён (fail-closed); открыты только страница, /healthz*, /metrics и /swagger.
+    /// Расширение порта, в upstream отсутствует.
     /// </summary>
     public string WebApiToken { get; set; } = "";
 
