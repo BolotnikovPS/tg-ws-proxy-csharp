@@ -2,58 +2,12 @@
 using System.ComponentModel;
 using System.IO.Compression;
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Text;
 using TgWsProxy.Infrastructure.MtProto.TL;
 
 #pragma warning disable IDE1006 // Naming Styles
 
 namespace TgWsProxy.Infrastructure.MtProto;
-
-#if MTPG
-	public interface IObject { void WriteTL(BinaryWriter writer); }
-#else
-public interface IObject { }
-#endif
-public interface IMethod<out TResult> : IObject { }
-public interface IPeerResolver { IPeerInfo UserOrChat(Peer peer); }
-
-[AttributeUsage(AttributeTargets.Class)]
-public sealed class TLDefAttribute(uint ctorNb) : Attribute
-{
-    public readonly uint CtorNb = ctorNb;
-    public int inheritAt = -1;
-}
-
-[AttributeUsage(AttributeTargets.Field)]
-public sealed class IfFlagAttribute(int bit) : Attribute
-{
-    public readonly int Bit = bit;
-}
-
-public sealed class RpcException(int code, string message, int x = -1) : Exception(message)
-{
-    public readonly int Code = code;
-    /// <summary>The value of X in the message, -1 if no variable X was found</summary>
-    public readonly int X = x;
-    public override string ToString() { var str = base.ToString(); return str.Insert(str.IndexOf(':') + 1, " " + Code); }
-}
-
-public sealed partial class ReactorError : IObject
-{
-    public Exception Exception;
-    public void WriteTL(BinaryWriter writer) => throw new NotSupportedException();
-}
-
-/// <summary>
-/// Нетипизированный результат TL vector#1cb5c415 — обёртка над уже прочитанными IObject[].
-/// Возвращается <see cref="ReadTLObject"/> на VectorCtor (например, для users.getUsers = Vector&lt;User&gt;);
-/// элементы десериализуются в конкретные типы (которые зарегистрированы в Layer.Table).
-/// </summary>
-public sealed class TLVector : IObject
-{
-    public IObject[] Items;
-}
 
 public static class Serialization
 {
@@ -69,9 +23,6 @@ public static class Serialization
     public static void WriteTLObject<T>(this BinaryWriter writer, T obj) where T : IObject
     {
         if (obj == null) { writer.WriteTLNull(typeof(T)); return; }
-#if MTPG
-			obj.WriteTL(writer);
-#else
         var type = obj.GetType();
         var tlDef = type.GetCustomAttribute<TLDefAttribute>();
         var ctorNb = tlDef.CtorNb;
@@ -90,17 +41,11 @@ public static class Serialization
                 else if (field.Name == "flags2") flags |= (ulong)(uint)value << 32;
             }
         }
-#endif
     }
 
     public static IObject ReadTLObject(this BinaryReader reader, uint ctorNb = 0)
     {
         if (ctorNb == 0) ctorNb = reader.ReadUInt32();
-#if MTPG
-			if (!Layer.Table.TryGetValue(ctorNb, out var ctor))
-				throw new InvalidOperationException($"Cannot find type for ctor #{ctorNb:x}");
-			return ctor?.Invoke(reader);
-#else
         if (ctorNb == Layer.GZipedCtor) return (IObject)reader.ReadTLGzipped(typeof(IObject));
         if (ctorNb == Layer.VectorCtor)
         {
@@ -115,9 +60,9 @@ public static class Serialization
         {
             return new BoolValue { Value = ctorNb == 0x997275B5 };
         }
+        if (Layer.EmptyCtors.Contains(ctorNb)) return null; // "empty"/"notModified" ctor (e.g. inputPeerEmpty) => null
         if (!Layer.Table.TryGetValue(ctorNb, out var type))
             throw new InvalidOperationException($"Cannot find type for ctor #{ctorNb:x}");
-        if (type == null) return null; // nullable ctor (class meaning is associated with null)
         var tlDef = type.GetCustomAttribute<TLDefAttribute>();
         var obj = Activator.CreateInstance(type, true);
         var fields = GetTLFields(type, tlDef);
@@ -135,10 +80,8 @@ public static class Serialization
             }
         }
         return (IObject)obj;
-#endif
     }
 
-#if !MTPG
     private static IEnumerable<FieldInfo> GetTLFields(Type type, TLDefAttribute tlDef)
     {
         if (!(tlDef?.inheritAt >= 0)) return type.GetFields(BindingFlags.Instance | BindingFlags.Public);
@@ -147,18 +90,6 @@ public static class Serialization
         var subfields = GetTLFields(type.BaseType, type.BaseType.GetCustomAttribute<TLDefAttribute>());
         return fields.Take(tlDef.inheritAt).Concat(subfields).Concat(fields.Skip(tlDef.inheritAt));
     }
-#else
-		public static IMethod<X> ReadTLMethod<X>(this BinaryReader reader)
-		{
-			uint ctorNb = reader.ReadUInt32();
-			if (!Layer.Methods.TryGetValue(ctorNb, out var ctor))
-				throw new Exception($"Cannot find method for ctor #{ctorNb:x}");
-			var method = ctor?.Invoke(reader);
-			if (method is IMethod<bool> && typeof(X) == typeof(object))
-				method = new BoolMethod { query = method };
-			return (IMethod<X>)method;
-		}
-#endif
 
     internal static void WriteTLValue(this BinaryWriter writer, object value, Type valueType)
     {
@@ -253,8 +184,8 @@ public static class Serialization
                         : type == typeof(Int256)
                                             ? new Int256(reader)
                                             : type == typeof(Dictionary<long, User>)
-                                                                ? reader.ReadTLDictionary<User>()
-                                                                : type == typeof(Dictionary<long, ChatBase>) ? reader.ReadTLDictionary<ChatBase>() : reader.ReadTLObject();
+                                                                 ? reader.ReadTLDictionary<User>()
+                                                                 : type == typeof(Dictionary<long, ChatBase>) ? reader.ReadTLDictionary<ChatBase>() : reader.ReadTLObject();
                 }
 
             default:
@@ -307,30 +238,6 @@ public static class Serialization
         var elementType = array.GetType().GetElementType();
         for (var i = 0; i < count; i++)
             writer.WriteTLValue(array.GetValue(i), elementType);
-    }
-
-    internal static void WriteTLRawVector(this BinaryWriter writer, Array array, int elementSize)
-    {
-        var startPos = writer.BaseStream.Position;
-        var count = array.Length;
-        var elementType = array.GetType().GetElementType();
-        for (var i = count - 1; i >= 0; i--)
-        {
-            writer.BaseStream.Position = startPos + (i * elementSize);
-            writer.WriteTLValue(array.GetValue(i), elementType);
-        }
-        writer.BaseStream.Position = startPos;
-        writer.Write(count);
-        writer.BaseStream.Position = startPos + (count * elementSize) + 4;
-    }
-
-    internal static List<T> ReadTLRawVector<T>(this BinaryReader reader, uint ctorNb)
-    {
-        var count = reader.ReadInt32();
-        var list = new List<T>(count);
-        for (var i = 0; i < count; i++)
-            list.Add((T)reader.ReadTLObject(ctorNb));
-        return list;
     }
 
     internal static T[] ReadTLVector<T>(this BinaryReader reader)
@@ -475,115 +382,9 @@ public static class Serialization
         return gzipReader.ReadTLValue(type);
     }
 
-    internal static bool ReadTLBool(this BinaryReader reader) => reader.ReadUInt32() switch
-    {
-        0x997275b5 => true,
-        0xbc799737 => false,
-        var value => throw new FormatException($"Invalid boolean value #{value:x}")
-    };
-
 #if DEBUG
     private static void ShouldntBeHere() => System.Diagnostics.Debugger.Break();
 #else
-		private static void ShouldntBeHere() => throw new NotImplementedException("You've reached an unexpected point in code");
-#endif
-}
-
-public struct Int128
-{
-    public byte[] raw;
-
-    public Int128(BinaryReader reader) => raw = reader.ReadBytes(16);
-    public Int128(byte[] data) => raw = data;
-    public Int128(RandomNumberGenerator rng) => rng.GetBytes(raw = new byte[16]);
-    public static bool operator ==(Int128 left, Int128 right) { for (var i = 0; i < 16; i++) if (left.raw[i] != right.raw[i]) return false; return true; }
-    public static bool operator !=(Int128 left, Int128 right) { for (var i = 0; i < 16; i++) if (left.raw[i] != right.raw[i]) return true; return false; }
-    public override readonly bool Equals(object obj) => obj is Int128 other && this == other;
-    public override readonly int GetHashCode() => BitConverter.ToInt32(raw, 0);
-    public override readonly string ToString() => Convert.ToHexString(raw);
-    public static implicit operator byte[](Int128 int128) => int128.raw;
-}
-
-public struct Int256
-{
-    public byte[] raw;
-
-    public Int256(BinaryReader reader) => raw = reader.ReadBytes(32);
-    public Int256(byte[] data) => raw = data;
-    public Int256(RandomNumberGenerator rng) => rng.GetBytes(raw = new byte[32]);
-    public static bool operator ==(Int256 left, Int256 right) { for (var i = 0; i < 32; i++) if (left.raw[i] != right.raw[i]) return false; return true; }
-    public static bool operator !=(Int256 left, Int256 right) { for (var i = 0; i < 32; i++) if (left.raw[i] != right.raw[i]) return true; return false; }
-    public override readonly bool Equals(object obj) => obj is Int256 other && this == other;
-    public override readonly int GetHashCode() => BitConverter.ToInt32(raw, 0);
-    public override readonly string ToString() => Convert.ToHexString(raw);
-    public static implicit operator byte[](Int256 int256) => int256.raw;
-}
-
-public sealed partial class UpdateAffectedMessages : Update // auto-generated for OnOwnUpdates in case of such API call result
-{
-    public long mbox_id;
-    public int pts;
-    public int pts_count;
-    public override (long, int, int) GetMBox() => (mbox_id, pts, pts_count);
-#if MTPG
-		public override void WriteTL(BinaryWriter writer) => throw new NotSupportedException();
-#endif
-}
-
-// Below TL types are commented "parsed manually" from https://github.com/telegramdesktop/tdesktop/blob/dev/Telegram/Resources/tl/mtproto.tl
-
-[TLDef(0x7A19CB76)] //RSA_public_key#7a19cb76 n:bytes e:bytes = RSAPublicKey
-public sealed partial class RSAPublicKey : IObject
-{
-    public byte[] n;
-    public byte[] e;
-}
-
-[TLDef(0xF35C6D01)] //rpc_result#f35c6d01 req_msg_id:long result:Object = RpcResult
-public sealed partial class RpcResult : IObject
-{
-    public long req_msg_id;
-    public object result;
-}
-
-[TLDef(0x5BB8E511)] //message#5bb8e511 msg_id:long seqno:int bytes:int body:Object = Message
-public sealed partial class _Message(long msgId, int seqno, IObject obj) : IObject
-{
-    // parameterless ctor: required by reflection-based ReadTLObject (Activator.CreateInstance)
-    public _Message() : this(0, 0, null) { }
-
-    public long msg_id = msgId;
-    public int seqno = seqno;
-    public int bytes;
-    public IObject body = obj;
-}
-
-[TLDef(0x73F1F8DC)] //msg_container#73f1f8dc messages:vector<%Message> = MessageContainer
-public sealed partial class MsgContainer : IObject { public List<_Message> messages; }
-[TLDef(0xE06046B2)] //msg_copy#e06046b2 orig_message:Message = MessageCopy
-public sealed partial class MsgCopy : IObject { public _Message orig_message; }
-
-[TLDef(0x3072CFA1)] //gzip_packed#3072cfa1 packed_data:bytes = Object
-public sealed partial class GzipPacked : IObject { public byte[] packed_data; }
-
-/// <summary>Упаковка результата boolTrue#997275b5 / boolFalse#bc799737 для IMethod&lt;bool&gt;.</summary>
-public sealed class BoolValue : IObject
-{
-    public bool Value;
-}
-
-public sealed class Null<TX> : IObject
-{
-    public static readonly Null<TX> Instance = new();
-    public void WriteTL(BinaryWriter writer) => writer.WriteTLNull(typeof(TX));
-}
-
-public sealed class BoolMethod : IMethod<object>
-{
-    public IObject query;
-#if MTPG
-		public void WriteTL(BinaryWriter writer) => query.WriteTL(writer);
-#else
-    public void WriteTL(BinaryWriter writer) => writer.WriteTLObject(query);
+    private static void ShouldntBeHere() => throw new NotImplementedException("You've reached an unexpected point in code");
 #endif
 }
