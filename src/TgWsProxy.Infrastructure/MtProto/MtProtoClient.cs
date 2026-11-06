@@ -317,6 +317,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
 
         // Receive response (framed as [payload_len][auth_key_id][msg_id][data_len][data])
         var response = await _transport.ReceiveAsync(ct);
+
         using var reader = new BinaryReader(new MemoryStream(response));
         reader.ReadInt32(); // skip payload_len
         var respAuthKeyId = reader.ReadInt64();
@@ -343,41 +344,82 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
         return msgId;
     }
 
+    /// <summary>
+    /// Plaintext part of an MTProto 2.0 encrypted message, ready for msg_key/AES-IGE processing.
+    /// </summary>
+    /// <param name="Buffer">Full plaintext buffer: header + TL body + random padding.</param>
+    /// <param name="ClearLength">Length of the encrypted_data section, excluding the 32-byte auth_key part.</param>
+    /// <param name="Padding">Random padding length appended after the TL body.</param>
+    /// <param name="MessageDataLength">Value written into the message_data_length field (= TL body length only).</param>
+    internal readonly record struct ClearTextFrame(byte[] Buffer, int ClearLength, int Padding, int MessageDataLength);
+
+    /// <summary>
+    /// Builds the MTProto 2.0 plaintext:
+    /// auth_key[88..120] salt session_id msg_id seq_no message_data_length body padding.
+    /// </summary>
+    /// <remarks>
+    /// message_data_length must count ONLY the TL body. The 32-byte envelope header
+    /// (salt..seq_no + the length field itself) and the padding are NOT part of it; declaring
+    /// them as data makes the server read past the end of the message and answer
+    /// 400 INPUT_REQUEST_TOO_LONG.
+    /// </remarks>
+    internal static ClearTextFrame BuildClearTextFrame(
+        byte[] authKey, long salt, long sessionId, long msgId, int seqno, IObject msg)
+    {
+        using var clearStream = new MemoryStream(1024);
+        using (var clearWriter = new BinaryWriter(clearStream, System.Text.Encoding.UTF8, leaveOpen: true))
+        {
+            clearWriter.Write(authKey, 88, 32); // auth_key[88..120]
+            clearWriter.Write(salt);
+            clearWriter.Write(sessionId);
+            clearWriter.Write(msgId);
+            clearWriter.Write(seqno);
+            clearWriter.Write(0); // message_data_length placeholder
+            clearWriter.WriteTLObject(msg);
+        }
+
+        // encrypted_data = everything after the 32-byte auth_key part:
+        //   salt(8) session_id(8) msg_id(8) seq_no(4) message_data_length(4) message_data padding
+        const int AuthKeyPartSize = 32;
+        const int EnvelopeHeaderSize = 32; // salt..message_data_length
+        var clearLength = (int)clearStream.Length - AuthKeyPartSize;
+        var messageDataLength = clearLength - EnvelopeHeaderSize;
+
+        var padding = (0x7FFFFFF0 - (AuthKeyPartSize + clearLength)) % 16;
+        padding += RandomNumberGenerator.GetInt32(2, 16) * 16;
+        if (padding < 12)
+        {
+            padding += 16;
+        }
+
+        clearStream.SetLength(AuthKeyPartSize + clearLength + padding);
+        var buffer = clearStream.GetBuffer();
+        // Offset 60 = auth_key_part(32) + salt(8) + session_id(8) + msg_id(8) + seq_no(4).
+        BinaryPrimitives.WriteInt32LittleEndian(buffer.AsSpan(60), messageDataLength);
+        RandomNumberGenerator.Fill(buffer.AsSpan(AuthKeyPartSize + clearLength, padding));
+
+        return new ClearTextFrame(buffer, clearLength, padding, messageDataLength);
+    }
+
     private async Task<T> SendEncryptedAsync<T>(IObject msg, CancellationToken ct) where T : IObject
     {
         // bad_server_salt triggers a transparent resend with the freshly-set salt (bounded attempts).
         for (var attempt = 0; attempt < 4; attempt++)
         {
             using var sha256 = SHA256.Create();
-            using var rng = RandomNumberGenerator.Create();
 
             // New msg id and seqno
             var msgId = GenerateMsgId();
-            // content-related messages MUST use even seq_no, starting at 0 (ping uses odd).
-            var seqno = _seqnoCounter++ * 2;
+            // Content-related messages (RPC queries) MUST use ODD seq_no: 1, 3, 5, ...
+            // (irrelevant/ack messages use even). The server rejects an even seqno on a query
+            // with bad_msg_notification error_code=35 (odd msg_seqno expected).
+            var seqno = _seqnoCounter++ * 2 + 1;
 
             // Build clear text
-            using var clearStream = new MemoryStream(1024);
-            using var clearWriter = new BinaryWriter(clearStream);
-            clearWriter.Write(_authKey, 88, 32); // auth_key[88..120]
-            clearWriter.Write(_salt);
-            clearWriter.Write(_sessionId);
-            clearWriter.Write(msgId);
-            clearWriter.Write(seqno);
-            clearWriter.Write(0); // message_data_length placeholder
-            clearWriter.WriteTLObject(msg);
-            var clearLength = (int)clearStream.Length - 32; // 32 = auth_key_part (32 bytes)
-            var padding = (0x7FFFFFF0 - (32 + clearLength)) % 16;
-            padding += RandomNumberGenerator.GetInt32(2, 16) * 16;
-            if (padding < 12)
-            {
-                padding += 16;
-            }
-
-            clearStream.SetLength(32 + clearLength + padding);
-            var clearBuffer = clearStream.GetBuffer();
-            BinaryPrimitives.WriteInt32LittleEndian(clearBuffer.AsSpan(60), clearLength); // patch message_data_length
-            rng.GetBytes(clearBuffer.AsSpan(32 + clearLength, padding));
+            var frame = BuildClearTextFrame(_authKey, _salt, _sessionId, msgId, seqno, msg);
+            var clearBuffer = frame.Buffer;
+            var clearLength = frame.ClearLength;
+            var padding = frame.Padding;
 
             // Compute msg_key
             var msgKeyLarge = sha256.ComputeHash(clearBuffer, 0, 32 + clearLength + padding);
@@ -403,25 +445,29 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
 
             await _transport.SendAsync(payload, ct);
 
-            // Receive response
-            var response = await _transport.ReceiveAsync(ct);
-            using var respReader = new BinaryReader(new MemoryStream(response));
-            _ = respReader.ReadInt32(); // payload_len
-            _ = respReader.ReadInt64(); // auth_key_id
-            var respMsgKey = respReader.ReadBytes(16);
-            var respEncrypted = respReader.ReadBytes(response.Length - 4 - 8 - 16);
-
-            // Derive AES key/iv for decryption
-            var (decAesKey, decAesIv) = MtProtoCrypto.DeriveAesKeyIv(respMsgKey, 0, _authKey, 0, sha256);
-
-            // Decrypt
-            var decrypted = MtProtoCrypto.AesIgeEncryptDecrypt(respEncrypted, decAesKey, decAesIv, false);
-
             try
             {
-                var result = ReadEncryptedResponse(decrypted, msgId)
-                    ?? throw new InvalidOperationException($"Empty response to msg_id {msgId}");
-                return (T)result;
+                // The first response to a brand-new session typically carries only
+                // new_session_created (+msgs_ack) and no rpc_result; the RPC result follows
+                // in a subsequent payload. Keep reading until the matching rpc_result turns up
+                // or a terminal error (bad_server_salt / bad_msg_notification / RPC error)
+                // throws out of ReadEncryptedResponse / ProcessServerObject.
+                for (var read = 0; ; read++)
+                {
+                    var response = await _transport.ReceiveAsync(ct);
+                    var decrypted = DecryptInboundPayload(response, sha256);
+
+                    var result = ReadEncryptedResponse(decrypted, msgId);
+                    if (result != null)
+                    {
+                        return (T)result;
+                    }
+
+                    if (read >= 32)
+                    {
+                        throw new InvalidOperationException($"No RPC result for msg_id {msgId} after {read + 1} responses");
+                    }
+                }
             }
             catch (ServerSaltChangedException) when (attempt < 3)
             {
@@ -432,21 +478,39 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
         throw new InvalidOperationException("Persistent bad_server_salt across retries");
     }
 
+    private byte[] DecryptInboundPayload(byte[] response, SHA256 sha256)
+    {
+        using var respReader = new BinaryReader(new MemoryStream(response));
+        _ = respReader.ReadInt32(); // payload_len
+        _ = respReader.ReadInt64(); // auth_key_id
+        var respMsgKey = respReader.ReadBytes(16);
+        var respEncrypted = respReader.ReadBytes(response.Length - 4 - 8 - 16);
+
+        // Derive AES key/iv for decryption. MTProto 2.0 uses x=0 for client→server and
+        // x=8 for server→client messages.
+        var (decAesKey, decAesIv) = MtProtoCrypto.DeriveAesKeyIv(respMsgKey, 0, _authKey, 8, sha256);
+        return MtProtoCrypto.AesIgeEncryptDecrypt(respEncrypted, decAesKey, decAesIv, false);
+    }
+
     /// <summary>
     /// Parses a decrypted inbound RPC payload and unwraps the result for <paramref name="expectedMsgId"/>.
     /// Handles msg_container → new_session_created / rpc_result / bad_server_salt / bad_msg_notification,
-    /// bare rpc_result / new_session_created, gzip_packed, and rpc_error (thrown as <see cref="RpcException"/>).
+    /// bare rpc_result / new_session_created / msgs_ack, gzip_packed, and rpc_error (thrown as
+    /// <see cref="RpcException"/>). Returns null when this payload carries no rpc_result for the
+    /// expected msg_id (the caller keeps reading subsequent payloads).
     /// </summary>
     internal IObject ReadEncryptedResponse(byte[] decrypted, long expectedMsgId)
     {
         using var reader = new BinaryReader(new MemoryStream(decrypted));
-        reader.ReadBytes(32); // auth_key[88..120]
+        // The decrypted body starts with salt; the 32-byte auth_key fragment participates only
+        // in the msg_key hash and is NOT part of the encrypted/decrypted payload.
         _ = reader.ReadInt64(); // server_salt (transport copy; authoritative one may arrive via new_session_created)
         _ = reader.ReadInt64(); // session_id
         _ = reader.ReadInt64(); // msg_id
         _ = reader.ReadInt32(); // seq_no
         _ = reader.ReadInt32(); // message_data_length
-        return ProcessServerObject(reader.ReadTLObject(), expectedMsgId);
+        var tl = reader.ReadTLObject();
+        return ProcessServerObject(tl, expectedMsgId);
     }
 
     internal IObject ProcessServerObject(IObject obj, long expectedMsgId)
@@ -461,6 +525,8 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
                     case NewSessionCreated nsc:
                         _salt = nsc.server_salt;
                         break;
+                    case MsgsAck:
+                        break; // server ack for messages it received — not an RPC result, keep scanning
                     case BadServerSalt badSalt:
                         _salt = badSalt.new_server_salt;
                         throw new ServerSaltChangedException(badSalt.new_server_salt);
@@ -504,6 +570,11 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
             throw new InvalidOperationException($"bad_msg_notification: error_code={badMsg2.error_code}");
         }
 
+        if (obj is MsgsAck)
+        {
+            return null; // ack payload — no RPC result here
+        }
+
         // Some responses arrive unwrapped (bare object).
         return obj;
     }
@@ -539,6 +610,11 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
 
     private int _seqnoCounter;
 
+    // api_id для initConnection: сервер требует initConnection самым первым сообщением
+    // после генерации auth key, иначе отвечает 400 INPUT_REQUEST_TOO_LONG.
+    private int _apiId;
+    private bool _initConnectionSent;
+
     public async Task<T> InvokeAsync<T>(IObject method, CancellationToken ct = default) where T : IObject
     {
         if (_authKey == null)
@@ -546,7 +622,40 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
             throw new InvalidOperationException("Not connected. Call ConnectAsync first.");
         }
 
-        return await SendEncryptedAsync<T>(method, ct);
+        return await SendEncryptedAsync<T>(WrapQuery(method), ct);
+    }
+
+    /// <summary>
+    /// Оборачивает запрос в <c>invokeWithLayer</c> (текущий слой) и, для самого первого запроса,
+    /// в <c>initConnection</c>. Без invokeWithLayer сервер трактует запрос на дефолтном (старом) слое
+    /// и отвечает 400 INPUT_REQUEST_TOO_LONG; без initConnection отклоняет первый RPC-вызов.
+    /// </summary>
+    private IObject WrapQuery(IObject method)
+    {
+        var wrapped = (IObject)new TgWsProxy.Infrastructure.MtProto.TL.Methods.InvokeWithLayer
+        {
+            layer = Layer.Version,
+            query = method,
+        };
+
+        if (!_initConnectionSent)
+        {
+            wrapped = new TgWsProxy.Infrastructure.MtProto.TL.Methods.InitConnection
+            {
+                flags = 0,
+                api_id = _apiId,
+                device_model = "tg-ws-proxy",
+                system_version = "1.0",
+                app_version = "1.0",
+                system_lang_code = "en",
+                lang_pack = "",
+                lang_code = "en",
+                query = wrapped,
+            };
+            _initConnectionSent = true;
+        }
+
+        return wrapped;
     }
 
     /// <summary>
@@ -555,7 +664,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     /// </summary>
     public async Task<bool> InvokeBoolAsync(IObject method, CancellationToken ct = default)
     {
-        var result = await SendEncryptedAsync<BoolValue>(method, ct).ConfigureAwait(false);
+        var result = await SendEncryptedAsync<BoolValue>(WrapQuery(method), ct).ConfigureAwait(false);
         return result?.Value ?? false;
     }
 
@@ -652,7 +761,9 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     /// </summary>
     public Task<TgWsProxy.Infrastructure.MtProto.TL.Auth_AuthorizationBase> ImportBotAuthorizationAsync(
         int apiId, string apiHash, string botToken, CancellationToken ct = default)
-        => InvokeAsync<TgWsProxy.Infrastructure.MtProto.TL.Auth_AuthorizationBase>(
+    {
+        _apiId = apiId;
+        return InvokeAsync<TgWsProxy.Infrastructure.MtProto.TL.Auth_AuthorizationBase>(
             new TgWsProxy.Infrastructure.MtProto.TL.Methods.ImportBotAuthorization
             {
                 flags = 0,
@@ -660,6 +771,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
                 api_hash = apiHash,
                 bot_auth_token = botToken,
             }, ct);
+    }
 
     /// <summary>users.getUsers#d91a548 → Vector&lt;User&gt;. Возвращает пользователей (self-id через InputUserSelf).</summary>
     public Task<TgWsProxy.Infrastructure.MtProto.TL.UserBase[]> GetUsersAsync(
@@ -701,7 +813,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     public async Task<TElement[]> InvokeVectorAsync<TElement>(IObject method, CancellationToken ct = default)
         where TElement : IObject
     {
-        var vector = await SendEncryptedAsync<TLVector>(method, ct);
+        var vector = await SendEncryptedAsync<TLVector>(WrapQuery(method), ct);
         if (vector?.Items is not { Length: > 0 } items)
         {
             return [];
@@ -768,6 +880,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
         ServerTimeOffset = _serverTimeOffset,
         LastMsgId = _lastSentMsgId,
         SeqNo = _seqnoCounter,
+        ApiId = _apiId,
         Pts = _updatePts,
         Qts = _updateQts,
         Seq = _updateSeq,
@@ -782,18 +895,30 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
         _authKey = session.AuthKey;
         _authKeyId = session.AuthKeyId;
         _salt = session.Salt;
-        _sessionId = session.SessionId;
         _dcId = session.DcId;
         _testMode = session.TestMode;
         _serverTimeOffset = session.ServerTimeOffset;
-        _lastSentMsgId = session.LastMsgId;
-        _seqnoCounter = session.SeqNo;
+        _apiId = session.ApiId;
+
+        // Снимок сессии пишется на диск только при логине, поэтому сохранённые seq_no/msg_id
+        // заведомо отстают от того, что уже видел сервер. Продолжать их нельзя: сервер отвечает
+        // bad_msg_notification error_code=32 (msg_seqno too low) на первом же запросе после
+        // перезапуска. Вместо этого каждый старт процесса открывает НОВУЮ сессию с тем же
+        // auth_key — так же поступает любой второй клиент с тем же ключом.
+        _sessionId = BitConverter.ToInt64(MtProtoCrypto.RandomBytes(8), 0);
+        _lastSentMsgId = 0;
+        _seqnoCounter = 0;
+
         _updatePts = session.Pts;
         _updateQts = session.Qts;
         _updateSeq = session.Seq;
         _updateDate = session.Date == 0
             ? default
             : DateTimeOffset.FromUnixTimeSeconds(session.Date).UtcDateTime;
+
+        // Новая сессия — значит initConnection ещё не отправлялся: он обязан быть первым
+        // сообщением сессии. api_id берём из сессии (поэтому он и хранится в BotSession).
+        _initConnectionSent = false;
     }
 
     /// <summary>Живо ли транспортное соединение (иначе — переподключение).</summary>

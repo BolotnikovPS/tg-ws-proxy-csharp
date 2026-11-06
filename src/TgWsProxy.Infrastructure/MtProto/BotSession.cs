@@ -12,7 +12,11 @@ namespace TgWsProxy.Infrastructure.MtProto;
 public sealed class BotSession
 {
     private const uint Magic = 0x53544F42; // "BOTS" в little-endian
-    private const int Version = 1;
+
+    // Версия 2 добавила ApiId: без него нельзя отправить initConnection при первом сообщении
+    // в новой сессии. Файлы версии 1 читаются, но считаются устаревшими (ApiId = 0).
+    private const int Version = 2;
+    private const int VersionWithoutApiId = 1;
 
     /// <summary>auth_key (256 байт). <c>null</c> или неверной длины — сессия невалидна.</summary>
     public byte[] AuthKey { get; set; }
@@ -25,6 +29,12 @@ public sealed class BotSession
     public long ServerTimeOffset { get; set; }
     public long LastMsgId { get; set; }
     public int SeqNo { get; set; }
+
+    /// <summary>
+    /// api_id, с которым бот логинился. Нужен для initConnection: сервер требует его первым
+    /// сообщением каждой новой сессии, поэтому api_id переживает перезапуск процесса.
+    /// </summary>
+    public int ApiId { get; set; }
 
     // Состояние обновлений (заполняется после getUpdates/getState; сейчас резерв = 0).
     public long Pts { get; set; }
@@ -51,6 +61,7 @@ public sealed class BotSession
         w.Write(Qts);
         w.Write(Date);
         w.Write(Seq);
+        w.Write(ApiId);
         // Ключ — последним, с префиксом длины.
         var key = AuthKey ?? [];
         w.Write(key.Length);
@@ -65,7 +76,8 @@ public sealed class BotSession
             return null;
         }
 
-        if (r.ReadInt32() != Version)
+        var version = r.ReadInt32();
+        if (version is not (Version or VersionWithoutApiId))
         {
             return null;
         }
@@ -85,6 +97,13 @@ public sealed class BotSession
             Date = r.ReadInt64(),
             Seq = r.ReadInt64(),
         };
+
+        // Файлы версии 1 писались до появления ApiId: он остаётся 0, и такая сессия
+        // требует повторного логина (см. BotGateway.LoginAsync).
+        if (version >= Version)
+        {
+            s.ApiId = r.ReadInt32();
+        }
 
         var keyLen = r.ReadInt32();
         if (keyLen is < 0 or > 4096)

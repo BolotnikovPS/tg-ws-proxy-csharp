@@ -97,10 +97,11 @@ public class EncryptedResponseParserTests
             ],
         };
 
-        // Build the inbound plaintext envelope: auth_key[32] salt session msg_id seqno data_len, then object.
+        // Build the inbound plaintext envelope: salt session msg_id seqno data_len, then object.
+        // The 32-byte auth_key[88..120] fragment participates only in the msg_key hash and is
+        // NOT part of the encrypted/decrypted body (MTProto 2.0), so it is absent here.
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms);
-        writer.Write(new byte[32]);            // auth_key[88..120]
         writer.Write(0L);                       // server_salt
         writer.Write(123L);                     // session_id
         writer.Write(expectedMsgId);            // msg_id

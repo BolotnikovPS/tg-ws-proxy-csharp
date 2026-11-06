@@ -391,4 +391,25 @@ namespace TgWsProxy.Infrastructure.MtProto.TL.Methods
             has_qts_limit = 0x4,
         }
     }
+
+    [TLDef(0xDA9B0D0D)] //invokeWithLayer#da9b0d0d {X:Type} layer:int query:!X = X
+    public sealed partial class InvokeWithLayer : IObject
+    {
+        public int layer;
+        public IObject query;
+    }
+
+    [TLDef(0xC1CD5EA9)] //initConnection#c1cd5ea9 {X:Type} flags:# api_id:int device_model:string system_version:string app_version:string system_lang_code:string lang_pack:string lang_code:string proxy:flags.0?InputClientProxy params:flags.1?JSONValue query:!X = X
+    public sealed partial class InitConnection : IObject
+    {
+        public int flags;
+        public int api_id;
+        public string device_model;
+        public string system_version;
+        public string app_version;
+        public string system_lang_code;
+        public string lang_pack;
+        public string lang_code;
+        public IObject query;
+    }
 }

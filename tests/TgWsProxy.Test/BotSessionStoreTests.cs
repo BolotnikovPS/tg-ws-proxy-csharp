@@ -28,6 +28,7 @@ public sealed class BotSessionStoreTests : IDisposable
             ServerTimeOffset = -3600,
             LastMsgId = 0x3132333435363738,
             SeqNo = 42,
+            ApiId = 12345,
             Pts = 111,
             Qts = 222,
             Date = 333,
@@ -55,6 +56,7 @@ public sealed class BotSessionStoreTests : IDisposable
         Assert.Equal(s.ServerTimeOffset, restored.ServerTimeOffset);
         Assert.Equal(s.LastMsgId, restored.LastMsgId);
         Assert.Equal(s.SeqNo, restored.SeqNo);
+        Assert.Equal(s.ApiId, restored.ApiId);
         Assert.Equal(s.Pts, restored.Pts);
         Assert.Equal(s.Qts, restored.Qts);
         Assert.Equal(s.Date, restored.Date);
@@ -113,11 +115,58 @@ public sealed class BotSessionStoreTests : IDisposable
         Assert.Equal(s.AuthKey, exported.AuthKey);
         Assert.Equal(s.AuthKeyId, exported.AuthKeyId);
         Assert.Equal(s.Salt, exported.Salt);
-        Assert.Equal(s.SessionId, exported.SessionId);
         Assert.Equal(s.DcId, exported.DcId);
         Assert.Equal(s.TestMode, exported.TestMode);
         Assert.Equal(s.ServerTimeOffset, exported.ServerTimeOffset);
-        Assert.Equal(s.LastMsgId, exported.LastMsgId);
-        Assert.Equal(s.SeqNo, exported.SeqNo);
+        Assert.Equal(s.ApiId, exported.ApiId);
+
+        // Обновление ленты переживает перезапуск.
+        Assert.Equal(s.Pts, exported.Pts);
+        Assert.Equal(s.Qts, exported.Qts);
+        Assert.Equal(s.Seq, exported.Seq);
+        Assert.Equal(s.Date, exported.Date);
+
+        // Сессия открывается заново: seq_no/msg_id прошлого процесса сервер уже видел,
+        // продолжить их нельзя (bad_msg_notification error_code=32), поэтому счётчики
+        // обнуляются, а session_id генерируется новый.
+        Assert.Equal(0, exported.LastMsgId);
+        Assert.Equal(0, exported.SeqNo);
+        Assert.NotEqual(s.SessionId, exported.SessionId);
+    }
+
+    [Fact]
+    public void BotSession_ReadFrom_AcceptsLegacyVersionWithoutApiId()
+    {
+        var s = NewSession();
+        using var ms = new MemoryStream();
+        s.WriteTo(ms);
+
+        // Собираем файл прежней версии: version = 1 и нет поля ApiId (4 байта перед длиной ключа).
+        const int apiIdOffset =
+            sizeof(uint) + sizeof(int)   // magic + version
+            + sizeof(long)               // auth_key_id
+            + sizeof(long)               // salt
+            + sizeof(long)               // session_id
+            + sizeof(int)                // dc_id
+            + sizeof(bool)               // test_mode
+            + sizeof(long)               // server_time_offset
+            + sizeof(long)               // last_msg_id
+            + sizeof(int)                // seq_no
+            + sizeof(long)               // pts
+            + sizeof(long)               // qts
+            + sizeof(long)               // date
+            + sizeof(long);              // seq
+
+        var bytes = ms.ToArray();
+        BitConverter.GetBytes(1).CopyTo(bytes, sizeof(uint));
+        var legacy = bytes[..apiIdOffset].Concat(bytes[(apiIdOffset + sizeof(int))..]).ToArray();
+
+        using var read = new MemoryStream(legacy);
+        var restored = BotSession.ReadFrom(read);
+
+        Assert.NotNull(restored);
+        Assert.True(restored.IsValid);
+        Assert.Equal(0, restored.ApiId);
+        Assert.Equal(s.SeqNo, restored.SeqNo);
     }
 }
