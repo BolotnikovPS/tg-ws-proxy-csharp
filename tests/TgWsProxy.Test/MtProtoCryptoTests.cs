@@ -27,11 +27,11 @@ public class MtProtoCryptoTests
         var hNewNew = SHA1.HashData(Concat(newNonce, newNonce));       // SHA1(new_nonce + new_nonce)
 
         // tmp_aes_key = SHA1(new_nonce + server_nonce) + substr(SHA1(server_nonce + new_nonce), 0, 12)
-        var expectedKey = Concat(hNewServer, hServerNew.Take(12).ToArray());
+        var expectedKey = Concat(hNewServer, [.. hServerNew.Take(12)]);
         // tmp_aes_iv = substr(SHA1(server_nonce + new_nonce), 12, 8) + SHA1(new_nonce + new_nonce) + substr(new_nonce, 0, 4)
         var expectedIv = Concat(
-            Concat(hServerNew.Skip(12).Take(8).ToArray(), hNewNew),
-            newNonce.Take(4).ToArray());
+            Concat([.. hServerNew.Skip(12).Take(8)], hNewNew),
+            [.. newNonce.Take(4)]);
 
         Assert.Equal(expectedKey, key);
         Assert.Equal(expectedIv, iv);
@@ -60,11 +60,11 @@ public class MtProtoCryptoTests
         var sha256B = SHA256.HashData(Concat(Slice(authKey, 40 + x, 36), msgKey));
 
         var expectedKey = Concat(
-            Concat(sha256A.Take(8).ToArray(), sha256B.Skip(8).Take(16).ToArray()),
-            sha256A.Skip(24).Take(8).ToArray());
+            Concat([.. sha256A.Take(8)], [.. sha256B.Skip(8).Take(16)]),
+            [.. sha256A.Skip(24).Take(8)]);
         var expectedIv = Concat(
-            Concat(sha256B.Take(8).ToArray(), sha256A.Skip(8).Take(16).ToArray()),
-            sha256B.Skip(24).Take(8).ToArray());
+            Concat([.. sha256B.Take(8)], [.. sha256A.Skip(8).Take(16)]),
+            [.. sha256B.Skip(24).Take(8)]);
 
         Assert.Equal(expectedKey, aesKey);
         Assert.Equal(expectedIv, aesIv);

@@ -87,7 +87,7 @@ public class MtProtoOutboundFrameTests
         Assert.Equal(seqno, BinaryPrimitives.ReadInt32LittleEndian(buffer.AsSpan(AuthKeyPartSize + 24)));
 
         // Content-related messages (RPC queries) MUST use an odd seq_no.
-        Assert.True(seqno % 2 == 1);
+        Assert.Equal(1, seqno % 2);
     }
 
     [Fact]

@@ -43,15 +43,11 @@ public class BotApiArgsValidationTests
 
     [Fact]
     public void ChatIdPresent_Passes()
-    {
-        BotGateway.ValidateArgsBeforeNetwork("sendMessage", Args(("chat_id", "-1001234567890")));
-    }
+        => BotGateway.ValidateArgsBeforeNetwork("sendMessage", Args(("chat_id", "-1001234567890")));
 
     [Fact]
     public void RawPeer_InsteadOfChatId_Passes()
-    {
-        BotGateway.ValidateArgsBeforeNetwork("sendMessage", Args(("peer", "{}")));
-    }
+        => BotGateway.ValidateArgsBeforeNetwork("sendMessage", Args(("peer", "{}")));
 
     [Fact]
     public void ChatIdIsNotRequired_ForMethodsWithoutTarget()
@@ -89,10 +85,7 @@ public class BotApiArgsValidationTests
     [Theory]
     [InlineData("HTML")]
     [InlineData("")]
-    public void SupportedParseMode_Passes(string parseMode)
-    {
-        BotGateway.ValidateArgsBeforeNetwork("sendMessage", Args(("chat_id", "42"), ("parse_mode", parseMode)));
-    }
+    public void SupportedParseMode_Passes(string parseMode) => BotGateway.ValidateArgsBeforeNetwork("sendMessage", Args(("chat_id", "42"), ("parse_mode", parseMode)));
 
     [Fact]
     public void EditWithoutTarget_Throws400()
@@ -117,8 +110,5 @@ public class BotApiArgsValidationTests
     }
 
     [Fact]
-    public void EditWithChatId_Passes()
-    {
-        BotGateway.ValidateArgsBeforeNetwork("editMessageText", Args(("chat_id", "42")));
-    }
+    public void EditWithChatId_Passes() => BotGateway.ValidateArgsBeforeNetwork("editMessageText", Args(("chat_id", "42")));
 }
