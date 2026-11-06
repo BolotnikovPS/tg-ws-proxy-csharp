@@ -466,21 +466,6 @@ namespace TgWsProxy.Infrastructure.MtProto.TL
         public override int Height => -1;
         public override int FileSize => bytes.Length;
     }
-    namespace Layer23
-    {
-        public partial class PhotoSize
-        {
-            public override int Width => w;
-            public override int Height => h;
-            public override int FileSize => size;
-        }
-        public partial class PhotoCachedSize
-        {
-            public override int Width => w;
-            public override int Height => h;
-            public override int FileSize => bytes.Length;
-        }
-    }
 
     public partial class GeoPoint
     {
@@ -919,4 +904,30 @@ namespace TgWsProxy.Infrastructure.MtProto.TL
     public partial class RequestedPeerChannel
     { public override long ID => channel_id; }
 
+
+    /// <summary>Abstract base of decrypted (secret-chat) messages, referenced by the generated layer-229 schema docs.</summary>
+    public abstract partial class DecryptedMessageBase : IObject
+    {
+        public virtual uint FFlags => default;
+        public virtual long RandomId => default;
+        public virtual int Ttl => default;
+        public virtual string Message => default;
+        public virtual DecryptedMessageMedia Media => default;
+        public virtual MessageEntity[] Entities => default;
+        public virtual string ViaBotName => default;
+        public virtual long ReplyToRandom => default;
+        public virtual long Grouped => default;
+        public virtual byte[] RandomBytes => default;
+        public virtual DecryptedMessageAction Action => default;
+    }
+
+    /// <summary>Abstract base of decrypted-message media, mapped to decryptedMessageMediaEmpty in the null-ctor table.</summary>
+    public abstract partial class DecryptedMessageMedia : IObject
+    {
+        public virtual string MimeType => default;
+        internal virtual (long size, byte[] key, byte[] iv) SizeKeyIV { get => default; set => throw new Exception("Incompatible DecryptedMessageMedia"); }
+    }
+
+    /// <summary>Abstract base of decrypted-message service actions.</summary>
+    public abstract partial class DecryptedMessageAction : IObject { }
 }
