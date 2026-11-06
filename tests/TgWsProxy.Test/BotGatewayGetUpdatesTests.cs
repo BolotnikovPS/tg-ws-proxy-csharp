@@ -133,6 +133,12 @@ public class BotGatewayGetUpdatesTests
         var json = new Dictionary<string, object> { ["limit"] = JsonSerializer.SerializeToElement(42) };
         Assert.Equal(42L, BotGateway.ReadIntArg(json, "limit", 0));
 
+        // JSON-строка "153797471" (chat_id строкой) десериализуется в JsonElement ValueKind.String,
+        // а не в string — ReadIntArg обязан её разобрать, иначе getChat/sendMessage со строковым
+        // chat_id получают 400 "chat_id is required".
+        var jsonStr = new Dictionary<string, object> { ["chat_id"] = JsonSerializer.SerializeToElement("153797471") };
+        Assert.Equal(153797471L, BotGateway.ReadIntArg(jsonStr, "chat_id", 0));
+
         var str = new Dictionary<string, object> { ["offset"] = "7" };
         Assert.Equal(7L, BotGateway.ReadIntArg(str, "offset", 0));
 
@@ -141,5 +147,93 @@ public class BotGatewayGetUpdatesTests
 
         var junk = new Dictionary<string, object> { ["limit"] = "not-a-number" };
         Assert.Equal(100L, BotGateway.ReadIntArg(junk, "limit", 100));
+    }
+
+    [Fact]
+    public void BuildMessage_MapsPhotoAndCaption()
+    {
+        var photo = new MtProtoTL.Photo
+        {
+            id = 0x1122334455667788,
+            access_hash = 0x0123456789ABCDEF,
+            dc_id = 2,
+            file_reference = [1, 2, 3, 4],
+            date = DateTime.UnixEpoch,
+            sizes =
+            [
+                new MtProtoTL.PhotoSize { type = "m", w = 320, h = 240, size = 12345 },
+                new MtProtoTL.PhotoSize { type = "x", w = 1280, h = 960, size = 98765 },
+            ],
+        };
+        var msg = new MtProtoTL.Message
+        {
+            id = 7,
+            flags = MtProtoTL.Message.Flags.has_media,
+            media = new MtProtoTL.MessageMediaPhoto
+            {
+                flags = MtProtoTL.MessageMediaPhoto.Flags.has_photo,
+                photo = photo,
+            },
+            peer_id = new MtProtoTL.PeerUser { user_id = 111 },
+            date = new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc),
+            message = "a caption",
+        };
+
+        var built = BotGateway.BuildMessage(msg, [], null);
+
+        Assert.False(built.ContainsKey("text"));
+        Assert.Equal("a caption", (string)built["caption"]);
+
+        var ps = Assert.Single((Dictionary<string, object>[])built["photo"]);
+        Assert.Equal(1280, (int)ps["width"]);
+        Assert.Equal(960, (int)ps["height"]);
+        Assert.Equal(98765, (int)ps["file_size"]);
+
+        var decoded = BotGateway.DecodeInputPhoto((string)ps["file_id"]);
+        Assert.Equal(photo.id, decoded.id);
+        Assert.Equal(photo.access_hash, decoded.access_hash);
+        Assert.Equal(photo.file_reference, decoded.file_reference);
+    }
+
+    [Fact]
+    public void BuildMessage_MapsDocument()
+    {
+        var doc = new MtProtoTL.Document
+        {
+            id = 0x0F0E0D0C0B0A0908,
+            access_hash = 0x08090A0B0C0D0E0F,
+            dc_id = 4,
+            file_reference = [9, 8, 7],
+            date = DateTime.UnixEpoch,
+            mime_type = "application/pdf",
+            size = 24680,
+            attributes = [new MtProtoTL.DocumentAttributeFilename { file_name = "report.pdf" }],
+        };
+        var msg = new MtProtoTL.Message
+        {
+            id = 8,
+            flags = MtProtoTL.Message.Flags.has_media,
+            media = new MtProtoTL.MessageMediaDocument
+            {
+                flags = MtProtoTL.MessageMediaDocument.Flags.has_document,
+                document = doc,
+            },
+            peer_id = new MtProtoTL.PeerUser { user_id = 111 },
+            date = new DateTime(2024, 1, 2, 0, 0, 0, DateTimeKind.Utc),
+        };
+
+        var built = BotGateway.BuildMessage(msg, [], null);
+
+        Assert.False(built.ContainsKey("caption"));
+
+        var d = (Dictionary<string, object>)built["document"];
+        Assert.Equal("application/pdf", (string)d["mime_type"]);
+        Assert.Equal("report.pdf", (string)d["file_name"]);
+        Assert.Equal(24680L, (long)d["file_size"]);
+
+        var decoded = BotGateway.DecodeInputDocument((string)d["file_id"]);
+        Assert.Equal(doc.id, decoded.id);
+        Assert.Equal(doc.access_hash, decoded.access_hash);
+        Assert.Equal(doc.file_reference, decoded.file_reference);
     }
 }

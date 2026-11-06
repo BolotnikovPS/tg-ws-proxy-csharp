@@ -80,6 +80,14 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     private static readonly ConcurrentDictionary<long, long> _channelAccessHash = new();
 
     /// <summary>
+    /// Кэш access_hash пользователей (user_id → access_hash). Заполняется из updates/результатов RPC, где
+    /// встречается <see cref="MtProtoTL.User"/> с access_hash. Нужен, чтобы реальный Bot API-контракт работал:
+    /// клиент присылает только <c>chat_id</c> из update, без access_hash (в настоящем Bot API его и нет).
+    /// access_hash глобален для аккаунта, поэтому кэш статический.
+    /// </summary>
+    private static readonly ConcurrentDictionary<long, long> _userAccessHash = new();
+
+    /// <summary>
     /// Разбирает hex-секрет MTProxy в 16-байтный ключ: отбрасывает префикс <c>dd</c>/<c>ee</c> (17 байт).
     /// Пустая строка/null — прямое подключение к DC (ключ обфускации не нужен).
     /// </summary>
@@ -442,7 +450,10 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     private async Task<BotConnection> LoginAsync(long botId, string botToken, int? apiId, string apiHash, CancellationToken ct)
     {
         var session = _store.Load(botId);
-        var hadSession = session?.IsValid == true;
+
+        // Сессия без ApiId (файл прежней версии) не позволяет отправить initConnection,
+        // обязательный первым сообщением новой сессии, — считаем её отсутствующей.
+        var hadSession = session is { IsValid: true, ApiId: > 0 };
 
         // Первый вход требует api_id/api_hash; проверяем до сетевых операций (fail-fast).
         // При восстановленной сессии повторный importBotAuthorization не нужен: self-id берётся через users.getUsers.
@@ -639,6 +650,12 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         long offset)
     {
         var result = new List<Dictionary<string, object>>();
+
+        // Бот должен уметь отвечать по chat_id из update, не зная access_hash (как в настоящем Bot API):
+        // запоминаем хэши всех участников, пришедших вместе с разницей updates.
+        RememberUserAccessHashes(users);
+        RememberChannelAccessHashes(chats);
+
         if (newMessages is { Length: > 0 })
         {
             foreach (var msg in newMessages)
@@ -677,9 +694,32 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             ["date"] = new DateTimeOffset(m.date.ToUniversalTime()).ToUnixTimeSeconds(),
         };
 
+        var hasMedia = m.flags.HasFlag(MtProtoTL.Message.Flags.has_media) && m.media != null;
+
         if (!string.IsNullOrEmpty(m.message))
         {
-            message["text"] = m.message;
+            // У медиа-сообщений m.message — это подпись (caption), у обычных — текст.
+            if (hasMedia)
+            {
+                message["caption"] = m.message;
+            }
+            else
+            {
+                message["text"] = m.message;
+            }
+        }
+
+        if (hasMedia)
+        {
+            switch (m.media)
+            {
+                case MtProtoTL.MessageMediaPhoto { photo: MtProtoTL.Photo photo }:
+                    message["photo"] = BuildPhotoSizes(photo);
+                    break;
+                case MtProtoTL.MessageMediaDocument { document: MtProtoTL.Document doc }:
+                    message["document"] = BuildDocument(doc);
+                    break;
+            }
         }
 
         if (m.flags.HasFlag(MtProtoTL.Message.Flags.has_from_id) && m.from_id is MtProtoTL.PeerUser fromUser
@@ -725,6 +765,73 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         }
     }
 
+    /// <summary>Один (самый крупный) размер фото для Bot API; GetFile всё равно скачивает оригинал (thumb_size="").</summary>
+    internal static Dictionary<string, object>[] BuildPhotoSizes(MtProtoTL.Photo photo)
+    {
+        if (photo == null)
+        {
+            return [];
+        }
+
+        var fileId = EncodeInputPhoto(photo.id, photo.access_hash, photo.dc_id, photo.file_reference);
+        var uniqueId = BuildFileUniqueId(2, photo.id);
+
+        MtProtoTL.PhotoSize largest = null;
+        if (photo.sizes != null)
+        {
+            foreach (var s in photo.sizes)
+            {
+                if (s is MtProtoTL.PhotoSize ps && (largest == null || (long)ps.w * ps.h >= (long)largest.w * largest.h))
+                {
+                    largest = ps;
+                }
+            }
+        }
+
+        if (largest == null)
+        {
+            return [new Dictionary<string, object> { ["file_id"] = fileId, ["file_unique_id"] = uniqueId }];
+        }
+
+        return
+        [
+            new Dictionary<string, object>
+            {
+                ["file_id"] = fileId,
+                ["file_unique_id"] = uniqueId,
+                ["width"] = largest.w,
+                ["height"] = largest.h,
+                ["file_size"] = largest.size,
+            }
+        ];
+    }
+
+    /// <summary>Bot API document: file_id/file_unique_id/mime_type/file_size (+ file_name из атрибутов).</summary>
+    internal static Dictionary<string, object> BuildDocument(MtProtoTL.Document doc)
+    {
+        var result = new Dictionary<string, object>
+        {
+            ["file_id"] = EncodeInputDocument(doc.id, doc.access_hash, doc.dc_id, doc.file_reference),
+            ["file_unique_id"] = BuildFileUniqueId(5, doc.id),
+            ["mime_type"] = doc.mime_type ?? string.Empty,
+            ["file_size"] = doc.size,
+        };
+
+        if (doc.attributes != null)
+        {
+            foreach (var a in doc.attributes)
+            {
+                if (a is MtProtoTL.DocumentAttributeFilename fna && !string.IsNullOrEmpty(fna.file_name))
+                {
+                    result["file_name"] = fna.file_name;
+                    break;
+                }
+            }
+        }
+
+        return result;
+    }
+
     /// <summary>Читает целочисленный аргумент Bot API из GET (string) или POST JSON (JsonElement).</summary>
     internal static long ReadIntArg(IReadOnlyDictionary<string, object> args, string name, long fallback)
     {
@@ -741,6 +848,10 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             double d => (long)d,
             string s when long.TryParse(s, out var v) => v,
             JsonElement je when je.ValueKind == JsonValueKind.Number && je.TryGetInt64(out var jv) => jv,
+            // Bot API принимает chat_id и строкой ("...") и числом. При десериализации
+            // JSON в Dictionary<string, object> строковое значение приходит как JsonElement
+            // со ValueKind.String, а не как string — без этой ветки ReadIntArg возвращает fallback.
+            JsonElement je when je.ValueKind == JsonValueKind.String && long.TryParse(je.GetString(), out var jsv) => jsv,
             _ => fallback,
         };
     }
@@ -1490,6 +1601,63 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         }
     }
 
+    /// <summary>Кэширует access_hash пользователя (если он есть в объекте User).</summary>
+    private static void RememberUserAccessHash(MtProtoTL.User u)
+    {
+        if (u != null && u.flags.HasFlag(MtProtoTL.User.Flags.has_access_hash) && u.access_hash != 0)
+        {
+            _userAccessHash[u.id] = u.access_hash;
+        }
+    }
+
+    /// <summary>Кэширует access_hash всех пользователей из словаря users результата метода/updates.</summary>
+    private static void RememberUserAccessHashes(IReadOnlyDictionary<long, MtProtoTL.User> users)
+    {
+        if (users == null)
+        {
+            return;
+        }
+
+        foreach (var kv in users)
+        {
+            RememberUserAccessHash(kv.Value);
+        }
+    }
+
+    /// <summary>Кэширует access_hash пользователей из массива результата users.getUsers и подобных.</summary>
+    private static void RememberUserAccessHashes(IEnumerable<MtProtoTL.UserBase> users)
+    {
+        if (users == null)
+        {
+            return;
+        }
+
+        foreach (var u in users)
+        {
+            if (u is MtProtoTL.User user)
+            {
+                RememberUserAccessHash(user);
+            }
+        }
+    }
+
+    /// <summary>
+    /// access_hash пользователя для InputUser/InputPeerUser: явный аргумент (<c>access_hash</c>/<c>user_access_hash</c>)
+    /// имеет приоритет, иначе берётся из кэша, заполненного updates/результатами RPC. Настоящий Bot API
+    /// не требует access_hash от клиента, поэтому 0 — нормальный случай.
+    /// </summary>
+    private static long ResolveUserAccessHash(
+        IReadOnlyDictionary<string, object> args, long userId, string argName = "access_hash")
+    {
+        var accessHash = ReadIntArg(args, argName, 0);
+        if (accessHash == 0)
+        {
+            _userAccessHash.TryGetValue(userId, out accessHash);
+        }
+
+        return accessHash;
+    }
+
     /// <summary>Собирает InputChannel из Bot API chat_id, беря access_hash из кэша; иначе 400 с подсказкой.</summary>
     private static MtProtoTL.InputChannel ResolveInputChannel(long botApiChatId)
     {
@@ -1669,11 +1837,14 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         if (chatId > 0)
         {
             var users = await client.GetUsersAsync(
-                [new MtProtoTL.InputUser { user_id = chatId, access_hash = ReadIntArg(args, "access_hash", 0) }], ct)
+                [new MtProtoTL.InputUser { user_id = chatId, access_hash = ResolveUserAccessHash(args, chatId) }], ct)
                 .ConfigureAwait(false);
+            RememberUserAccessHashes(users);
+            // A missing user is a CLIENT error, not a server fault: the real Bot API answers
+            // 400 "Bad Request: chat not found" for an unknown chat_id.
             if (users is not { Length: > 0 } || users[0] is not MtProtoTL.User u)
             {
-                return BotApiResult.Fail(500, "users.getUsers returned no user");
+                return BotApiResult.Fail(400, "Bad Request: chat not found");
             }
 
             var userChat = BuildUser(u);
@@ -1689,7 +1860,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             RememberChannelAccessHashes(res.chats);
             if (res.chats == null || !res.chats.TryGetValue(mtChatId, out var cb) || cb is not MtProtoTL.Chat c)
             {
-                return BotApiResult.Fail(500, "messages.getChats returned no chat");
+                return BotApiResult.Fail(400, "Bad Request: chat not found");
             }
 
             return BotApiResult.Success(BuildChatDto(c));
@@ -1701,7 +1872,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         RememberChannelAccessHashes(cres.chats);
         if (cres.chats == null || !cres.chats.TryGetValue(channel.channel_id, out var ccb) || ccb is not MtProtoTL.Channel ch)
         {
-            return BotApiResult.Fail(500, "channels.getChannels returned no channel");
+            return BotApiResult.Fail(400, "Bad Request: chat not found");
         }
 
         return BotApiResult.Success(BuildChatDto(ch));
@@ -1723,6 +1894,16 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         if (chatId > 0)
         {
+            // A private chat has no administrators, but the chat itself must exist.
+            var users = await client.GetUsersAsync(
+                [new MtProtoTL.InputUser { user_id = chatId, access_hash = ResolveUserAccessHash(args, chatId) }], ct)
+                .ConfigureAwait(false);
+            RememberUserAccessHashes(users);
+            if (users is not { Length: > 0 } || users[0] is not MtProtoTL.User)
+            {
+                return BotApiResult.Fail(400, "Bad Request: chat not found");
+            }
+
             return BotApiResult.Success(new object[0]);
         }
 
@@ -1774,6 +1955,22 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         if (chatId > 0)
         {
+            // Validate the chat first: an unknown chat_id must be a 400, not a synthetic "member".
+            var users = await client.GetUsersAsync(
+                [new MtProtoTL.InputUser { user_id = chatId, access_hash = ResolveUserAccessHash(args, chatId) }], ct)
+                .ConfigureAwait(false);
+            RememberUserAccessHashes(users);
+            if (users is not { Length: > 0 } || users[0] is not MtProtoTL.User)
+            {
+                return BotApiResult.Fail(400, "Bad Request: chat not found");
+            }
+
+            // A private chat contains only the user and this bot; anything else is not a member.
+            if (userId != chatId && userId != botId)
+            {
+                return BotApiResult.Fail(400, "Bad Request: user not found");
+            }
+
             return BotApiResult.Success(BuildChatMember(userId, null, "member"));
         }
 
@@ -1784,7 +1981,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 new MtProtoMethods.Channels_GetParticipant
                 {
                     channel = channel,
-                    participant = new MtProtoTL.InputPeerUser { user_id = userId, access_hash = ReadIntArg(args, "user_access_hash", 0) },
+                    participant = new MtProtoTL.InputPeerUser { user_id = userId, access_hash = ResolveUserAccessHash(args, userId, "user_access_hash") },
                 }, ct).ConfigureAwait(false);
             RememberChannelAccessHashes(res.chats);
             var (pUserId, status, customTitle, untilDate) = ExtractChannelParticipant(res.participant);
@@ -1830,7 +2027,19 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         if (chatId > 0)
         {
-            return BotApiResult.Success(1);
+            // A private chat must exist before we report a member count; otherwise an unknown
+            // chat_id would look successful. Real Bot API: 400 "Bad Request: chat not found".
+            var users = await client.GetUsersAsync(
+                [new MtProtoTL.InputUser { user_id = chatId, access_hash = ResolveUserAccessHash(args, chatId) }], ct)
+                .ConfigureAwait(false);
+            RememberUserAccessHashes(users);
+            if (users is not { Length: > 0 } || users[0] is not MtProtoTL.User)
+            {
+                return BotApiResult.Fail(400, "Bad Request: chat not found");
+            }
+
+            // A private chat holds exactly two members: the user and the bot.
+            return BotApiResult.Success(2);
         }
 
         if (chatId <= -1000000000000L)
@@ -1841,7 +2050,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             RememberChannelAccessHashes(res.chats);
             return res.full_chat is MtProtoTL.ChannelFull cf
                 ? BotApiResult.Success(cf.participants_count)
-                : BotApiResult.Fail(500, "channels.getFullChannel returned no full channel");
+                : BotApiResult.Fail(400, "Bad Request: chat not found");
         }
 
         var fres = await client.InvokeAsync<MtProtoTL.Messages_ChatFull>(
@@ -1857,7 +2066,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             return BotApiResult.Success(c.participants_count);
         }
 
-        return BotApiResult.Fail(500, "messages.getFullChat returned no participants");
+        return BotApiResult.Fail(400, "Bad Request: chat not found");
     }
 
     /// <summary>setChatTitle: group→messages.editChatTitle; channel/supergroup→channels.editTitle.</summary>
@@ -1997,7 +2206,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 new MtProtoMethods.Channels_EditBanned
                 {
                     channel = ResolveInputChannel(chatId),
-                    participant = new MtProtoTL.InputPeerUser { user_id = userId, access_hash = ReadIntArg(args, "user_access_hash", 0) },
+                    participant = new MtProtoTL.InputPeerUser { user_id = userId, access_hash = ResolveUserAccessHash(args, userId, "user_access_hash") },
                     banned_rights = new MtProtoTL.ChatBannedRights
                     {
                         flags = MtProtoTL.ChatBannedRights.Flags.view_messages,
@@ -2012,7 +2221,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 {
                     flags = 0,
                     chat_id = -chatId,
-                    user_id = new MtProtoTL.InputUser { user_id = userId, access_hash = ReadIntArg(args, "user_access_hash", 0) },
+                    user_id = new MtProtoTL.InputUser { user_id = userId, access_hash = ResolveUserAccessHash(args, userId, "user_access_hash") },
                 }, ct).ConfigureAwait(false);
         }
 
@@ -2393,7 +2602,14 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         {
             if (accessHash == 0)
             {
-                throw new BotGatewayException(400, $"private user {chatIdKey} requires '{accessHashKey}'");
+                // Настоящий Bot API не требует access_hash от клиента: он известен серверу.
+                // Берём его из кэша, заполненного updates/результатами RPC.
+                _userAccessHash.TryGetValue(chatId, out accessHash);
+            }
+
+            if (accessHash == 0)
+            {
+                throw new BotGatewayException(400, "Bad Request: chat not found");
             }
 
             return new MtProtoTL.InputPeerUser { user_id = chatId, access_hash = accessHash };
@@ -2408,7 +2624,13 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         // Канал/супергруппа (-100…): channel_id = -1000000000000 - chat_id.
         if (accessHash == 0)
         {
-            throw new BotGatewayException(400, $"channel {chatIdKey} requires '{accessHashKey}'");
+            _channelAccessHash.TryGetValue(-1000000000000L - chatId, out accessHash);
+        }
+
+        if (accessHash == 0)
+        {
+            throw new BotGatewayException(
+                400, "channel access_hash not resolved yet: bot must receive an update mentioning this chat first");
         }
 
         return new MtProtoTL.InputPeerChannel
@@ -3649,6 +3871,51 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             return null;
         }
     }
+
+    /// <summary>
+    /// Собирает Bot API file_id фото (обратная к <see cref="DecodeInputPhoto"/> раскладка):
+    /// [0]=type(2), [1:5]=dc_id(int32), [5:13]=id(int64), [13:21]=access_hash(int64), [21:]=file_reference.
+    /// </summary>
+    internal static string EncodeInputPhoto(long id, long accessHash, int dcId, byte[] fileReference)
+    {
+        var fr = fileReference ?? [];
+        var payload = new byte[21 + fr.Length];
+        payload[0] = 2; // photo
+        BitConverter.GetBytes(dcId).CopyTo(payload, 1);
+        BitConverter.GetBytes(id).CopyTo(payload, 5);
+        BitConverter.GetBytes(accessHash).CopyTo(payload, 13);
+        fr.CopyTo(payload, 21);
+        return ToBase64Url(payload);
+    }
+
+    /// <summary>
+    /// Собирает Bot API file_id документа (обратная к <see cref="DecodeInputDocument"/> раскладка):
+    /// [0]=type(5), [1]=subtype(0), [2:6]=dc_id(int32), [6:14]=id(int64), [14:22]=access_hash(int64), [22:]=file_reference.
+    /// </summary>
+    internal static string EncodeInputDocument(long id, long accessHash, int dcId, byte[] fileReference)
+    {
+        var fr = fileReference ?? [];
+        var payload = new byte[22 + fr.Length];
+        payload[0] = 5; // document
+        payload[1] = 0; // generic document subtype
+        BitConverter.GetBytes(dcId).CopyTo(payload, 2);
+        BitConverter.GetBytes(id).CopyTo(payload, 6);
+        BitConverter.GetBytes(accessHash).CopyTo(payload, 14);
+        fr.CopyTo(payload, 22);
+        return ToBase64Url(payload);
+    }
+
+    /// <summary>Стабильный уникальный идентификатор файла для Bot API (не декодируется обратно).</summary>
+    internal static string BuildFileUniqueId(byte kind, long id)
+    {
+        var raw = new byte[9];
+        raw[0] = kind;
+        BitConverter.GetBytes(id).CopyTo(raw, 1);
+        return ToBase64Url(raw);
+    }
+
+    private static string ToBase64Url(byte[] data)
+        => Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     /// <summary>
     /// ⚠️ Расшифровка file_id фото в InputPhoto. Формат (Bot API, little-endian):
