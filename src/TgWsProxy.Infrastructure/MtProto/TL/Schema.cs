@@ -1,4 +1,6 @@
 #nullable disable
+using TgWsProxy.Infrastructure.MtProto.TL.Abstractions;
+
 namespace TgWsProxy.Infrastructure.MtProto.TL;
 
 /// <summary>Boolean type.		<para>See <a href="https://corefork.telegram.org/type/Bool"/></para></summary>

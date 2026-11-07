@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
+using TgWsProxy.Infrastructure;
 using TgWsProxy.Infrastructure.MtProto;
-using TgWsProxy.Infrastructure.MtProto.TL.Methods;
+using TgWsProxy.Infrastructure.MtProto.TL;
 
 namespace TgWsProxy.Test;
 

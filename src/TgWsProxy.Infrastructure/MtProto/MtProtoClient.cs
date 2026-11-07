@@ -8,7 +8,10 @@ using System.Numerics;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
-using TgWsProxy.Infrastructure.MtProto;
+using TgWsProxy.Domain.Exceptions;
+using TgWsProxy.Infrastructure.MtProto.TL;
+using TgWsProxy.Infrastructure.MtProto.TL.Abstractions;
+using TgWsProxy.Infrastructure.MtProto.TL.MtProtos;
 
 namespace TgWsProxy.Infrastructure.MtProto;
 
@@ -86,8 +89,8 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
         var sha256 = SHA256.Create();
 
         // 1) ReqPqMulti
-        var nonce = new Int128(MtProtoCrypto.RandomBytes(16));
-        var resPQ = await SendUnencryptedAsync<ResPQ>(new TgWsProxy.Infrastructure.MtProto.TL.Methods.ReqPqMulti { nonce = nonce }, ct);
+        var nonce = new TL.Int128(MtProtoCrypto.RandomBytes(16));
+        var resPQ = await SendUnencryptedAsync<ResPQ>(new TgWsProxy.Infrastructure.MtProto.TL.ReqPqMulti { nonce = nonce }, ct);
 
         if (resPQ.nonce != nonce)
         {
@@ -125,7 +128,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
 
         // Send ReqDHParams
         var serverDHparams = await SendUnencryptedAsync<ServerDHParams>(
-            new TgWsProxy.Infrastructure.MtProto.TL.Methods.ReqDHParams
+            new TgWsProxy.Infrastructure.MtProto.TL.ReqDHParams
             {
                 nonce = nonce,
                 server_nonce = resPQ.server_nonce,
@@ -214,7 +217,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
             clearBuffer.AsSpan(0, clearLength + paddingToAdd).ToArray(), tmpAesKey, tmpAesIv);
 
         var setClientDHparamsAnswer = await SendUnencryptedAsync<SetClientDHParamsAnswer>(
-            new TgWsProxy.Infrastructure.MtProto.TL.Methods.SetClientDHParams
+            new TgWsProxy.Infrastructure.MtProto.TL.SetClientDHParams
             {
                 nonce = nonce,
                 server_nonce = resPQ.server_nonce,
@@ -632,7 +635,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     /// </summary>
     private IObject WrapQuery(IObject method)
     {
-        var wrapped = (IObject)new TgWsProxy.Infrastructure.MtProto.TL.Methods.InvokeWithLayer
+        var wrapped = (IObject)new TgWsProxy.Infrastructure.MtProto.TL.InvokeWithLayer
         {
             layer = Layer.Version,
             query = method,
@@ -640,7 +643,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
 
         if (!_initConnectionSent)
         {
-            wrapped = new TgWsProxy.Infrastructure.MtProto.TL.Methods.InitConnection
+            wrapped = new TgWsProxy.Infrastructure.MtProto.TL.InitConnection
             {
                 flags = 0,
                 api_id = _apiId,
@@ -699,7 +702,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
             var chunk = await ReadFilePartAsync(source, buffer, ct).ConfigureAwait(false);
             if (big)
             {
-                await InvokeBoolAsync(new TgWsProxy.Infrastructure.MtProto.TL.Methods.Upload_SaveBigFilePart
+                await InvokeBoolAsync(new TgWsProxy.Infrastructure.MtProto.TL.Upload_SaveBigFilePart
                 {
                     file_id = fileId,
                     file_part = part,
@@ -709,7 +712,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
             }
             else
             {
-                await InvokeBoolAsync(new TgWsProxy.Infrastructure.MtProto.TL.Methods.Upload_SaveFilePart
+                await InvokeBoolAsync(new TgWsProxy.Infrastructure.MtProto.TL.Upload_SaveFilePart
                 {
                     file_id = fileId,
                     file_part = part,
@@ -728,7 +731,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     public Task<TgWsProxy.Infrastructure.MtProto.TL.Upload_FileBase> GetFileAsync(
         TgWsProxy.Infrastructure.MtProto.TL.InputFileLocationBase location, long offset, int limit, CancellationToken ct = default)
         => InvokeAsync<TgWsProxy.Infrastructure.MtProto.TL.Upload_FileBase>(
-            new TgWsProxy.Infrastructure.MtProto.TL.Methods.Upload_GetFile
+            new TgWsProxy.Infrastructure.MtProto.TL.Upload_GetFile
             {
                 flags = 0,
                 location = location,
@@ -764,7 +767,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     {
         _apiId = apiId;
         return InvokeAsync<TgWsProxy.Infrastructure.MtProto.TL.Auth_AuthorizationBase>(
-            new TgWsProxy.Infrastructure.MtProto.TL.Methods.ImportBotAuthorization
+            new TgWsProxy.Infrastructure.MtProto.TL.ImportBotAuthorization
             {
                 flags = 0,
                 api_id = apiId,
@@ -777,13 +780,13 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     public Task<TgWsProxy.Infrastructure.MtProto.TL.UserBase[]> GetUsersAsync(
         TgWsProxy.Infrastructure.MtProto.TL.InputUserBase[] id, CancellationToken ct = default)
         => InvokeVectorAsync<TgWsProxy.Infrastructure.MtProto.TL.UserBase>(
-            new TgWsProxy.Infrastructure.MtProto.TL.Methods.Users_GetUsers { id = id }, ct);
+            new TgWsProxy.Infrastructure.MtProto.TL.Users_GetUsers { id = id }, ct);
 
     /// <summary>messages.sendMessage#fef48f62 → updates.Updates. Отправляет текст в чат через InputPeer.</summary>
     public Task<TgWsProxy.Infrastructure.MtProto.TL.UpdatesBase> SendMessageAsync(
         TgWsProxy.Infrastructure.MtProto.TL.InputPeer peer, string message, CancellationToken ct = default)
         => InvokeAsync<TgWsProxy.Infrastructure.MtProto.TL.UpdatesBase>(
-            new TgWsProxy.Infrastructure.MtProto.TL.Methods.Messages_SendMessage
+            new TgWsProxy.Infrastructure.MtProto.TL.Messages_SendMessage
             {
                 flags = 0,
                 peer = peer,
@@ -794,15 +797,15 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     /// <summary>updates.getState#edd4882a → updates.State (pts/qts/date/seq — начальное состояние ленты обновлений).</summary>
     public Task<TgWsProxy.Infrastructure.MtProto.TL.Updates_State> GetStateAsync(CancellationToken ct = default)
         => InvokeAsync<TgWsProxy.Infrastructure.MtProto.TL.Updates_State>(
-            new TgWsProxy.Infrastructure.MtProto.TL.Methods.Updates_GetState(), ct);
+            new TgWsProxy.Infrastructure.MtProto.TL.Updates_GetState(), ct);
 
     /// <summary>updates.getDifference#19c2f763 → updates.Difference. Получает накопившиеся обновления после pts.</summary>
     public Task<TgWsProxy.Infrastructure.MtProto.TL.Updates_DifferenceBase> GetDifferenceAsync(
         int pts, DateTime date, int qts, CancellationToken ct = default)
         => InvokeAsync<TgWsProxy.Infrastructure.MtProto.TL.Updates_DifferenceBase>(
-            new TgWsProxy.Infrastructure.MtProto.TL.Methods.Updates_GetDifference
+            new TgWsProxy.Infrastructure.MtProto.TL.Updates_GetDifference
             {
-                flags = TgWsProxy.Infrastructure.MtProto.TL.Methods.Updates_GetDifference.Flags.has_pts_total_limit,
+                flags = TgWsProxy.Infrastructure.MtProto.TL.Updates_GetDifference.Flags.has_pts_total_limit,
                 pts = pts,
                 pts_total_limit = 0,
                 date = date,

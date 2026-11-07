@@ -1,7 +1,7 @@
 #nullable disable
 using System;
 
-namespace TgWsProxy.Infrastructure.MtProto;
+namespace TgWsProxy.Infrastructure.MtProto.TL.Abstractions;
 
 [AttributeUsage(AttributeTargets.Class)]
 public sealed class TLDefAttribute(uint ctorNb) : Attribute

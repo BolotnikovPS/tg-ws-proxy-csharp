@@ -6,8 +6,11 @@
 	</ItemGroup>
 
     <ItemGroup>
-        <Compile Update="**\MtProto\TL.*.cs">
-            <DependentUpon>\MtProto\TL.cs</DependentUpon>
+        <Compile Update="**\Extensions.*.cs">
+            <DependentUpon>\Extensions.cs</DependentUpon>
+        </Compile>
+        <Compile Update="**\Methods.*.cs">
+            <DependentUpon>\Methods.cs</DependentUpon>
         </Compile>
     </ItemGroup>
   <ItemGroup>

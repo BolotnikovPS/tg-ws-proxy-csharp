@@ -3,13 +3,13 @@ using System.ComponentModel;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
+using TgWsProxy.Infrastructure.MtProto;
 using TgWsProxy.Infrastructure.MtProto.TL;
+using TgWsProxy.Infrastructure.MtProto.TL.Abstractions;
 
-#pragma warning disable IDE1006 // Naming Styles
+namespace TgWsProxy.Infrastructure;
 
-namespace TgWsProxy.Infrastructure.MtProto;
-
-public static class Serialization
+internal static partial class Extensions
 {
     [EditorBrowsable(EditorBrowsableState.Never)]
     public static byte[] ToBytes<T>(this T obj) where T : IObject
@@ -32,27 +32,48 @@ public static class Serialization
         IfFlagAttribute ifFlag;
         foreach (var field in fields)
         {
-            if (((ifFlag = field.GetCustomAttribute<IfFlagAttribute>()) != null) && (flags & (1UL << ifFlag.Bit)) == 0) continue;
+            if ((ifFlag = field.GetCustomAttribute<IfFlagAttribute>()) != null && (flags & (1UL << ifFlag.Bit)) == 0)
+            {
+                continue;
+            }
+
             var value = field.GetValue(obj);
             writer.WriteTLValue(value, field.FieldType);
             if (field.FieldType.IsEnum)
             {
-                if (field.Name == "flags") flags = (uint)value;
-                else if (field.Name == "flags2") flags |= (ulong)(uint)value << 32;
+                if (field.Name == "flags")
+                {
+                    flags = (uint)value;
+                }
+                else if (field.Name == "flags2")
+                {
+                    flags |= (ulong)(uint)value << 32;
+                }
             }
         }
     }
 
     public static IObject ReadTLObject(this BinaryReader reader, uint ctorNb = 0)
     {
-        if (ctorNb == 0) ctorNb = reader.ReadUInt32();
-        if (ctorNb == Layer.GZipedCtor) return (IObject)reader.ReadTLGzipped(typeof(IObject));
+        if (ctorNb == 0)
+        {
+            ctorNb = reader.ReadUInt32();
+        }
+
+        if (ctorNb == Layer.GZipedCtor)
+        {
+            return (IObject)reader.ReadTLGzipped(typeof(IObject));
+        }
+
         if (ctorNb == Layer.VectorCtor)
         {
             var count = reader.ReadInt32();
             var items = new IObject[count];
             for (var i = 0; i < count; i++)
+            {
                 items[i] = reader.ReadTLObject();
+            }
+
             return new TLVector { Items = items };
         }
         // boolTrue#997275b5 / boolFalse#bc799737 — результат IMethod<bool> (не входят в Layer.Table).
@@ -60,9 +81,16 @@ public static class Serialization
         {
             return new BoolValue { Value = ctorNb == 0x997275B5 };
         }
-        if (Layer.EmptyCtors.Contains(ctorNb)) return null; // "empty"/"notModified" ctor (e.g. inputPeerEmpty) => null
+        if (Layer.EmptyCtors.Contains(ctorNb))
+        {
+            return null; // "empty"/"notModified" ctor (e.g. inputPeerEmpty) => null
+        }
+
         if (!Layer.Table.TryGetValue(ctorNb, out var type))
+        {
             throw new InvalidOperationException($"Cannot find type for ctor #{ctorNb:x}");
+        }
+
         var tlDef = type.GetCustomAttribute<TLDefAttribute>();
         var obj = Activator.CreateInstance(type, true);
         var fields = GetTLFields(type, tlDef);
@@ -70,13 +98,23 @@ public static class Serialization
         IfFlagAttribute ifFlag;
         foreach (var field in fields)
         {
-            if (((ifFlag = field.GetCustomAttribute<IfFlagAttribute>()) != null) && (flags & (1UL << ifFlag.Bit)) == 0) continue;
+            if ((ifFlag = field.GetCustomAttribute<IfFlagAttribute>()) != null && (flags & (1UL << ifFlag.Bit)) == 0)
+            {
+                continue;
+            }
+
             var value = reader.ReadTLValue(field.FieldType);
             field.SetValue(obj, value);
             if (field.FieldType.IsEnum)
             {
-                if (field.Name == "flags") flags = (uint)value;
-                else if (field.Name == "flags2") flags |= (ulong)(uint)value << 32;
+                if (field.Name == "flags")
+                {
+                    flags = (uint)value;
+                }
+                else if (field.Name == "flags2")
+                {
+                    flags |= (ulong)(uint)value << 32;
+                }
             }
         }
         return (IObject)obj;
@@ -84,9 +122,17 @@ public static class Serialization
 
     private static IEnumerable<FieldInfo> GetTLFields(Type type, TLDefAttribute tlDef)
     {
-        if (!(tlDef?.inheritAt >= 0)) return type.GetFields(BindingFlags.Instance | BindingFlags.Public);
+        if (!(tlDef?.inheritAt >= 0))
+        {
+            return type.GetFields(BindingFlags.Instance | BindingFlags.Public);
+        }
+
         var fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly);
-        if (type.IsAbstract || type.BaseType == typeof(IObject)) return fields;
+        if (type.IsAbstract || type.BaseType == typeof(IObject))
+        {
+            return fields;
+        }
+
         var subfields = GetTLFields(type.BaseType, type.BaseType.GetCustomAttribute<TLDefAttribute>());
         return fields.Take(tlDef.inheritAt).Concat(subfields).Concat(fields.Skip(tlDef.inheritAt));
     }
@@ -113,19 +159,23 @@ public static class Serialization
                 if (type.IsArray)
                 {
                     if (value is byte[] bytes)
+                    {
                         writer.WriteTLBytes(bytes);
+                    }
                     else
+                    {
                         writer.WriteTLVector((Array)value);
+                    }
                 }
                 else if (value is IObject tlObject)
                 {
                     WriteTLObject(writer, tlObject);
                 }
-                else if (value is List<_Message> messages)
+                else if (value is List<Msg> messages)
                 {
                     writer.WriteTLMessages(messages);
                 }
-                else if (value is Int128 int128)
+                else if (value is MtProto.TL.Int128 int128)
                 {
                     writer.Write(int128);
                 }
@@ -173,14 +223,14 @@ public static class Serialization
                 {
                     return type == typeof(byte[]) ? reader.ReadTLBytes() : (object)reader.ReadTLVector(type);
                 }
-                else if (type == typeof(List<_Message>))
+                else if (type == typeof(List<Msg>))
                 {
                     return reader.ReadTLMessages();
                 }
                 else
                 {
-                    return type == typeof(Int128)
-                        ? new Int128(reader)
+                    return type == typeof(MtProto.TL.Int128)
+                        ? new MtProto.TL.Int128(reader)
                         : type == typeof(Int256)
                                             ? new Int256(reader)
                                             : type == typeof(Dictionary<long, User>)
@@ -194,7 +244,7 @@ public static class Serialization
         }
     }
 
-    internal static void WriteTLMessages(this BinaryWriter writer, List<_Message> messages)
+    internal static void WriteTLMessages(this BinaryWriter writer, List<Msg> messages)
     {
         writer.Write(messages.Count);
         foreach (var msg in messages)
@@ -211,19 +261,21 @@ public static class Serialization
         }
     }
 
-    internal static List<_Message> ReadTLMessages(this BinaryReader reader)
+    internal static List<Msg> ReadTLMessages(this BinaryReader reader)
     {
         // msg_container#73f1f8dc messages:vector<%Message> — bare vector: count then
         // per-message struct msg_id:long seqno:int bytes:int body:Object (no ctor id).
         var count = reader.ReadInt32();
-        var messages = new List<_Message>(count);
+        var messages = new List<Msg>(count);
         for (var i = 0; i < count; i++)
         {
-            var msg = new _Message();
-            msg.msg_id = reader.ReadInt64();
-            msg.seqno = reader.ReadInt32();
-            msg.bytes = reader.ReadInt32();
-            msg.body = reader.ReadTLObject();
+            var msg = new Msg
+            {
+                msg_id = reader.ReadInt64(),
+                seqno = reader.ReadInt32(),
+                bytes = reader.ReadInt32(),
+                body = reader.ReadTLObject()
+            };
             messages.Add(msg);
         }
         return messages;
@@ -237,18 +289,26 @@ public static class Serialization
         writer.Write(count);
         var elementType = array.GetType().GetElementType();
         for (var i = 0; i < count; i++)
+        {
             writer.WriteTLValue(array.GetValue(i), elementType);
+        }
     }
 
     internal static T[] ReadTLVector<T>(this BinaryReader reader)
     {
         var elementType = typeof(T);
         if (reader.ReadUInt32() is not Layer.VectorCtor and uint ctorNb)
+        {
             throw new FormatException($"Cannot deserialize {elementType.Name}[] with ctor #{ctorNb:x}");
+        }
+
         var count = reader.ReadInt32();
         var array = new T[count];
         for (var i = 0; i < count; i++)
+        {
             array[i] = (T)reader.ReadTLValue(elementType);
+        }
+
         return array;
     }
 
@@ -263,12 +323,16 @@ public static class Serialization
             if (elementType.IsEnum)
             {
                 for (var i = 0; i < count; i++)
+                {
                     array.SetValue(Enum.ToObject(elementType, reader.ReadTLValue(elementType)), i);
+                }
             }
             else
             {
                 for (var i = 0; i < count; i++)
+                {
                     array.SetValue(reader.ReadTLValue(elementType), i);
+                }
             }
 
             return array;
@@ -278,7 +342,10 @@ public static class Serialization
             var count = (int)ctorNb;
             var array = (Array)Activator.CreateInstance(type, count);
             for (var i = 0; i < count; i++)
+            {
                 array.SetValue(reader.ReadTLObject(attr.CtorNb), i);
+            }
+
             return array;
         }
         else
@@ -291,21 +358,33 @@ public static class Serialization
     {
         var ctorNb = reader.ReadUInt32();
         if (ctorNb != Layer.VectorCtor)
+        {
             throw new FormatException($"Cannot deserialize Vector<{typeof(T).Name}> with ctor #{ctorNb:x}");
+        }
+
         var count = reader.ReadInt32();
         var dict = new Dictionary<long, T>(count);
         for (var i = 0; i < count; i++)
         {
             var obj = reader.ReadTLObject();
-            if (obj is T value) dict[value.ID] = value;
-            else if (obj is UserEmpty ue) dict[ue.id] = null;
-            else throw new InvalidCastException($"ReadTLDictionary got '{obj?.GetType().Name}' instead of '{typeof(T).Name}'");
+            if (obj is T value)
+            {
+                dict[value.ID] = value;
+            }
+            else if (obj is UserEmpty ue)
+            {
+                dict[ue.id] = null;
+            }
+            else
+            {
+                throw new InvalidCastException($"ReadTLDictionary got '{obj?.GetType().Name}' instead of '{typeof(T).Name}'");
+            }
         }
         return dict;
     }
 
     internal static void WriteTLStamp(this BinaryWriter writer, DateTime datetime)
-        => writer.Write((int)Math.Min(Math.Max((datetime.ToUniversalTime().Ticks / 10000000) - 62135596800L, 0), int.MaxValue));
+        => writer.Write((int)Math.Min(Math.Max(datetime.ToUniversalTime().Ticks / 10000000 - 62135596800L, 0), int.MaxValue));
 
     internal static DateTime ReadTLStamp(this BinaryReader reader) => reader.ReadInt32() switch
     {
@@ -317,9 +396,13 @@ public static class Serialization
     internal static void WriteTLString(this BinaryWriter writer, string str)
     {
         if (str == null)
+        {
             writer.Write(0);
+        }
         else
+        {
             writer.WriteTLBytes(Encoding.UTF8.GetBytes(str));
+        }
     }
 
     internal static string ReadTLString(this BinaryReader reader)
@@ -339,7 +422,10 @@ public static class Serialization
             length += 3;
         }
         writer.Write(bytes);
-        while (++length % 4 != 0) writer.Write((byte)0);
+        while (++length % 4 != 0)
+        {
+            writer.Write((byte)0);
+        }
     }
 
     internal static byte[] ReadTLBytes(this BinaryReader reader)
@@ -356,7 +442,11 @@ public static class Serialization
             bytes = reader.ReadBytes(length);
             length += 3;
         }
-        while (++length % 4 != 0) _ = reader.ReadByte();
+        while (++length % 4 != 0)
+        {
+            _ = reader.ReadByte();
+        }
+
         return bytes;
     }
 

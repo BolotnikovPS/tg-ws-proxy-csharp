@@ -2,16 +2,10 @@
 using System.Globalization;
 using System.Text;
 using System.Web;
+using TgWsProxy.Infrastructure.MtProto.TL.Abstractions;
 
 namespace TgWsProxy.Infrastructure.MtProto.TL
 {
-    public interface IPeerInfo
-    {
-        long ID { get; }
-        bool IsActive { get; }
-        string MainUsername { get; }
-        InputPeer ToInputPeer();
-    }
 
     public partial class InputPeer
     {
@@ -825,13 +819,20 @@ namespace TgWsProxy.Infrastructure.MtProto.TL
         {
             var sb = new StringBuilder().Append('[');
             for (var i = 0; i < value.Length; i++)
+            {
                 _ = sb.Append(i == 0 ? "" : ",").Append(value[i]);
+            }
+
             return sb.Append(']').ToString();
         }
         public object[] ToNativeArray() => [.. value.Select(v => v.ToNative())];
         public override object ToNative()
         {
-            if (value.Length == 0) return Array.Empty<object>();
+            if (value.Length == 0)
+            {
+                return Array.Empty<object>();
+            }
+
             var first = value[0].ToNative();
             var T = first.GetType();
             var array = Array.CreateInstance(T, value.Length); // create an array T[] of the native type
@@ -839,7 +840,11 @@ namespace TgWsProxy.Infrastructure.MtProto.TL
             for (var i = 1; i < value.Length; i++)
             {
                 var elem = value[i].ToNative();
-                if (elem.GetType() != T) return ToNativeArray(); // incompatible => return an object[] instead
+                if (elem.GetType() != T)
+                {
+                    return ToNativeArray(); // incompatible => return an object[] instead
+                }
+
                 array.SetValue(elem, i);
             }
             return array;
@@ -852,7 +857,10 @@ namespace TgWsProxy.Infrastructure.MtProto.TL
         {
             var sb = new StringBuilder().Append('{');
             for (var i = 0; i < value.Length; i++)
+            {
                 _ = sb.Append(i == 0 ? "" : ",").Append(value[i]);
+            }
+
             return sb.Append('}').ToString();
         }
         /// <summary>Returns the given entry in native form (<see langword="bool"/>, <see langword="double"/>, <see langword="string"/>, <see cref="Dictionary{TKey, TValue}">Dictionary</see> or <see cref="Array"/>), or <see langword="null"/> if the key is not found</summary>
@@ -861,7 +869,11 @@ namespace TgWsProxy.Infrastructure.MtProto.TL
         public Dictionary<string, object> ToDictionary() => value.ToDictionary(v => v.key, v => v.value.ToNative());
         public override object ToNative()
         {
-            if (value.Length == 0) return new Dictionary<string, object>();
+            if (value.Length == 0)
+            {
+                return new Dictionary<string, object>();
+            }
+
             var first = value[0].value.ToNative();
             var T = first.GetType(); // create a Dictionary<string, T> of the native type T:
             var dic = Activator.CreateInstance(typeof(Dictionary<,>).MakeGenericType(typeof(string), T)) as System.Collections.IDictionary;
@@ -869,7 +881,11 @@ namespace TgWsProxy.Infrastructure.MtProto.TL
             for (var i = 1; i < value.Length; i++)
             {
                 var elem = value[i].value.ToNative();
-                if (elem.GetType() != T) return ToDictionary();  // incompatible => return a Dictionary<string, object> instead
+                if (elem.GetType() != T)
+                {
+                    return ToDictionary();  // incompatible => return a Dictionary<string, object> instead
+                }
+
                 dic.Add(value[i].key, elem);
             }
             return dic;

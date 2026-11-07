@@ -1,6 +1,6 @@
 #nullable disable
 
-#pragma warning disable IDE1006 // Naming Styles
+using TgWsProxy.Infrastructure.MtProto.TL.Abstractions;
 
 namespace TgWsProxy.Infrastructure.MtProto;
 
@@ -21,10 +21,10 @@ public sealed partial class RpcResult : IObject
 }
 
 [TLDef(0x5BB8E511)] //message#5bb8e511 msg_id:long seqno:int bytes:int body:Object = Message
-public sealed partial class _Message(long msgId, int seqno, IObject obj) : IObject
+public sealed partial class Msg(long msgId, int seqno, IObject obj) : IObject
 {
     // parameterless ctor: required by reflection-based ReadTLObject (Activator.CreateInstance)
-    public _Message() : this(0, 0, null) { }
+    public Msg() : this(0, 0, null) { }
 
     public long msg_id = msgId;
     public int seqno = seqno;
@@ -33,9 +33,9 @@ public sealed partial class _Message(long msgId, int seqno, IObject obj) : IObje
 }
 
 [TLDef(0x73F1F8DC)] //msg_container#73f1f8dc messages:vector<%Message> = MessageContainer
-public sealed partial class MsgContainer : IObject { public List<_Message> messages; }
+public sealed partial class MsgContainer : IObject { public List<Msg> messages; }
 [TLDef(0xE06046B2)] //msg_copy#e06046b2 orig_message:Message = MessageCopy
-public sealed partial class MsgCopy : IObject { public _Message orig_message; }
+public sealed partial class MsgCopy : IObject { public Msg orig_message; }
 
 [TLDef(0x3072CFA1)] //gzip_packed#3072cfa1 packed_data:bytes = Object
 public sealed partial class GzipPacked : IObject { public byte[] packed_data; }

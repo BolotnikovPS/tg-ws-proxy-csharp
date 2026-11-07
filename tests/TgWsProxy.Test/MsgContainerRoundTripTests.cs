@@ -1,4 +1,7 @@
+using TgWsProxy.Infrastructure;
 using TgWsProxy.Infrastructure.MtProto;
+using TgWsProxy.Infrastructure.MtProto.TL;
+using TgWsProxy.Infrastructure.MtProto.TL.MtProtos;
 
 namespace TgWsProxy.Test;
 
@@ -11,8 +14,8 @@ public class MsgContainerRoundTripTests
         {
             messages =
             [
-                new _Message(1000, 1, new NewSessionCreated { first_msg_id = 1000, unique_id = 12345, server_salt = 0xDEADBEEF }),
-                new _Message(2000, 3, new RpcResult { req_msg_id = 999, result = new Pong { msg_id = 2000, ping_id = 42 } }),
+                new Msg(1000, 1, new NewSessionCreated { first_msg_id = 1000, unique_id = 12345, server_salt = 0xDEADBEEF }),
+                new Msg(2000, 3, new RpcResult { req_msg_id = 999, result = new Pong { msg_id = 2000, ping_id = 42 } }),
             ],
         };
 

@@ -3,9 +3,9 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Reflection;
-using TgWsProxy.Infrastructure.MtProto.TL;
+using TgWsProxy.Infrastructure.MtProto.TL.Abstractions;
 
-namespace TgWsProxy.Infrastructure.MtProto;
+namespace TgWsProxy.Infrastructure.MtProto.TL;
 
 public static partial class Layer
 {
@@ -20,7 +20,7 @@ public static partial class Layer
 
     // type -> ctor of its "empty"/"notModified"/"default" variant, used by Serialization.WriteTLNull
     // when a null value is written for a field of a polymorphic base type.
-    internal readonly static Dictionary<Type, uint> Nullables = new()
+    internal static readonly Dictionary<Type, uint> Nullables = new()
     {
         // from TL.MTProto:
         // from TL.Schema:
@@ -112,8 +112,8 @@ public static partial class Layer
 
     // Ctors that deserialize to null (the "empty"/"notModified"/"default" variants). These were the
     // `[ctor] = null` entries of the former hand-written table.
-    internal static readonly HashSet<uint> EmptyCtors = new()
-    {
+    internal static readonly HashSet<uint> EmptyCtors =
+    [
         0x004A8537, // SecurePasswordKdfAlgoUnknown
         0x050A9839, // RequirementToContactEmpty
         0x089F5C4A, // decryptedMessageMediaEmpty
@@ -196,7 +196,7 @@ public static partial class Layer
         0xFBF6E8B1, // Account_SavedRingtonesNotModified
         0xFE333952, // StarGiftAuctionStateNotModified
         0xFFB62B95, // InputStickerSetEmpty
-    };
+    ];
 
     // ctorNb -> concrete [TLDef] type, auto-discovered from the assembly. It can no longer drift
     // from the [TLDef] attributes (unlike the former hand-maintained 1650-line literal). RPC method
@@ -209,11 +209,25 @@ public static partial class Layer
         var table = new Dictionary<uint, Type>();
         foreach (var type in typeof(Layer).Assembly.GetTypes())
         {
-            if (type.GetCustomAttribute<TLDefAttribute>() is not { } def) continue;
-            if (IsMethod(type)) continue;
-            if (EmptyCtors.Contains(def.CtorNb)) continue; // e.g. Null#56730bcc is read back as null
+            if (type.GetCustomAttribute<TLDefAttribute>() is not { } def)
+            {
+                continue;
+            }
+
+            if (IsMethod(type))
+            {
+                continue;
+            }
+
+            if (EmptyCtors.Contains(def.CtorNb))
+            {
+                continue; // e.g. Null#56730bcc is read back as null
+            }
+
             if (!table.TryAdd(def.CtorNb, type))
+            {
                 throw new InvalidOperationException($"Duplicate TL constructor #{def.CtorNb:x8}: {type} vs {table[def.CtorNb]}");
+            }
         }
         return table;
     }
@@ -221,8 +235,13 @@ public static partial class Layer
     private static bool IsMethod(Type type)
     {
         foreach (var iface in type.GetInterfaces())
+        {
             if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IMethod<>))
+            {
                 return true;
+            }
+        }
+
         return false;
     }
 }

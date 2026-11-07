@@ -1,5 +1,10 @@
 using System.IO.Compression;
+using TgWsProxy.Domain.Exceptions;
+using TgWsProxy.Infrastructure;
 using TgWsProxy.Infrastructure.MtProto;
+using TgWsProxy.Infrastructure.MtProto.TL;
+using TgWsProxy.Infrastructure.MtProto.TL.MtProtos;
+using TgWsProxy.Infrastructure.MtProto.TL.Abstractions;
 
 namespace TgWsProxy.Test;
 
@@ -27,9 +32,9 @@ public class EncryptedResponseParserTests
         {
             messages =
             [
-                new _Message(1, 0, new NewSessionCreated { first_msg_id = 1, unique_id = 5, server_salt = 777 }),
-                new _Message(2, 2, new RpcResult { req_msg_id = 999, result = new Pong { msg_id = 2, ping_id = 11 } }),
-                new _Message(3, 4, new RpcResult { req_msg_id = 1000, result = new Pong { msg_id = 3, ping_id = 22 } }),
+                new Msg(1, 0, new NewSessionCreated { first_msg_id = 1, unique_id = 5, server_salt = 777 }),
+                new Msg(2, 2, new RpcResult { req_msg_id = 999, result = new Pong { msg_id = 2, ping_id = 11 } }),
+                new Msg(3, 4, new RpcResult { req_msg_id = 1000, result = new Pong { msg_id = 3, ping_id = 22 } }),
             ],
         };
 
@@ -75,7 +80,7 @@ public class EncryptedResponseParserTests
         {
             messages =
             [
-                new _Message(1, 0, new BadServerSalt { bad_msg_id = 1, bad_msg_seqno = 0, error_code = 0, new_server_salt = 555 }),
+                new Msg(1, 0, new BadServerSalt { bad_msg_id = 1, bad_msg_seqno = 0, error_code = 0, new_server_salt = 555 }),
             ],
         };
 
@@ -92,8 +97,8 @@ public class EncryptedResponseParserTests
         {
             messages =
             [
-                new _Message(1, 0, new NewSessionCreated { first_msg_id = 1, unique_id = 9, server_salt = 333 }),
-                new _Message(2, 2, new RpcResult { req_msg_id = expectedMsgId, result = new Pong { msg_id = 2, ping_id = 77 } }),
+                new Msg(1, 0, new NewSessionCreated { first_msg_id = 1, unique_id = 9, server_salt = 333 }),
+                new Msg(2, 2, new RpcResult { req_msg_id = expectedMsgId, result = new Pong { msg_id = 2, ping_id = 77 } }),
             ],
         };
 

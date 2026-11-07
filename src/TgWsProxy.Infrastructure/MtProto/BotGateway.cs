@@ -10,8 +10,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Domain;
-using MtProtoMethods = TgWsProxy.Infrastructure.MtProto.TL.Methods;
-using MtProtoTL = TgWsProxy.Infrastructure.MtProto.TL;
+using TgWsProxy.Domain.Exceptions;
+using TgWsProxy.Infrastructure.MtProto.TL;
 
 namespace TgWsProxy.Infrastructure.MtProto;
 
@@ -73,7 +73,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     private long _fileCacheBytes;
 
     /// <summary>
-    /// Кэш access_hash каналов (channel_id → access_hash). Заполняется при обработке <see cref="MtProtoTL.Channel"/>
+    /// Кэш access_hash каналов (channel_id → access_hash). Заполняется при обработке <see cref="Channel"/>
     /// из updates/результатов (access_hash присутствует в Channel). Статический: access_hash глобален для канала
     /// и не зависит от конкретного бота/сессии.
     /// </summary>
@@ -81,7 +81,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
     /// <summary>
     /// Кэш access_hash пользователей (user_id → access_hash). Заполняется из updates/результатов RPC, где
-    /// встречается <see cref="MtProtoTL.User"/> с access_hash. Нужен, чтобы реальный Bot API-контракт работал:
+    /// встречается <see cref="User"/> с access_hash. Нужен, чтобы реальный Bot API-контракт работал:
     /// клиент присылает только <c>chat_id</c> из update, без access_hash (в настоящем Bot API его и нет).
     /// access_hash глобален для аккаунта, поэтому кэш статический.
     /// </summary>
@@ -232,8 +232,8 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     private async Task<BotApiResult> GetMeAsync(long botId, string botToken, int? apiId, string apiHash, CancellationToken ct)
     {
         var connection = await GetConnectionAsync(botId, botToken, apiId, apiHash, ct).ConfigureAwait(false);
-        var users = await connection.Client.GetUsersAsync([new MtProtoTL.InputUserSelf()], ct).ConfigureAwait(false);
-        if (users is not { Length: > 0 } || users[0] is not MtProtoTL.User user)
+        var users = await connection.Client.GetUsersAsync([new InputUserSelf()], ct).ConfigureAwait(false);
+        if (users is not { Length: > 0 } || users[0] is not User user)
         {
             return BotApiResult.Fail(500, "users.getUsers returned no self user");
         }
@@ -258,11 +258,11 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         // Маршрутизация по первому байту file_id: 2 = фото, иначе документ.
         // Сами дешифраторы повторно валидируют тип/длину и бросают BotGatewayException(400).
         var prefix = DecodeFileIdBytes(fileId);
-        MtProtoTL.InputFileLocationBase location;
+        InputFileLocationBase location;
         if (prefix.Length > 0 && prefix[0] == 2)
         {
             var photo = DecodeInputPhoto(fileId);
-            location = new MtProtoTL.InputPhotoFileLocation
+            location = new InputPhotoFileLocation
             {
                 id = photo.id,
                 access_hash = photo.access_hash,
@@ -273,7 +273,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         else
         {
             var document = DecodeInputDocument(fileId);
-            location = new MtProtoTL.InputDocumentFileLocation
+            location = new InputDocumentFileLocation
             {
                 id = document.id,
                 access_hash = document.access_hash,
@@ -294,14 +294,14 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         while (true)
         {
             var part = await client.GetFileAsync(location, offset, chunkSize, ct).ConfigureAwait(false);
-            if (part is MtProtoTL.Upload_FileCdnRedirect)
+            if (part is Upload_FileCdnRedirect)
             {
                 // ⚠️ CDN-файл: нужен переход на второй DC и расшифровка (encryption_key/iv + file_hashes);
                 // в этом раунде не реализовано — требуется ручная интеграция.
                 return BotApiResult.Fail(502, "CDN file download is not supported yet");
             }
 
-            if (part is not MtProtoTL.Upload_File filePart || filePart.bytes is not { Length: > 0 })
+            if (part is not Upload_File filePart || filePart.bytes is not { Length: > 0 })
             {
                 break; // неизвестный/пустой блок — считаем концом файла
             }
@@ -471,11 +471,11 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var client = new MtProtoClient(_config.Host, _config.Port, _secret);
         await client.ConnectAsync(session, testMode: false, ct).ConfigureAwait(false);
 
-        MtProtoTL.UserBase me = null;
+        UserBase me = null;
         if (!hadSession)
         {
             var auth = await client.ImportBotAuthorizationAsync(aid, apiHash, botToken, ct).ConfigureAwait(false);
-            if (auth is not MtProtoTL.Auth_Authorization authorization)
+            if (auth is not Auth_Authorization authorization)
             {
                 throw new BotGatewayException(401, "auth.importBotAuthorization returned sign-up-required");
             }
@@ -488,30 +488,30 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Собирает объект <c>User</c> Bot API из MTProto-конструктора <c>user</c>.</summary>
-    public static Dictionary<string, object> BuildUser(MtProtoTL.User u)
+    public static Dictionary<string, object> BuildUser(User u)
     {
         var flags = u.flags;
         var user = new Dictionary<string, object>
         {
             ["id"] = u.id,
-            ["is_bot"] = flags.HasFlag(MtProtoTL.User.Flags.bot),
+            ["is_bot"] = flags.HasFlag(User.Flags.bot),
         };
-        if (flags.HasFlag(MtProtoTL.User.Flags.has_first_name))
+        if (flags.HasFlag(User.Flags.has_first_name))
         {
             user["first_name"] = u.first_name;
         }
 
-        if (flags.HasFlag(MtProtoTL.User.Flags.has_last_name))
+        if (flags.HasFlag(User.Flags.has_last_name))
         {
             user["last_name"] = u.last_name;
         }
 
-        if (flags.HasFlag(MtProtoTL.User.Flags.has_username))
+        if (flags.HasFlag(User.Flags.has_username))
         {
             user["username"] = u.username;
         }
 
-        if (flags.HasFlag(MtProtoTL.User.Flags.has_lang_code))
+        if (flags.HasFlag(User.Flags.has_lang_code))
         {
             user["language_code"] = u.lang_code;
         }
@@ -580,8 +580,8 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 var diff = await client.GetDifferenceAsync(pts, date, qts, ct).ConfigureAwait(false);
                 switch (diff)
                 {
-                    case MtProtoTL.Updates_DifferenceTooLong tooLong:
-                        client.ApplyUpdatesState(new MtProtoTL.Updates_State
+                    case Updates_DifferenceTooLong tooLong:
+                        client.ApplyUpdatesState(new Updates_State
                         {
                             pts = tooLong.pts,
                             qts = qts,
@@ -592,8 +592,8 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                         updates = [];
                         break;
 
-                    case MtProtoTL.Updates_DifferenceEmpty empty:
-                        client.ApplyUpdatesState(new MtProtoTL.Updates_State
+                    case Updates_DifferenceEmpty empty:
+                        client.ApplyUpdatesState(new Updates_State
                         {
                             pts = pts,
                             qts = qts,
@@ -604,12 +604,12 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                         updates = [];
                         break;
 
-                    case MtProtoTL.Updates_Difference d:
+                    case Updates_Difference d:
                         updates = BuildUpdates(d.new_messages, d.users, d.chats, offset);
                         client.ApplyUpdatesState(d.state);
                         break;
 
-                    case MtProtoTL.Updates_DifferenceSlice s:
+                    case Updates_DifferenceSlice s:
                         updates = BuildUpdates(s.new_messages, s.users, s.chats, offset);
                         client.ApplyUpdatesState(s.intermediate_state);
                         break;
@@ -644,9 +644,9 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
     /// <summary>Преобразует новые сообщения из updates.difference в Bot API update-объекты {update_id, message}.</summary>
     internal static List<Dictionary<string, object>> BuildUpdates(
-        MtProtoTL.MessageBase[] newMessages,
-        Dictionary<long, MtProtoTL.User> users,
-        Dictionary<long, MtProtoTL.ChatBase> chats,
+        MessageBase[] newMessages,
+        Dictionary<long, User> users,
+        Dictionary<long, ChatBase> chats,
         long offset)
     {
         var result = new List<Dictionary<string, object>>();
@@ -660,7 +660,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         {
             foreach (var msg in newMessages)
             {
-                if (msg is not MtProtoTL.Message m || m.id <= 0)
+                if (msg is not Message m || m.id <= 0)
                 {
                     continue; // MessageEmpty/MessageService и прочие пока не отображаются
                 }
@@ -684,9 +684,9 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
     /// <summary>Минимальный Bot API message: message_id/date/text + from/chat, когда они разрешимы.</summary>
     internal static Dictionary<string, object> BuildMessage(
-        MtProtoTL.Message m,
-        Dictionary<long, MtProtoTL.User> users,
-        Dictionary<long, MtProtoTL.ChatBase> chats)
+        Message m,
+        Dictionary<long, User> users,
+        Dictionary<long, ChatBase> chats)
     {
         var message = new Dictionary<string, object>
         {
@@ -694,7 +694,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             ["date"] = new DateTimeOffset(m.date.ToUniversalTime()).ToUnixTimeSeconds(),
         };
 
-        var hasMedia = m.flags.HasFlag(MtProtoTL.Message.Flags.has_media) && m.media != null;
+        var hasMedia = m.flags.HasFlag(Message.Flags.has_media) && m.media != null;
 
         if (!string.IsNullOrEmpty(m.message))
         {
@@ -713,17 +713,17 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         {
             switch (m.media)
             {
-                case MtProtoTL.MessageMediaPhoto { photo: MtProtoTL.Photo photo }:
+                case MessageMediaPhoto { photo: Photo photo }:
                     message["photo"] = BuildPhotoSizes(photo);
                     break;
-                case MtProtoTL.MessageMediaDocument { document: MtProtoTL.Document doc }:
+                case MessageMediaDocument { document: Document doc }:
                     message["document"] = BuildDocument(doc);
                     break;
             }
         }
 
-        if (m.flags.HasFlag(MtProtoTL.Message.Flags.has_from_id) && m.from_id is MtProtoTL.PeerUser fromUser
-            && users != null && users.TryGetValue(fromUser.user_id, out var u) && u is MtProtoTL.User sender)
+        if (m.flags.HasFlag(Message.Flags.has_from_id) && m.from_id is PeerUser fromUser
+            && users != null && users.TryGetValue(fromUser.user_id, out var u) && u is User sender)
         {
             message["from"] = BuildUser(sender);
         }
@@ -739,21 +739,21 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
     /// <summary>Минимальный Bot API chat {id, type} по типу пира; channel различает supergroup по megagroup-флагу.</summary>
     internal static Dictionary<string, object> BuildChat(
-        MtProtoTL.Peer peer,
-        IReadOnlyDictionary<long, MtProtoTL.ChatBase> chats)
+        Peer peer,
+        IReadOnlyDictionary<long, ChatBase> chats)
     {
         switch (peer)
         {
-            case MtProtoTL.PeerUser pu:
+            case PeerUser pu:
                 return new Dictionary<string, object> { ["id"] = pu.user_id, ["type"] = "private" };
-            case MtProtoTL.PeerChat pc:
+            case PeerChat pc:
                 return new Dictionary<string, object> { ["id"] = pc.chat_id, ["type"] = "group" };
-            case MtProtoTL.PeerChannel pch:
+            case PeerChannel pch:
                 var type = "channel";
-                if (chats != null && chats.TryGetValue(pch.channel_id, out var c) && c is MtProtoTL.Channel ch)
+                if (chats != null && chats.TryGetValue(pch.channel_id, out var c) && c is Channel ch)
                 {
                     RememberChannelAccessHash(ch);
-                    if (ch.flags.HasFlag(MtProtoTL.Channel.Flags.megagroup))
+                    if (ch.flags.HasFlag(Channel.Flags.megagroup))
                     {
                         type = "supergroup";
                     }
@@ -766,7 +766,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Один (самый крупный) размер фото для Bot API; GetFile всё равно скачивает оригинал (thumb_size="").</summary>
-    internal static Dictionary<string, object>[] BuildPhotoSizes(MtProtoTL.Photo photo)
+    internal static Dictionary<string, object>[] BuildPhotoSizes(Photo photo)
     {
         if (photo == null)
         {
@@ -776,12 +776,12 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var fileId = EncodeInputPhoto(photo.id, photo.access_hash, photo.dc_id, photo.file_reference);
         var uniqueId = BuildFileUniqueId(2, photo.id);
 
-        MtProtoTL.PhotoSize largest = null;
+        PhotoSize largest = null;
         if (photo.sizes != null)
         {
             foreach (var s in photo.sizes)
             {
-                if (s is MtProtoTL.PhotoSize ps && (largest == null || (long)ps.w * ps.h >= (long)largest.w * largest.h))
+                if (s is PhotoSize ps && (largest == null || (long)ps.w * ps.h >= (long)largest.w * largest.h))
                 {
                     largest = ps;
                 }
@@ -807,7 +807,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Bot API document: file_id/file_unique_id/mime_type/file_size (+ file_name из атрибутов).</summary>
-    internal static Dictionary<string, object> BuildDocument(MtProtoTL.Document doc)
+    internal static Dictionary<string, object> BuildDocument(Document doc)
     {
         var result = new Dictionary<string, object>
         {
@@ -821,7 +821,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         {
             foreach (var a in doc.attributes)
             {
-                if (a is MtProtoTL.DocumentAttributeFilename fna && !string.IsNullOrEmpty(fna.file_name))
+                if (a is DocumentAttributeFilename fna && !string.IsNullOrEmpty(fna.file_name))
                 {
                     result["file_name"] = fna.file_name;
                     break;
@@ -891,8 +891,8 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var connection = await GetConnectionAsync(botId, botToken, apiId, apiHash, ct).ConfigureAwait(false);
         var client = connection.Client;
 
-        var self = await client.GetUsersAsync([new MtProtoTL.InputUserSelf()], ct).ConfigureAwait(false);
-        if (self is not { Length: > 0 } || self[0] is not MtProtoTL.User selfUser)
+        var self = await client.GetUsersAsync([new InputUserSelf()], ct).ConfigureAwait(false);
+        if (self is not { Length: > 0 } || self[0] is not User selfUser)
         {
             return BotApiResult.Fail(500, "users.getUsers returned no self user");
         }
@@ -900,7 +900,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var peer = ResolvePeer(args, selfUser.id);
         var (message, entities) = ResolveTextAndEntities(args, text);
 
-        var request = new MtProtoMethods.Messages_SendMessage
+        var request = new Messages_SendMessage
         {
             flags = 0,
             peer = peer,
@@ -911,34 +911,34 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var replyTo = ReadReplyToArg(args);
         if (replyTo != null)
         {
-            request.flags |= MtProtoMethods.Messages_SendMessage.Flags.has_reply_to;
+            request.flags |= Messages_SendMessage.Flags.has_reply_to;
             request.reply_to = replyTo;
         }
 
         var replyMarkup = ReadReplyMarkupArg(args);
         if (replyMarkup != null)
         {
-            request.flags |= MtProtoMethods.Messages_SendMessage.Flags.has_reply_markup;
+            request.flags |= Messages_SendMessage.Flags.has_reply_markup;
             request.reply_markup = replyMarkup;
         }
 
         if (entities is { Length: > 0 })
         {
-            request.flags |= MtProtoMethods.Messages_SendMessage.Flags.has_entities;
+            request.flags |= Messages_SendMessage.Flags.has_entities;
             request.entities = entities;
         }
 
-        var result = await client.InvokeAsync<MtProtoTL.UpdatesBase>(request, ct).ConfigureAwait(false);
+        var result = await client.InvokeAsync<UpdatesBase>(request, ct).ConfigureAwait(false);
         return BotApiResult.Success(BuildSentMessage(result, peer, selfUser, message));
     }
 
     // ===== Tier 2: editMessage*/deleteMessage/forwardMessage/copyMessage/answerCallbackQuery =====
 
     /// <summary>Возвращает self-пользователя бота (users.getUsers → User) или null при неудаче.</summary>
-    private static async Task<MtProtoTL.User> GetSelfUserAsync(MtProtoClient client, CancellationToken ct)
+    private static async Task<User> GetSelfUserAsync(MtProtoClient client, CancellationToken ct)
     {
-        var users = await client.GetUsersAsync([new MtProtoTL.InputUserSelf()], ct).ConfigureAwait(false);
-        return users is { Length: > 0 } && users[0] is MtProtoTL.User u ? u : null;
+        var users = await client.GetUsersAsync([new InputUserSelf()], ct).ConfigureAwait(false);
+        return users is { Length: > 0 } && users[0] is User u ? u : null;
     }
 
     /// <summary>Чистая валидация цели edit*: chat_id+message_id либо inline_message_id; ни одного/оба — 400.</summary>
@@ -968,8 +968,9 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     /// Методы, требующие цель-чат: <c>chat_id</c>, raw <c>peer</c> или (для edit*) <c>inline_message_id</c>.
     /// Проверяются до сети, чтобы отсутствие цели давало 400, а не 401 про заголовки логина.
     /// </summary>
-    private static readonly HashSet<string> ChatTargetMethods = new(StringComparer.Ordinal)
-    {
+    private static readonly HashSet<string> ChatTargetMethods =
+    [
+        with(StringComparer.Ordinal),
         "sendMessage",
         "sendPhoto",
         "sendDocument",
@@ -993,19 +994,21 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         "setChatPhoto",
         "leaveChat",
         "banChatMember",
-    };
+    ];
 
     /// <summary>Методы edit*: цель — пара chat_id+message_id либо inline_message_id.</summary>
-    private static readonly HashSet<string> EditTargetMethods = new(StringComparer.Ordinal)
-    {
+    private static readonly HashSet<string> EditTargetMethods =
+    [
+        with(StringComparer.Ordinal),
         "editMessageText",
         "editMessageCaption",
         "editMessageMedia",
-    };
+    ];
 
     /// <summary>Методы, у которых <c>parse_mode</c> реально разбирается в текст/сущности.</summary>
-    private static readonly HashSet<string> ParseModeMethods = new(StringComparer.Ordinal)
-    {
+    private static readonly HashSet<string> ParseModeMethods =
+    [
+        with(StringComparer.Ordinal),
         "sendMessage",
         "sendPhoto",
         "sendDocument",
@@ -1017,7 +1020,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         "sendSticker",
         "editMessageText",
         "editMessageCaption",
-    };
+    ];
 
     /// <summary>
     /// Валидация аргументов, не требующая сети: выполняется до <c>auth.importBotAuthorization</c>.
@@ -1078,7 +1081,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Резолв цели редактирования (peer + message_id) после валидации; требует selfId для self-пира.</summary>
-    private static (MtProtoTL.InputPeer Peer, int MessageId) ResolveEditTarget(
+    private static (InputPeer Peer, int MessageId) ResolveEditTarget(
         IReadOnlyDictionary<string, object> args, long selfId, string methodName)
     {
         ValidateEditTarget(args, methodName);
@@ -1115,34 +1118,34 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var (peer, messageId) = ResolveEditTarget(args, selfUser.id, "editMessageText");
         var (message, entities) = ResolveTextAndEntities(args, text);
 
-        var request = new MtProtoMethods.Messages_EditMessage
+        var request = new Messages_EditMessage
         {
             flags = 0,
             peer = peer,
             id = messageId,
             message = message,
         };
-        request.flags |= MtProtoMethods.Messages_EditMessage.Flags.has_message;
+        request.flags |= Messages_EditMessage.Flags.has_message;
 
         if (ReadBoolArg(args, "disable_web_page_preview"))
         {
-            request.flags |= MtProtoMethods.Messages_EditMessage.Flags.no_webpage;
+            request.flags |= Messages_EditMessage.Flags.no_webpage;
         }
 
         var replyMarkup = ReadReplyMarkupArg(args);
         if (replyMarkup != null)
         {
-            request.flags |= MtProtoMethods.Messages_EditMessage.Flags.has_reply_markup;
+            request.flags |= Messages_EditMessage.Flags.has_reply_markup;
             request.reply_markup = replyMarkup;
         }
 
         if (entities is { Length: > 0 })
         {
-            request.flags |= MtProtoMethods.Messages_EditMessage.Flags.has_entities;
+            request.flags |= Messages_EditMessage.Flags.has_entities;
             request.entities = entities;
         }
 
-        var result = await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(request, ct).ConfigureAwait(false);
+        var result = await connection.Client.InvokeAsync<UpdatesBase>(request, ct).ConfigureAwait(false);
         var edited = BuildEditedMessage(result, selfUser);
         return edited is null ? BotApiResult.Success(true) : BotApiResult.Success(edited);
     }
@@ -1165,27 +1168,27 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var (peer, messageId) = ResolveEditTarget(args, selfUser.id, "editMessageCaption");
         var (message, entities) = ResolveCaptionAndEntities(args, caption);
 
-        var request = new MtProtoMethods.Messages_EditMessage { flags = 0, peer = peer, id = messageId };
+        var request = new Messages_EditMessage { flags = 0, peer = peer, id = messageId };
         if (caption != null)
         {
-            request.flags |= MtProtoMethods.Messages_EditMessage.Flags.has_message;
+            request.flags |= Messages_EditMessage.Flags.has_message;
             request.message = message ?? "";
         }
 
         var replyMarkup = ReadReplyMarkupArg(args);
         if (replyMarkup != null)
         {
-            request.flags |= MtProtoMethods.Messages_EditMessage.Flags.has_reply_markup;
+            request.flags |= Messages_EditMessage.Flags.has_reply_markup;
             request.reply_markup = replyMarkup;
         }
 
         if (entities is { Length: > 0 })
         {
-            request.flags |= MtProtoMethods.Messages_EditMessage.Flags.has_entities;
+            request.flags |= Messages_EditMessage.Flags.has_entities;
             request.entities = entities;
         }
 
-        var result = await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(request, ct).ConfigureAwait(false);
+        var result = await connection.Client.InvokeAsync<UpdatesBase>(request, ct).ConfigureAwait(false);
         var edited = BuildEditedMessage(result, selfUser);
         return edited is null ? BotApiResult.Success(true) : BotApiResult.Success(edited);
     }
@@ -1213,9 +1216,9 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var (peer, messageId) = ResolveEditTarget(args, selfUser.id, "editMessageMedia");
         var single = await BuildSingleMediaAsync(connection.Client, mediaEl.Value, args, ct).ConfigureAwait(false);
 
-        var request = new MtProtoMethods.Messages_EditMessage
+        var request = new Messages_EditMessage
         {
-            flags = MtProtoMethods.Messages_EditMessage.Flags.has_media,
+            flags = Messages_EditMessage.Flags.has_media,
             peer = peer,
             id = messageId,
             media = single.media,
@@ -1223,24 +1226,24 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         if (!string.IsNullOrEmpty(single.message))
         {
-            request.flags |= MtProtoMethods.Messages_EditMessage.Flags.has_message;
+            request.flags |= Messages_EditMessage.Flags.has_message;
             request.message = single.message;
         }
 
         if (single.entities is { Length: > 0 })
         {
-            request.flags |= MtProtoMethods.Messages_EditMessage.Flags.has_entities;
+            request.flags |= Messages_EditMessage.Flags.has_entities;
             request.entities = single.entities;
         }
 
         var replyMarkup = ReadReplyMarkupArg(args);
         if (replyMarkup != null)
         {
-            request.flags |= MtProtoMethods.Messages_EditMessage.Flags.has_reply_markup;
+            request.flags |= Messages_EditMessage.Flags.has_reply_markup;
             request.reply_markup = replyMarkup;
         }
 
-        var result = await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(request, ct).ConfigureAwait(false);
+        var result = await connection.Client.InvokeAsync<UpdatesBase>(request, ct).ConfigureAwait(false);
         var edited = BuildEditedMessage(result, selfUser);
         return edited is null ? BotApiResult.Success(true) : BotApiResult.Success(edited);
     }
@@ -1262,13 +1265,13 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         }
 
         var connection = await GetConnectionAsync(botId, botToken, apiId, apiHash, ct).ConfigureAwait(false);
-        var request = new MtProtoMethods.Messages_DeleteMessages
+        var request = new Messages_DeleteMessages
         {
-            flags = MtProtoMethods.Messages_DeleteMessages.Flags.revoke,
+            flags = Messages_DeleteMessages.Flags.revoke,
             id = [(int)messageId],
         };
 
-        await connection.Client.InvokeAsync<MtProtoTL.Messages_AffectedMessages>(request, ct).ConfigureAwait(false);
+        await connection.Client.InvokeAsync<Messages_AffectedMessages>(request, ct).ConfigureAwait(false);
         return BotApiResult.Success(true);
     }
 
@@ -1303,7 +1306,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var toPeer = ResolvePeer(args, selfUser.id);
         var fromPeer = ResolvePeer(args, selfUser.id, "from_chat_id", "from_access_hash");
 
-        var request = new MtProtoMethods.Messages_ForwardMessages
+        var request = new Messages_ForwardMessages
         {
             flags = 0,
             from_peer = fromPeer,
@@ -1314,15 +1317,15 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         if (ReadBoolArg(args, "disable_notification"))
         {
-            request.flags |= MtProtoMethods.Messages_ForwardMessages.Flags.silent;
+            request.flags |= Messages_ForwardMessages.Flags.silent;
         }
 
         if (ReadBoolArg(args, "protect_content"))
         {
-            request.flags |= MtProtoMethods.Messages_ForwardMessages.Flags.noforwards;
+            request.flags |= Messages_ForwardMessages.Flags.noforwards;
         }
 
-        var result = await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(request, ct).ConfigureAwait(false);
+        var result = await connection.Client.InvokeAsync<UpdatesBase>(request, ct).ConfigureAwait(false);
         return BotApiResult.Success(BuildForwardedMessage(result, toPeer, selfUser));
     }
 
@@ -1360,9 +1363,9 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var toPeer = ResolvePeer(args, selfUser.id);
         var fromPeer = ResolvePeer(args, selfUser.id, "from_chat_id", "from_access_hash");
 
-        var request = new MtProtoMethods.Messages_ForwardMessages
+        var request = new Messages_ForwardMessages
         {
-            flags = MtProtoMethods.Messages_ForwardMessages.Flags.drop_author,
+            flags = Messages_ForwardMessages.Flags.drop_author,
             from_peer = fromPeer,
             to_peer = toPeer,
             id = [(int)messageId],
@@ -1371,27 +1374,27 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         if (caption != null)
         {
-            request.flags |= MtProtoMethods.Messages_ForwardMessages.Flags.drop_media_captions;
+            request.flags |= Messages_ForwardMessages.Flags.drop_media_captions;
         }
 
         if (ReadBoolArg(args, "disable_notification"))
         {
-            request.flags |= MtProtoMethods.Messages_ForwardMessages.Flags.silent;
+            request.flags |= Messages_ForwardMessages.Flags.silent;
         }
 
         if (ReadBoolArg(args, "protect_content"))
         {
-            request.flags |= MtProtoMethods.Messages_ForwardMessages.Flags.noforwards;
+            request.flags |= Messages_ForwardMessages.Flags.noforwards;
         }
 
         var replyTo = ReadReplyToArg(args);
         if (replyTo != null)
         {
-            request.flags |= MtProtoMethods.Messages_ForwardMessages.Flags.has_reply_to;
+            request.flags |= Messages_ForwardMessages.Flags.has_reply_to;
             request.reply_to = replyTo;
         }
 
-        var result = await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(request, ct).ConfigureAwait(false);
+        var result = await connection.Client.InvokeAsync<UpdatesBase>(request, ct).ConfigureAwait(false);
         var forwarded = BuildForwardedMessage(result, toPeer, selfUser);
 
         // Caption (или reply_markup) заданы явно → применяем их к скопированному сообщению вторым шагом:
@@ -1401,27 +1404,27 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         if (hasCaption || hasMarkup)
         {
             var newMessageId = Convert.ToInt32(forwarded["message_id"]);
-            var edit = new MtProtoMethods.Messages_EditMessage { flags = 0, peer = toPeer, id = newMessageId };
+            var edit = new Messages_EditMessage { flags = 0, peer = toPeer, id = newMessageId };
 
             if (hasCaption)
             {
                 var (text, entities) = ResolveCaptionAndEntities(args, caption);
-                edit.flags |= MtProtoMethods.Messages_EditMessage.Flags.has_message;
+                edit.flags |= Messages_EditMessage.Flags.has_message;
                 edit.message = text ?? "";
                 if (entities is { Length: > 0 })
                 {
-                    edit.flags |= MtProtoMethods.Messages_EditMessage.Flags.has_entities;
+                    edit.flags |= Messages_EditMessage.Flags.has_entities;
                     edit.entities = entities;
                 }
             }
 
             if (hasMarkup)
             {
-                edit.flags |= MtProtoMethods.Messages_EditMessage.Flags.has_reply_markup;
+                edit.flags |= Messages_EditMessage.Flags.has_reply_markup;
                 edit.reply_markup = replyMarkup;
             }
 
-            var editResult = await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(edit, ct).ConfigureAwait(false);
+            var editResult = await connection.Client.InvokeAsync<UpdatesBase>(edit, ct).ConfigureAwait(false);
             var edited = BuildEditedMessage(editResult, selfUser);
             return edited is null ? BotApiResult.Success(forwarded) : BotApiResult.Success(edited);
         }
@@ -1441,7 +1444,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         }
 
         var connection = await GetConnectionAsync(botId, botToken, apiId, apiHash, ct).ConfigureAwait(false);
-        var request = new MtProtoMethods.Messages_SetBotCallbackAnswer
+        var request = new Messages_SetBotCallbackAnswer
         {
             flags = 0,
             query_id = queryId,
@@ -1451,19 +1454,19 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var text = ReadStringArg(args, "text");
         if (text != null)
         {
-            request.flags |= MtProtoMethods.Messages_SetBotCallbackAnswer.Flags.has_message;
+            request.flags |= Messages_SetBotCallbackAnswer.Flags.has_message;
             request.message = text;
         }
 
         if (ReadBoolArg(args, "show_alert"))
         {
-            request.flags |= MtProtoMethods.Messages_SetBotCallbackAnswer.Flags.alert;
+            request.flags |= Messages_SetBotCallbackAnswer.Flags.alert;
         }
 
         var url = ReadStringArg(args, "url");
         if (!string.IsNullOrEmpty(url))
         {
-            request.flags |= MtProtoMethods.Messages_SetBotCallbackAnswer.Flags.has_url;
+            request.flags |= Messages_SetBotCallbackAnswer.Flags.has_url;
             request.url = url;
         }
 
@@ -1474,34 +1477,34 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
     /// <summary>Достаёт updates/users/chats из UpdatesBase (составной или короткий); при неудаче — null-массив.</summary>
     private static void SplitUpdates(
-        MtProtoTL.UpdatesBase result,
-        out MtProtoTL.Update[] updates,
-        out Dictionary<long, MtProtoTL.User> users,
-        out Dictionary<long, MtProtoTL.ChatBase> chats)
+        UpdatesBase result,
+        out Update[] updates,
+        out Dictionary<long, User> users,
+        out Dictionary<long, ChatBase> chats)
     {
         users = null;
         chats = null;
         updates = null;
         switch (result)
         {
-            case MtProtoTL.Updates u:
+            case Updates u:
                 updates = u.updates;
                 users = u.users;
                 chats = u.chats;
                 break;
-            case MtProtoTL.UpdatesCombined c:
+            case UpdatesCombined c:
                 updates = c.updates;
                 users = c.users;
                 chats = c.chats;
                 break;
-            case MtProtoTL.UpdateShort s:
+            case UpdateShort s:
                 updates = [s.update];
                 break;
         }
     }
 
     /// <summary>Извлекает отредактированное сообщение из результата messages.editMessage; null — изменений не было.</summary>
-    private static Dictionary<string, object> BuildEditedMessage(MtProtoTL.UpdatesBase result, MtProtoTL.User self)
+    private static Dictionary<string, object> BuildEditedMessage(UpdatesBase result, User self)
     {
         SplitUpdates(result, out var updates, out var users, out var chats);
         if (updates == null)
@@ -1513,12 +1516,12 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         {
             var message = u switch
             {
-                MtProtoTL.UpdateEditMessage em => em.message,
-                MtProtoTL.UpdateNewMessage nm => nm.message,
+                UpdateEditMessage em => em.message,
+                UpdateNewMessage nm => nm.message,
                 _ => null,
             };
 
-            if (message is MtProtoTL.Message m && m.id > 0)
+            if (message is Message m && m.id > 0)
             {
                 var d = BuildMessage(m, users, chats);
                 if (self != null)
@@ -1535,14 +1538,14 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
     /// <summary>Извлекает пересланное сообщение (UpdateNewMessage/UpdateNewChannelMessage или UpdateMessageID).</summary>
     private static Dictionary<string, object> BuildForwardedMessage(
-        MtProtoTL.UpdatesBase result, MtProtoTL.InputPeer toPeer, MtProtoTL.User self)
+        UpdatesBase result, InputPeer toPeer, User self)
     {
         SplitUpdates(result, out var updates, out var users, out var chats);
         if (updates != null)
         {
             foreach (var u in updates)
             {
-                if (u is MtProtoTL.UpdateNewMessage nm && nm.message is MtProtoTL.Message m && m.id > 0)
+                if (u is UpdateNewMessage nm && nm.message is Message m && m.id > 0)
                 {
                     var d = BuildMessage(m, users, chats);
                     if (self != null)
@@ -1556,7 +1559,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
             foreach (var u in updates)
             {
-                if (u is MtProtoTL.UpdateMessageID um)
+                if (u is UpdateMessageID um)
                 {
                     var d = BuildSimpleMessage(um.id, DateTime.UtcNow, null, self);
                     var chat = BuildSentChat(toPeer, self?.id ?? 0);
@@ -1576,16 +1579,16 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     // ===== Tier 3: чат-методы =====
 
     /// <summary>Кэширует access_hash канала (если он есть в объекте Channel).</summary>
-    private static void RememberChannelAccessHash(MtProtoTL.Channel ch)
+    private static void RememberChannelAccessHash(Channel ch)
     {
-        if (ch != null && ch.flags.HasFlag(MtProtoTL.Channel.Flags.has_access_hash) && ch.access_hash != 0)
+        if (ch != null && ch.flags.HasFlag(Channel.Flags.has_access_hash) && ch.access_hash != 0)
         {
             _channelAccessHash[ch.id] = ch.access_hash;
         }
     }
 
     /// <summary>Кэширует access_hash всех каналов из словаря chats результата метода.</summary>
-    private static void RememberChannelAccessHashes(IReadOnlyDictionary<long, MtProtoTL.ChatBase> chats)
+    private static void RememberChannelAccessHashes(IReadOnlyDictionary<long, ChatBase> chats)
     {
         if (chats == null)
         {
@@ -1594,7 +1597,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         foreach (var kv in chats)
         {
-            if (kv.Value is MtProtoTL.Channel ch)
+            if (kv.Value is Channel ch)
             {
                 RememberChannelAccessHash(ch);
             }
@@ -1602,16 +1605,16 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Кэширует access_hash пользователя (если он есть в объекте User).</summary>
-    private static void RememberUserAccessHash(MtProtoTL.User u)
+    private static void RememberUserAccessHash(User u)
     {
-        if (u != null && u.flags.HasFlag(MtProtoTL.User.Flags.has_access_hash) && u.access_hash != 0)
+        if (u != null && u.flags.HasFlag(User.Flags.has_access_hash) && u.access_hash != 0)
         {
             _userAccessHash[u.id] = u.access_hash;
         }
     }
 
     /// <summary>Кэширует access_hash всех пользователей из словаря users результата метода/updates.</summary>
-    private static void RememberUserAccessHashes(IReadOnlyDictionary<long, MtProtoTL.User> users)
+    private static void RememberUserAccessHashes(IReadOnlyDictionary<long, User> users)
     {
         if (users == null)
         {
@@ -1625,7 +1628,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Кэширует access_hash пользователей из массива результата users.getUsers и подобных.</summary>
-    private static void RememberUserAccessHashes(IEnumerable<MtProtoTL.UserBase> users)
+    private static void RememberUserAccessHashes(IEnumerable<UserBase> users)
     {
         if (users == null)
         {
@@ -1634,7 +1637,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         foreach (var u in users)
         {
-            if (u is MtProtoTL.User user)
+            if (u is User user)
             {
                 RememberUserAccessHash(user);
             }
@@ -1659,7 +1662,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Собирает InputChannel из Bot API chat_id, беря access_hash из кэша; иначе 400 с подсказкой.</summary>
-    private static MtProtoTL.InputChannel ResolveInputChannel(long botApiChatId)
+    private static InputChannel ResolveInputChannel(long botApiChatId)
     {
         var channelId = -1000000000000L - botApiChatId;
         if (!_channelAccessHash.TryGetValue(channelId, out var accessHash) || accessHash == 0)
@@ -1668,7 +1671,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 400, "channel access_hash not resolved yet: bot must receive an update mentioning this chat first");
         }
 
-        return new MtProtoTL.InputChannel { channel_id = channelId, access_hash = accessHash };
+        return new InputChannel { channel_id = channelId, access_hash = accessHash };
     }
 
     /// <summary>Требует chat_id группы/канала (без обращения к сети); иначе BotGatewayException(400).</summary>
@@ -1684,26 +1687,26 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Chat DTO Bot API ({id(-100…), type, title, username}) из Chat/Channel MTProto.</summary>
-    private static Dictionary<string, object> BuildChatDto(MtProtoTL.ChatBase chatBase)
+    private static Dictionary<string, object> BuildChatDto(ChatBase chatBase)
     {
         switch (chatBase)
         {
-            case MtProtoTL.Chat c:
+            case Chat c:
                 return new Dictionary<string, object>
                 {
                     ["id"] = -c.id,
                     ["type"] = "group",
                     ["title"] = c.title,
                 };
-            case MtProtoTL.Channel ch:
+            case Channel ch:
                 RememberChannelAccessHash(ch);
                 var d = new Dictionary<string, object>
                 {
                     ["id"] = -1000000000000L - ch.id,
-                    ["type"] = ch.flags.HasFlag(MtProtoTL.Channel.Flags.megagroup) ? "supergroup" : "channel",
+                    ["type"] = ch.flags.HasFlag(Channel.Flags.megagroup) ? "supergroup" : "channel",
                     ["title"] = ch.title,
                 };
-                if (ch.flags.HasFlag(MtProtoTL.Channel.Flags.has_username))
+                if (ch.flags.HasFlag(Channel.Flags.has_username))
                 {
                     d["username"] = ch.username;
                 }
@@ -1717,13 +1720,13 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     /// <summary>ChatMember DTO Bot API: {status, user:{…}, custom_title?, until_date?}.</summary>
     private static Dictionary<string, object> BuildChatMember(
         long userId,
-        IReadOnlyDictionary<long, MtProtoTL.User> users,
+        IReadOnlyDictionary<long, User> users,
         string status,
         string customTitle = null,
         long? untilDate = null)
     {
         var m = new Dictionary<string, object> { ["status"] = status };
-        if (users != null && users.TryGetValue(userId, out var u) && u is MtProtoTL.User user)
+        if (users != null && users.TryGetValue(userId, out var u) && u is User user)
         {
             m["user"] = BuildUser(user);
         }
@@ -1746,30 +1749,30 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Извлекает (userId, status) из участника базовой группы.</summary>
-    private static (long UserId, string Status) ExtractBasicParticipant(MtProtoTL.ChatParticipantBase p)
+    private static (long UserId, string Status) ExtractBasicParticipant(ChatParticipantBase p)
         => p switch
         {
-            MtProtoTL.ChatParticipantCreator creator => (creator.user_id, "creator"),
-            MtProtoTL.ChatParticipantAdmin admin => (admin.user_id, "administrator"),
-            MtProtoTL.ChatParticipant member => (member.user_id, "member"),
+            ChatParticipantCreator creator => (creator.user_id, "creator"),
+            ChatParticipantAdmin admin => (admin.user_id, "administrator"),
+            ChatParticipant member => (member.user_id, "member"),
             _ => (0, null),
         };
 
     /// <summary>Извлекает (userId, status, customTitle, untilDate) из участника канала/супергруппы.</summary>
     private static (long UserId, string Status, string CustomTitle, long? UntilDate) ExtractChannelParticipant(
-        MtProtoTL.ChannelParticipantBase p)
+        ChannelParticipantBase p)
     {
         switch (p)
         {
-            case MtProtoTL.ChannelParticipantCreator c:
+            case ChannelParticipantCreator c:
                 return (c.user_id, "creator", string.IsNullOrEmpty(c.rank) ? null : c.rank, null);
-            case MtProtoTL.ChannelParticipantAdmin a:
+            case ChannelParticipantAdmin a:
                 return (a.user_id, "administrator", string.IsNullOrEmpty(a.rank) ? null : a.rank, null);
-            case MtProtoTL.ChannelParticipantSelf s:
+            case ChannelParticipantSelf s:
                 return (s.user_id, "member", string.IsNullOrEmpty(s.rank) ? null : s.rank, null);
-            case MtProtoTL.ChannelParticipant m:
+            case ChannelParticipant m:
                 return (m.user_id, "member", string.IsNullOrEmpty(m.rank) ? null : m.rank, null);
-            case MtProtoTL.ChannelParticipantBanned b:
+            case ChannelParticipantBanned b:
                 long bannedUntil = 0;
                 if (b.banned_rights != null && b.banned_rights.until_date != default)
                 {
@@ -1777,24 +1780,24 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 }
 
                 return (PeerUserId(b.peer), "kicked", null, bannedUntil);
-            case MtProtoTL.ChannelParticipantLeft l:
+            case ChannelParticipantLeft l:
                 return (PeerUserId(l.peer), "left", null, null);
             default:
                 return (0, null, null, null);
         }
     }
 
-    private static long PeerUserId(MtProtoTL.Peer peer) => peer is MtProtoTL.PeerUser pu ? pu.user_id : 0;
+    private static long PeerUserId(Peer peer) => peer is PeerUser pu ? pu.user_id : 0;
 
     private static async Task<Dictionary<string, object>[]> GetChannelAdminsAsync(
         MtProtoClient client, long botApiChatId, CancellationToken ct)
     {
         var channel = ResolveInputChannel(botApiChatId);
-        var res = await client.InvokeAsync<MtProtoTL.Channels_ChannelParticipants>(
-            new MtProtoMethods.Channels_GetParticipants
+        var res = await client.InvokeAsync<Channels_ChannelParticipants>(
+            new Channels_GetParticipants
             {
                 channel = channel,
-                filter = new MtProtoTL.ChannelParticipantsAdmins(),
+                filter = new ChannelParticipantsAdmins(),
                 offset = 0,
                 limit = 100,
                 hash = 0,
@@ -1837,12 +1840,12 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         if (chatId > 0)
         {
             var users = await client.GetUsersAsync(
-                [new MtProtoTL.InputUser { user_id = chatId, access_hash = ResolveUserAccessHash(args, chatId) }], ct)
+                [new InputUser { user_id = chatId, access_hash = ResolveUserAccessHash(args, chatId) }], ct)
                 .ConfigureAwait(false);
             RememberUserAccessHashes(users);
             // A missing user is a CLIENT error, not a server fault: the real Bot API answers
             // 400 "Bad Request: chat not found" for an unknown chat_id.
-            if (users is not { Length: > 0 } || users[0] is not MtProtoTL.User u)
+            if (users is not { Length: > 0 } || users[0] is not User u)
             {
                 return BotApiResult.Fail(400, "Bad Request: chat not found");
             }
@@ -1855,10 +1858,10 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         if (chatId > -1000000000000L)
         {
             var mtChatId = -chatId;
-            var res = await client.InvokeAsync<MtProtoTL.Messages_Chats>(
-                new MtProtoMethods.Messages_GetChats { id = [mtChatId] }, ct).ConfigureAwait(false);
+            var res = await client.InvokeAsync<Messages_Chats>(
+                new Messages_GetChats { id = [mtChatId] }, ct).ConfigureAwait(false);
             RememberChannelAccessHashes(res.chats);
-            if (res.chats == null || !res.chats.TryGetValue(mtChatId, out var cb) || cb is not MtProtoTL.Chat c)
+            if (res.chats == null || !res.chats.TryGetValue(mtChatId, out var cb) || cb is not Chat c)
             {
                 return BotApiResult.Fail(400, "Bad Request: chat not found");
             }
@@ -1867,10 +1870,10 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         }
 
         var channel = ResolveInputChannel(chatId);
-        var cres = await client.InvokeAsync<MtProtoTL.Messages_Chats>(
-            new MtProtoMethods.Channels_GetChannels { id = [channel] }, ct).ConfigureAwait(false);
+        var cres = await client.InvokeAsync<Messages_Chats>(
+            new Channels_GetChannels { id = [channel] }, ct).ConfigureAwait(false);
         RememberChannelAccessHashes(cres.chats);
-        if (cres.chats == null || !cres.chats.TryGetValue(channel.channel_id, out var ccb) || ccb is not MtProtoTL.Channel ch)
+        if (cres.chats == null || !cres.chats.TryGetValue(channel.channel_id, out var ccb) || ccb is not Channel ch)
         {
             return BotApiResult.Fail(400, "Bad Request: chat not found");
         }
@@ -1896,10 +1899,10 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         {
             // A private chat has no administrators, but the chat itself must exist.
             var users = await client.GetUsersAsync(
-                [new MtProtoTL.InputUser { user_id = chatId, access_hash = ResolveUserAccessHash(args, chatId) }], ct)
+                [new InputUser { user_id = chatId, access_hash = ResolveUserAccessHash(args, chatId) }], ct)
                 .ConfigureAwait(false);
             RememberUserAccessHashes(users);
-            if (users is not { Length: > 0 } || users[0] is not MtProtoTL.User)
+            if (users is not { Length: > 0 } || users[0] is not User)
             {
                 return BotApiResult.Fail(400, "Bad Request: chat not found");
             }
@@ -1912,11 +1915,11 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             return BotApiResult.Success(await GetChannelAdminsAsync(client, chatId, ct).ConfigureAwait(false));
         }
 
-        var res = await client.InvokeAsync<MtProtoTL.Messages_ChatFull>(
-            new MtProtoMethods.Messages_GetFullChat { chat_id = -chatId }, ct).ConfigureAwait(false);
+        var res = await client.InvokeAsync<Messages_ChatFull>(
+            new Messages_GetFullChat { chat_id = -chatId }, ct).ConfigureAwait(false);
         RememberChannelAccessHashes(res.chats);
         var result = new List<Dictionary<string, object>>();
-        if (res.full_chat is MtProtoTL.ChatFull full && full.participants is MtProtoTL.ChatParticipants cp)
+        if (res.full_chat is ChatFull full && full.participants is ChatParticipants cp)
         {
             foreach (var p in cp.participants)
             {
@@ -1957,10 +1960,10 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         {
             // Validate the chat first: an unknown chat_id must be a 400, not a synthetic "member".
             var users = await client.GetUsersAsync(
-                [new MtProtoTL.InputUser { user_id = chatId, access_hash = ResolveUserAccessHash(args, chatId) }], ct)
+                [new InputUser { user_id = chatId, access_hash = ResolveUserAccessHash(args, chatId) }], ct)
                 .ConfigureAwait(false);
             RememberUserAccessHashes(users);
-            if (users is not { Length: > 0 } || users[0] is not MtProtoTL.User)
+            if (users is not { Length: > 0 } || users[0] is not User)
             {
                 return BotApiResult.Fail(400, "Bad Request: chat not found");
             }
@@ -1977,11 +1980,11 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         if (chatId <= -1000000000000L)
         {
             var channel = ResolveInputChannel(chatId);
-            var res = await client.InvokeAsync<MtProtoTL.Channels_ChannelParticipant>(
-                new MtProtoMethods.Channels_GetParticipant
+            var res = await client.InvokeAsync<Channels_ChannelParticipant>(
+                new Channels_GetParticipant
                 {
                     channel = channel,
-                    participant = new MtProtoTL.InputPeerUser { user_id = userId, access_hash = ResolveUserAccessHash(args, userId, "user_access_hash") },
+                    participant = new InputPeerUser { user_id = userId, access_hash = ResolveUserAccessHash(args, userId, "user_access_hash") },
                 }, ct).ConfigureAwait(false);
             RememberChannelAccessHashes(res.chats);
             var (pUserId, status, customTitle, untilDate) = ExtractChannelParticipant(res.participant);
@@ -1993,10 +1996,10 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             return BotApiResult.Success(BuildChatMember(pUserId, res.users, status, customTitle, untilDate));
         }
 
-        var fres = await client.InvokeAsync<MtProtoTL.Messages_ChatFull>(
-            new MtProtoMethods.Messages_GetFullChat { chat_id = -chatId }, ct).ConfigureAwait(false);
+        var fres = await client.InvokeAsync<Messages_ChatFull>(
+            new Messages_GetFullChat { chat_id = -chatId }, ct).ConfigureAwait(false);
         RememberChannelAccessHashes(fres.chats);
-        if (fres.full_chat is MtProtoTL.ChatFull full && full.participants is MtProtoTL.ChatParticipants cp)
+        if (fres.full_chat is ChatFull full && full.participants is ChatParticipants cp)
         {
             foreach (var p in cp.participants)
             {
@@ -2030,10 +2033,10 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             // A private chat must exist before we report a member count; otherwise an unknown
             // chat_id would look successful. Real Bot API: 400 "Bad Request: chat not found".
             var users = await client.GetUsersAsync(
-                [new MtProtoTL.InputUser { user_id = chatId, access_hash = ResolveUserAccessHash(args, chatId) }], ct)
+                [new InputUser { user_id = chatId, access_hash = ResolveUserAccessHash(args, chatId) }], ct)
                 .ConfigureAwait(false);
             RememberUserAccessHashes(users);
-            if (users is not { Length: > 0 } || users[0] is not MtProtoTL.User)
+            if (users is not { Length: > 0 } || users[0] is not User)
             {
                 return BotApiResult.Fail(400, "Bad Request: chat not found");
             }
@@ -2045,23 +2048,23 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         if (chatId <= -1000000000000L)
         {
             var channel = ResolveInputChannel(chatId);
-            var res = await client.InvokeAsync<MtProtoTL.Messages_ChatFull>(
-                new MtProtoMethods.Channels_GetFullChannel { channel = channel }, ct).ConfigureAwait(false);
+            var res = await client.InvokeAsync<Messages_ChatFull>(
+                new Channels_GetFullChannel { channel = channel }, ct).ConfigureAwait(false);
             RememberChannelAccessHashes(res.chats);
-            return res.full_chat is MtProtoTL.ChannelFull cf
+            return res.full_chat is ChannelFull cf
                 ? BotApiResult.Success(cf.participants_count)
                 : BotApiResult.Fail(400, "Bad Request: chat not found");
         }
 
-        var fres = await client.InvokeAsync<MtProtoTL.Messages_ChatFull>(
-            new MtProtoMethods.Messages_GetFullChat { chat_id = -chatId }, ct).ConfigureAwait(false);
+        var fres = await client.InvokeAsync<Messages_ChatFull>(
+            new Messages_GetFullChat { chat_id = -chatId }, ct).ConfigureAwait(false);
         RememberChannelAccessHashes(fres.chats);
-        if (fres.full_chat is MtProtoTL.ChatFull full && full.participants is MtProtoTL.ChatParticipants cp)
+        if (fres.full_chat is ChatFull full && full.participants is ChatParticipants cp)
         {
             return BotApiResult.Success(cp.participants.Length);
         }
 
-        if (fres.chats != null && fres.chats.TryGetValue(-chatId, out var cb) && cb is MtProtoTL.Chat c)
+        if (fres.chats != null && fres.chats.TryGetValue(-chatId, out var cb) && cb is Chat c)
         {
             return BotApiResult.Success(c.participants_count);
         }
@@ -2084,14 +2087,14 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var connection = await GetConnectionAsync(botId, botToken, apiId, apiHash, ct).ConfigureAwait(false);
         if (chatId <= -1000000000000L)
         {
-            await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(
-                new MtProtoMethods.Channels_EditTitle { channel = ResolveInputChannel(chatId), title = title }, ct)
+            await connection.Client.InvokeAsync<UpdatesBase>(
+                new Channels_EditTitle { channel = ResolveInputChannel(chatId), title = title }, ct)
                 .ConfigureAwait(false);
         }
         else
         {
-            await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(
-                new MtProtoMethods.Messages_EditChatTitle { chat_id = -chatId, title = title }, ct).ConfigureAwait(false);
+            await connection.Client.InvokeAsync<UpdatesBase>(
+                new Messages_EditChatTitle { chat_id = -chatId, title = title }, ct).ConfigureAwait(false);
         }
 
         return BotApiResult.Success(true);
@@ -2111,9 +2114,9 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var description = ReadStringArg(args, "description") ?? "";
         var connection = await GetConnectionAsync(botId, botToken, apiId, apiHash, ct).ConfigureAwait(false);
         var ok = await connection.Client.InvokeBoolAsync(
-            new MtProtoMethods.Messages_EditChatAbout
+            new Messages_EditChatAbout
             {
-                peer = new MtProtoTL.InputPeerChat { chat_id = -chatId },
+                peer = new InputPeerChat { chat_id = -chatId },
                 about = description,
             }, ct).ConfigureAwait(false);
         return BotApiResult.Success(ok);
@@ -2133,27 +2136,27 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         var connection = await GetConnectionAsync(botId, botToken, apiId, apiHash, ct).ConfigureAwait(false);
 
-        MtProtoTL.InputChatPhotoBase chatPhoto;
+        InputChatPhotoBase chatPhoto;
         if (photoRaw is BotUploadFile upload)
         {
             var file = await UploadMediaAsync(connection.Client, upload, ct).ConfigureAwait(false);
-            chatPhoto = new MtProtoTL.InputChatUploadedPhoto { flags = MtProtoTL.InputChatUploadedPhoto.Flags.has_file, file = file };
+            chatPhoto = new InputChatUploadedPhoto { flags = InputChatUploadedPhoto.Flags.has_file, file = file };
         }
         else
         {
-            chatPhoto = new MtProtoTL.InputChatPhoto { id = DecodeInputPhoto((string)photoRaw) };
+            chatPhoto = new InputChatPhoto { id = DecodeInputPhoto((string)photoRaw) };
         }
 
         if (chatId <= -1000000000000L)
         {
-            await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(
-                new MtProtoMethods.Channels_EditPhoto { channel = ResolveInputChannel(chatId), photo = chatPhoto }, ct)
+            await connection.Client.InvokeAsync<UpdatesBase>(
+                new Channels_EditPhoto { channel = ResolveInputChannel(chatId), photo = chatPhoto }, ct)
                 .ConfigureAwait(false);
         }
         else
         {
-            await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(
-                new MtProtoMethods.Messages_EditChatPhoto { chat_id = -chatId, photo = chatPhoto }, ct).ConfigureAwait(false);
+            await connection.Client.InvokeAsync<UpdatesBase>(
+                new Messages_EditChatPhoto { chat_id = -chatId, photo = chatPhoto }, ct).ConfigureAwait(false);
         }
 
         return BotApiResult.Success(true);
@@ -2169,17 +2172,17 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         if (chatId <= -1000000000000L)
         {
-            await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(
-                new MtProtoMethods.Channels_LeaveChannel { channel = ResolveInputChannel(chatId) }, ct).ConfigureAwait(false);
+            await connection.Client.InvokeAsync<UpdatesBase>(
+                new Channels_LeaveChannel { channel = ResolveInputChannel(chatId) }, ct).ConfigureAwait(false);
         }
         else
         {
-            await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(
-                new MtProtoMethods.Messages_DeleteChatUser
+            await connection.Client.InvokeAsync<UpdatesBase>(
+                new Messages_DeleteChatUser
                 {
                     flags = 0,
                     chat_id = -chatId,
-                    user_id = new MtProtoTL.InputUserSelf(),
+                    user_id = new InputUserSelf(),
                 }, ct).ConfigureAwait(false);
         }
 
@@ -2202,26 +2205,26 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         if (chatId <= -1000000000000L)
         {
-            await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(
-                new MtProtoMethods.Channels_EditBanned
+            await connection.Client.InvokeAsync<UpdatesBase>(
+                new Channels_EditBanned
                 {
                     channel = ResolveInputChannel(chatId),
-                    participant = new MtProtoTL.InputPeerUser { user_id = userId, access_hash = ResolveUserAccessHash(args, userId, "user_access_hash") },
-                    banned_rights = new MtProtoTL.ChatBannedRights
+                    participant = new InputPeerUser { user_id = userId, access_hash = ResolveUserAccessHash(args, userId, "user_access_hash") },
+                    banned_rights = new ChatBannedRights
                     {
-                        flags = MtProtoTL.ChatBannedRights.Flags.view_messages,
+                        flags = ChatBannedRights.Flags.view_messages,
                         until_date = default,
                     },
                 }, ct).ConfigureAwait(false);
         }
         else
         {
-            await connection.Client.InvokeAsync<MtProtoTL.UpdatesBase>(
-                new MtProtoMethods.Messages_DeleteChatUser
+            await connection.Client.InvokeAsync<UpdatesBase>(
+                new Messages_DeleteChatUser
                 {
                     flags = 0,
                     chat_id = -chatId,
-                    user_id = new MtProtoTL.InputUser { user_id = userId, access_hash = ResolveUserAccessHash(args, userId, "user_access_hash") },
+                    user_id = new InputUser { user_id = userId, access_hash = ResolveUserAccessHash(args, userId, "user_access_hash") },
                 }, ct).ConfigureAwait(false);
         }
 
@@ -2231,27 +2234,27 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     // ===== Tier 4: sendChatAction/setMyCommands/getMyCommands/answerInlineQuery =====
 
     /// <summary>Маппит строку action Bot API в SendMessageAction; неизвестное — BotGatewayException(400).</summary>
-    private static MtProtoTL.SendMessageAction BuildSendMessageAction(string action)
+    private static SendMessageAction BuildSendMessageAction(string action)
         => action switch
         {
-            "typing" => new MtProtoTL.SendMessageTypingAction(),
-            "upload_photo" => new MtProtoTL.SendMessageUploadPhotoAction { progress = 0 },
-            "upload_video" => new MtProtoTL.SendMessageUploadVideoAction { progress = 0 },
-            "upload_voice" => new MtProtoTL.SendMessageUploadAudioAction { progress = 0 },
-            "upload_document" => new MtProtoTL.SendMessageUploadDocumentAction { progress = 0 },
-            "choose_sticker" => new MtProtoTL.SendMessageChooseStickerAction(),
-            "find_location" => new MtProtoTL.SendMessageGeoLocationAction(),
-            "record_video" => new MtProtoTL.SendMessageRecordVideoAction(),
-            "record_voice" => new MtProtoTL.SendMessageRecordAudioAction(),
+            "typing" => new SendMessageTypingAction(),
+            "upload_photo" => new SendMessageUploadPhotoAction { progress = 0 },
+            "upload_video" => new SendMessageUploadVideoAction { progress = 0 },
+            "upload_voice" => new SendMessageUploadAudioAction { progress = 0 },
+            "upload_document" => new SendMessageUploadDocumentAction { progress = 0 },
+            "choose_sticker" => new SendMessageChooseStickerAction(),
+            "find_location" => new SendMessageGeoLocationAction(),
+            "record_video" => new SendMessageRecordVideoAction(),
+            "record_voice" => new SendMessageRecordAudioAction(),
             _ => throw new BotGatewayException(400, $"unsupported chat action '{action}'"),
         };
 
     /// <summary>Резолв chat_id+access_hash в InputPeer (без обращения к args-словарю); self → InputPeerSelf.</summary>
-    private static MtProtoTL.InputPeer ResolvePeerById(long chatId, long accessHash, long selfId)
+    private static InputPeer ResolvePeerById(long chatId, long accessHash, long selfId)
     {
         if (chatId == selfId)
         {
-            return new MtProtoTL.InputPeerSelf();
+            return new InputPeerSelf();
         }
 
         if (chatId > 0)
@@ -2261,12 +2264,12 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 throw new BotGatewayException(400, "private chat_id requires 'access_hash'");
             }
 
-            return new MtProtoTL.InputPeerUser { user_id = chatId, access_hash = accessHash };
+            return new InputPeerUser { user_id = chatId, access_hash = accessHash };
         }
 
         if (chatId > -1000000000000L)
         {
-            return new MtProtoTL.InputPeerChat { chat_id = -chatId };
+            return new InputPeerChat { chat_id = -chatId };
         }
 
         if (accessHash == 0)
@@ -2274,11 +2277,11 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             throw new BotGatewayException(400, "channel chat_id requires 'access_hash'");
         }
 
-        return new MtProtoTL.InputPeerChannel { channel_id = -1000000000000L - chatId, access_hash = accessHash };
+        return new InputPeerChannel { channel_id = -1000000000000L - chatId, access_hash = accessHash };
     }
 
     /// <summary>Собирает BotCommandScope из JSON scope; null → BotCommandScopeDefault; неизвестное — 400.</summary>
-    private static MtProtoTL.BotCommandScope BuildBotCommandScope(long selfId, IReadOnlyDictionary<string, object> args)
+    private static BotCommandScope BuildBotCommandScope(long selfId, IReadOnlyDictionary<string, object> args)
     {
         var scopeEl = ReadJsonObjectArg(args, "scope");
         if (scopeEl == null)
@@ -2292,32 +2295,32 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             case "default":
                 return null;
             case "all_private_chats":
-                return new MtProtoTL.BotCommandScopeUsers();
+                return new BotCommandScopeUsers();
             case "all_group_chats":
-                return new MtProtoTL.BotCommandScopeChats();
+                return new BotCommandScopeChats();
             case "all_chat_administrators":
-                return new MtProtoTL.BotCommandScopeChatAdmins();
+                return new BotCommandScopeChatAdmins();
             case "chat":
             case "chat_administrators":
                 var chatId = GetJsonLong(scopeEl.Value, "chat_id");
                 var peer = ResolvePeerById(chatId, GetJsonLong(scopeEl.Value, "access_hash"), selfId);
                 return type == "chat"
-                    ? new MtProtoTL.BotCommandScopePeer { peer = peer }
-                    : new MtProtoTL.BotCommandScopePeerAdmins { peer = peer };
+                    ? new BotCommandScopePeer { peer = peer }
+                    : new BotCommandScopePeerAdmins { peer = peer };
             default:
                 throw new BotGatewayException(400, $"unsupported BotCommandScope type '{type}'");
         }
     }
 
     /// <summary>Парсит JSON-массив команд Bot API в BotCommand[]; ошибки — BotGatewayException(400).</summary>
-    private static MtProtoTL.BotCommand[] BuildBotCommands(JsonElement array)
+    private static BotCommand[] BuildBotCommands(JsonElement array)
     {
         if (array.ValueKind != JsonValueKind.Array)
         {
             throw new BotGatewayException(400, "'commands' must be a JSON array");
         }
 
-        var list = new List<MtProtoTL.BotCommand>();
+        var list = new List<BotCommand>();
         foreach (var el in array.EnumerateArray())
         {
             if (el.ValueKind != JsonValueKind.Object)
@@ -2337,7 +2340,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 throw new BotGatewayException(400, "description is required for each command entry");
             }
 
-            list.Add(new MtProtoTL.BotCommand { flags = 0, command = command, description = description });
+            list.Add(new BotCommand { flags = 0, command = command, description = description });
         }
 
         return [.. list];
@@ -2369,7 +2372,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         }
 
         var peer = ResolvePeer(args, selfUser.id);
-        var request = new MtProtoMethods.Messages_SetTyping
+        var request = new Messages_SetTyping
         {
             flags = 0,
             peer = peer,
@@ -2399,7 +2402,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             return BotApiResult.Fail(500, "users.getUsers returned no self user");
         }
 
-        var request = new MtProtoMethods.Bots_SetBotCommands
+        var request = new Bots_SetBotCommands
         {
             scope = BuildBotCommandScope(selfUser.id, args),
             lang_code = ReadStringArg(args, "language_code") ?? "",
@@ -2422,13 +2425,13 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             return BotApiResult.Fail(500, "users.getUsers returned no self user");
         }
 
-        var request = new MtProtoMethods.Bots_GetBotCommands
+        var request = new Bots_GetBotCommands
         {
             scope = BuildBotCommandScope(selfUser.id, args),
             lang_code = ReadStringArg(args, "language_code") ?? "",
         };
 
-        var commands = await connection.Client.InvokeVectorAsync<MtProtoTL.BotCommand>(request, ct).ConfigureAwait(false);
+        var commands = await connection.Client.InvokeVectorAsync<BotCommand>(request, ct).ConfigureAwait(false);
         var result = new List<Dictionary<string, object>>(commands.Length);
         foreach (var c in commands)
         {
@@ -2439,14 +2442,14 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Парсит результаты answerInlineQuery (только type="article") в InputBotInlineResultBase[].</summary>
-    private static MtProtoTL.InputBotInlineResultBase[] BuildInlineResults(JsonElement array)
+    private static InputBotInlineResultBase[] BuildInlineResults(JsonElement array)
     {
         if (array.ValueKind != JsonValueKind.Array)
         {
             throw new BotGatewayException(400, "'results' must be a JSON array");
         }
 
-        var list = new List<MtProtoTL.InputBotInlineResultBase>();
+        var list = new List<InputBotInlineResultBase>();
         foreach (var el in array.EnumerateArray())
         {
             if (el.ValueKind != JsonValueKind.Object)
@@ -2490,21 +2493,21 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 (text, entities) = ApplyParseMode(messageText, GetJsonString(mc, "parse_mode"));
             }
 
-            var sendMessage = new MtProtoTL.InputBotInlineMessageText { flags = 0, message = text };
+            var sendMessage = new InputBotInlineMessageText { flags = 0, message = text };
             if (entities is { Length: > 0 })
             {
-                sendMessage.flags |= MtProtoTL.InputBotInlineMessageText.Flags.has_entities;
+                sendMessage.flags |= InputBotInlineMessageText.Flags.has_entities;
                 sendMessage.entities = entities;
             }
 
             var description = GetJsonString(el, "description");
-            var flags = MtProtoTL.InputBotInlineResult.Flags.has_title;
+            var flags = InputBotInlineResult.Flags.has_title;
             if (!string.IsNullOrEmpty(description))
             {
-                flags |= MtProtoTL.InputBotInlineResult.Flags.has_description;
+                flags |= InputBotInlineResult.Flags.has_description;
             }
 
-            list.Add(new MtProtoTL.InputBotInlineResult
+            list.Add(new InputBotInlineResult
             {
                 flags = flags,
                 id = id,
@@ -2538,7 +2541,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var results = BuildInlineResults(resultsEl.Value);
         var connection = await GetConnectionAsync(botId, botToken, apiId, apiHash, ct).ConfigureAwait(false);
 
-        var request = new MtProtoMethods.Messages_SetInlineBotResults
+        var request = new Messages_SetInlineBotResults
         {
             flags = 0,
             query_id = queryId,
@@ -2550,13 +2553,13 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         // флаг gallery намеренно не ставим (соответствие gallery↔is_personal не подтверждаем).
         if (ReadBoolArg(args, "is_personal"))
         {
-            request.flags |= MtProtoMethods.Messages_SetInlineBotResults.Flags.private_;
+            request.flags |= Messages_SetInlineBotResults.Flags.private_;
         }
 
         var nextOffset = ReadStringArg(args, "next_offset");
         if (!string.IsNullOrEmpty(nextOffset))
         {
-            request.flags |= MtProtoMethods.Messages_SetInlineBotResults.Flags.has_next_offset;
+            request.flags |= Messages_SetInlineBotResults.Flags.has_next_offset;
             request.next_offset = nextOffset;
         }
 
@@ -2566,10 +2569,10 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>
-    /// Резолв Bot API <c>chat_id</c> (или raw-объекта <c>peer</c>) в MTProto <see cref="MtProtoTL.InputPeer"/>.
+    /// Резолв Bot API <c>chat_id</c> (или raw-объекта <c>peer</c>) в MTProto <see cref="InputPeer"/>.
     /// Пользователям и каналам нужен access_hash: его передают отдельным аргументом, либо целиком как <c>peer</c>.
     /// </summary>
-    internal static MtProtoTL.InputPeer ResolvePeer(IReadOnlyDictionary<string, object> args, long selfId)
+    internal static InputPeer ResolvePeer(IReadOnlyDictionary<string, object> args, long selfId)
     {
         if (args != null && args.TryGetValue("peer", out var rawPeer) && rawPeer is JsonElement pe)
         {
@@ -2582,7 +2585,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     /// <summary>
     /// Резолв пира по произвольному ключу chat_id (например, <c>from_chat_id</c>) с отдельным ключом access_hash.
     /// </summary>
-    internal static MtProtoTL.InputPeer ResolvePeer(
+    internal static InputPeer ResolvePeer(
         IReadOnlyDictionary<string, object> args, long selfId, string chatIdKey, string accessHashKey)
     {
         var chatId = ReadIntArg(args, chatIdKey, long.MinValue);
@@ -2593,7 +2596,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         if (chatId == selfId)
         {
-            return new MtProtoTL.InputPeerSelf();
+            return new InputPeerSelf();
         }
 
         var accessHash = ReadIntArg(args, accessHashKey, 0);
@@ -2612,13 +2615,13 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 throw new BotGatewayException(400, "Bad Request: chat not found");
             }
 
-            return new MtProtoTL.InputPeerUser { user_id = chatId, access_hash = accessHash };
+            return new InputPeerUser { user_id = chatId, access_hash = accessHash };
         }
 
         if (chatId > -1000000000000L)
         {
             // Базовый групповой чат: MTProto chat_id положительный (= -chat_id).
-            return new MtProtoTL.InputPeerChat { chat_id = -chatId };
+            return new InputPeerChat { chat_id = -chatId };
         }
 
         // Канал/супергруппа (-100…): channel_id = -1000000000000 - chat_id.
@@ -2633,7 +2636,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 400, "channel access_hash not resolved yet: bot must receive an update mentioning this chat first");
         }
 
-        return new MtProtoTL.InputPeerChannel
+        return new InputPeerChannel
         {
             channel_id = -1000000000000L - chatId,
             access_hash = accessHash,
@@ -2641,7 +2644,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Разбирает raw MTProto peer: {"_":"inputPeerUser","user_id":…,"access_hash":…}.</summary>
-    private static MtProtoTL.InputPeer ParsePeerJson(JsonElement pe)
+    private static InputPeer ParsePeerJson(JsonElement pe)
     {
         if (pe.ValueKind != JsonValueKind.Object || !pe.TryGetProperty("_", out var t) ||
             t.ValueKind != JsonValueKind.String)
@@ -2651,14 +2654,14 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         return t.GetString() switch
         {
-            "inputPeerSelf" => new MtProtoTL.InputPeerSelf(),
-            "inputPeerUser" => new MtProtoTL.InputPeerUser
+            "inputPeerSelf" => new InputPeerSelf(),
+            "inputPeerUser" => new InputPeerUser
             {
                 user_id = ReadPeerLong(pe, "user_id"),
                 access_hash = ReadPeerLong(pe, "access_hash"),
             },
-            "inputPeerChat" => new MtProtoTL.InputPeerChat { chat_id = ReadPeerLong(pe, "chat_id") },
-            "inputPeerChannel" => new MtProtoTL.InputPeerChannel
+            "inputPeerChat" => new InputPeerChat { chat_id = ReadPeerLong(pe, "chat_id") },
+            "inputPeerChannel" => new InputPeerChannel
             {
                 channel_id = ReadPeerLong(pe, "channel_id"),
                 access_hash = ReadPeerLong(pe, "access_hash"),
@@ -2679,14 +2682,14 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
     /// <summary>Преобразует результат sendMessage (UpdatesBase) в минимальный Bot API message.</summary>
     internal static Dictionary<string, object> BuildSentMessage(
-        MtProtoTL.UpdatesBase result,
-        MtProtoTL.InputPeer target,
-        MtProtoTL.User self,
+        UpdatesBase result,
+        InputPeer target,
+        User self,
         string text)
     {
         switch (result)
         {
-            case MtProtoTL.UpdateShortSentMessage ssm:
+            case UpdateShortSentMessage ssm:
                 {
                     var msg = BuildSimpleMessage(ssm.id, ssm.date, text, self);
                     var chat = BuildSentChat(target, self?.id ?? 0);
@@ -2697,25 +2700,25 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
                     return msg;
                 }
-            case MtProtoTL.UpdateShortMessage m:
+            case UpdateShortMessage m:
                 {
                     var msg = BuildSimpleMessage(m.id, m.date, m.message, self);
                     msg["chat"] = new Dictionary<string, object> { ["id"] = m.user_id, ["type"] = "private" };
                     return msg;
                 }
-            case MtProtoTL.UpdateShortChatMessage m:
+            case UpdateShortChatMessage m:
                 {
                     var msg = BuildSimpleMessage(m.id, m.date, m.message, self);
                     msg["chat"] = new Dictionary<string, object> { ["id"] = m.chat_id, ["type"] = "group" };
                     return msg;
                 }
-            case MtProtoTL.Updates u:
+            case Updates u:
                 return BuildSentFromUpdates(u.updates, u.users, u.chats, self)
                     ?? throw new BotGatewayException(500, "sendMessage returned no message update");
-            case MtProtoTL.UpdatesCombined c:
+            case UpdatesCombined c:
                 return BuildSentFromUpdates(c.updates, c.users, c.chats, self)
                     ?? throw new BotGatewayException(500, "sendMessage returned no message update");
-            case MtProtoTL.UpdateShort s when s.update is MtProtoTL.UpdateNewMessage unm:
+            case UpdateShort s when s.update is UpdateNewMessage unm:
                 return BuildSentFromUpdates([unm], null, null, self)
                     ?? throw new BotGatewayException(500, "sendMessage returned no message update");
             default:
@@ -2724,10 +2727,10 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     private static Dictionary<string, object> BuildSentFromUpdates(
-        MtProtoTL.Update[] updates,
-        Dictionary<long, MtProtoTL.User> users,
-        Dictionary<long, MtProtoTL.ChatBase> chats,
-        MtProtoTL.User self)
+        Update[] updates,
+        Dictionary<long, User> users,
+        Dictionary<long, ChatBase> chats,
+        User self)
     {
         if (updates == null)
         {
@@ -2736,7 +2739,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         foreach (var u in updates)
         {
-            if (u is MtProtoTL.UpdateNewMessage unm && unm.message is MtProtoTL.Message m && m.id > 0)
+            if (u is UpdateNewMessage unm && unm.message is Message m && m.id > 0)
             {
                 var d = BuildMessage(m, users, chats);
                 if (self != null)
@@ -2751,7 +2754,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     private static Dictionary<string, object> BuildSimpleMessage(
-        int id, DateTime date, string text, MtProtoTL.User self)
+        int id, DateTime date, string text, User self)
     {
         var msg = new Dictionary<string, object>
         {
@@ -2772,12 +2775,12 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Bot API chat {id, type} по InputPeer цели отправки (для sendMessage).</summary>
-    internal static Dictionary<string, object> BuildSentChat(MtProtoTL.InputPeer target, long selfId) => target switch
+    internal static Dictionary<string, object> BuildSentChat(InputPeer target, long selfId) => target switch
     {
-        MtProtoTL.InputPeerUser u => new Dictionary<string, object> { ["id"] = u.user_id, ["type"] = "private" },
-        MtProtoTL.InputPeerChat c => new Dictionary<string, object> { ["id"] = c.chat_id, ["type"] = "group" },
-        MtProtoTL.InputPeerChannel ch => new Dictionary<string, object> { ["id"] = ch.channel_id, ["type"] = "channel" },
-        MtProtoTL.InputPeerSelf => new Dictionary<string, object> { ["id"] = selfId, ["type"] = "private" },
+        InputPeerUser u => new Dictionary<string, object> { ["id"] = u.user_id, ["type"] = "private" },
+        InputPeerChat c => new Dictionary<string, object> { ["id"] = c.chat_id, ["type"] = "group" },
+        InputPeerChannel ch => new Dictionary<string, object> { ["id"] = ch.channel_id, ["type"] = "channel" },
+        InputPeerSelf => new Dictionary<string, object> { ["id"] = selfId, ["type"] = "private" },
         _ => null,
     };
 
@@ -2849,15 +2852,15 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var connection = await GetConnectionAsync(botId, botToken, apiId, apiHash, ct).ConfigureAwait(false);
         var client = connection.Client;
 
-        var self = await client.GetUsersAsync([new MtProtoTL.InputUserSelf()], ct).ConfigureAwait(false);
-        if (self is not { Length: > 0 } || self[0] is not MtProtoTL.User selfUser)
+        var self = await client.GetUsersAsync([new InputUserSelf()], ct).ConfigureAwait(false);
+        if (self is not { Length: > 0 } || self[0] is not User selfUser)
         {
             return BotApiResult.Fail(500, "users.getUsers returned no self user");
         }
 
         var peer = ResolvePeer(args, selfUser.id);
 
-        MtProtoTL.InputMedia inputMedia;
+        InputMedia inputMedia;
         if (media is string fileId)
         {
             inputMedia = BuildReusedMedia(kind, fileId);
@@ -2870,7 +2873,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         }
 
         var (caption, entities) = ResolveTextAndEntities(args, ReadStringArg(args, "caption"));
-        var request = new MtProtoMethods.Messages_SendMedia
+        var request = new Messages_SendMedia
         {
             flags = 0,
             peer = peer,
@@ -2882,24 +2885,24 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var replyTo = ReadReplyToArg(args);
         if (replyTo != null)
         {
-            request.flags |= MtProtoMethods.Messages_SendMedia.Flags.has_reply_to;
+            request.flags |= Messages_SendMedia.Flags.has_reply_to;
             request.reply_to = replyTo;
         }
 
         var replyMarkup = ReadReplyMarkupArg(args);
         if (replyMarkup != null)
         {
-            request.flags |= MtProtoMethods.Messages_SendMedia.Flags.has_reply_markup;
+            request.flags |= Messages_SendMedia.Flags.has_reply_markup;
             request.reply_markup = replyMarkup;
         }
 
         if (entities is { Length: > 0 })
         {
-            request.flags |= MtProtoMethods.Messages_SendMedia.Flags.has_entities;
+            request.flags |= Messages_SendMedia.Flags.has_entities;
             request.entities = entities;
         }
 
-        var result = await client.InvokeAsync<MtProtoTL.UpdatesBase>(request, ct).ConfigureAwait(false);
+        var result = await client.InvokeAsync<UpdatesBase>(request, ct).ConfigureAwait(false);
         return BotApiResult.Success(BuildSentMessage(result, peer, selfUser, caption ?? ""));
     }
 
@@ -2917,15 +2920,15 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var connection = await GetConnectionAsync(botId, botToken, apiId, apiHash, ct).ConfigureAwait(false);
         var client = connection.Client;
 
-        var self = await client.GetUsersAsync([new MtProtoTL.InputUserSelf()], ct).ConfigureAwait(false);
-        if (self is not { Length: > 0 } || self[0] is not MtProtoTL.User selfUser)
+        var self = await client.GetUsersAsync([new InputUserSelf()], ct).ConfigureAwait(false);
+        if (self is not { Length: > 0 } || self[0] is not User selfUser)
         {
             return BotApiResult.Fail(500, "users.getUsers returned no self user");
         }
 
         var peer = ResolvePeer(args, selfUser.id);
 
-        var multi = new List<MtProtoTL.InputSingleMedia>();
+        var multi = new List<InputSingleMedia>();
         foreach (var item in mediaArray.Value.EnumerateArray())
         {
             multi.Add(await BuildSingleMediaAsync(client, item, args, ct).ConfigureAwait(false));
@@ -2936,7 +2939,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             return BotApiResult.Fail(400, "media must contain at least one item for sendMediaGroup");
         }
 
-        var request = new MtProtoMethods.Messages_SendMultiMedia
+        var request = new Messages_SendMultiMedia
         {
             flags = 0,
             peer = peer,
@@ -2946,16 +2949,16 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var replyTo = ReadReplyToArg(args);
         if (replyTo != null)
         {
-            request.flags |= MtProtoMethods.Messages_SendMultiMedia.Flags.has_reply_to;
+            request.flags |= Messages_SendMultiMedia.Flags.has_reply_to;
             request.reply_to = replyTo;
         }
 
-        var result = await client.InvokeAsync<MtProtoTL.UpdatesBase>(request, ct).ConfigureAwait(false);
+        var result = await client.InvokeAsync<UpdatesBase>(request, ct).ConfigureAwait(false);
         return BotApiResult.Success(ExtractSentMessages(result, selfUser));
     }
 
     /// <summary>Собирает один элемент альбома (InputSingleMedia): upload по attach://… либо file_id.</summary>
-    private static async Task<MtProtoTL.InputSingleMedia> BuildSingleMediaAsync(
+    private static async Task<InputSingleMedia> BuildSingleMediaAsync(
         MtProtoClient client, JsonElement item, IReadOnlyDictionary<string, object> args, CancellationToken ct)
     {
         if (item.ValueKind != JsonValueKind.Object)
@@ -2970,7 +2973,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             throw new BotGatewayException(400, "'media' is required for a sendMediaGroup item");
         }
 
-        MtProtoTL.InputMedia inputMedia;
+        InputMedia inputMedia;
         if (mediaRef.StartsWith("attach://", StringComparison.Ordinal))
         {
             var key = mediaRef["attach://".Length..];
@@ -2988,7 +2991,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         }
 
         var (caption, entities) = ResolveCaptionAndEntities(item);
-        var single = new MtProtoTL.InputSingleMedia
+        var single = new InputSingleMedia
         {
             flags = 0,
             media = inputMedia,
@@ -2998,7 +3001,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         if (entities is { Length: > 0 })
         {
-            single.flags |= MtProtoTL.InputSingleMedia.Flags.has_entities;
+            single.flags |= InputSingleMedia.Flags.has_entities;
             single.entities = entities;
         }
 
@@ -3015,25 +3018,25 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     };
 
     /// <summary>Извлекает все сообщения альбома из результата sendMultiMedia в Bot API message-объекты.</summary>
-    private static Dictionary<string, object>[] ExtractSentMessages(MtProtoTL.UpdatesBase result, MtProtoTL.User self)
+    private static Dictionary<string, object>[] ExtractSentMessages(UpdatesBase result, User self)
     {
-        Dictionary<long, MtProtoTL.User> users = null;
-        Dictionary<long, MtProtoTL.ChatBase> chats = null;
+        Dictionary<long, User> users = null;
+        Dictionary<long, ChatBase> chats = null;
 
-        MtProtoTL.Update[] updates;
+        Update[] updates;
         switch (result)
         {
-            case MtProtoTL.Updates u:
+            case Updates u:
                 updates = u.updates;
                 users = u.users;
                 chats = u.chats;
                 break;
-            case MtProtoTL.UpdatesCombined c:
+            case UpdatesCombined c:
                 updates = c.updates;
                 users = c.users;
                 chats = c.chats;
                 break;
-            case MtProtoTL.UpdateShort s when s.update is MtProtoTL.UpdateNewMessage:
+            case UpdateShort s when s.update is UpdateNewMessage:
                 updates = [s.update];
                 break;
             default:
@@ -3045,7 +3048,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         {
             foreach (var u in updates)
             {
-                if (u is MtProtoTL.UpdateNewMessage unm && unm.message is MtProtoTL.Message m && m.id > 0)
+                if (u is UpdateNewMessage unm && unm.message is Message m && m.id > 0)
                 {
                     var message = BuildMessage(m, users, chats);
                     if (self != null)
@@ -3067,22 +3070,22 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Повторная отправка уже загруженного медиа по file_id (InputMediaPhoto / InputMediaDocument).</summary>
-    private static MtProtoTL.InputMedia BuildReusedMedia(MediaType kind, string fileId)
+    private static InputMedia BuildReusedMedia(MediaType kind, string fileId)
         => kind == MediaType.Photo
-            ? new MtProtoTL.InputMediaPhoto { flags = 0, id = DecodeInputPhoto(fileId) }
-            : new MtProtoTL.InputMediaDocument { flags = 0, id = DecodeInputDocument(fileId) };
+            ? new InputMediaPhoto { flags = 0, id = DecodeInputPhoto(fileId) }
+            : new InputMediaDocument { flags = 0, id = DecodeInputDocument(fileId) };
 
     /// <summary>Новое медиа из загруженного файла (InputMediaUploadedPhoto / InputMediaUploadedDocument).</summary>
-    private static MtProtoTL.InputMedia BuildUploadedMedia(
-        MediaType kind, BotUploadFile upload, MtProtoTL.InputFileBase file, IReadOnlyDictionary<string, object> args)
+    private static InputMedia BuildUploadedMedia(
+        MediaType kind, BotUploadFile upload, InputFileBase file, IReadOnlyDictionary<string, object> args)
     {
         if (kind == MediaType.Photo)
         {
-            return new MtProtoTL.InputMediaUploadedPhoto { flags = 0, file = file };
+            return new InputMediaUploadedPhoto { flags = 0, file = file };
         }
 
         var mime = string.IsNullOrEmpty(upload.MimeType) ? "application/octet-stream" : upload.MimeType;
-        return new MtProtoTL.InputMediaUploadedDocument
+        return new InputMediaUploadedDocument
         {
             flags = 0,
             file = file,
@@ -3092,16 +3095,16 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Документное медиа в альбоме (параметры читаются из JSON-элемента).</summary>
-    private static MtProtoTL.InputMedia BuildGroupUploadedMedia(
-        MediaType kind, BotUploadFile upload, MtProtoTL.InputFileBase file, JsonElement item)
+    private static InputMedia BuildGroupUploadedMedia(
+        MediaType kind, BotUploadFile upload, InputFileBase file, JsonElement item)
     {
         if (kind == MediaType.Photo)
         {
-            return new MtProtoTL.InputMediaUploadedPhoto { flags = 0, file = file };
+            return new InputMediaUploadedPhoto { flags = 0, file = file };
         }
 
         var mime = string.IsNullOrEmpty(upload.MimeType) ? "application/octet-stream" : upload.MimeType;
-        return new MtProtoTL.InputMediaUploadedDocument
+        return new InputMediaUploadedDocument
         {
             flags = 0,
             file = file,
@@ -3111,87 +3114,87 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Собирает DocumentAttribute* для одиночной отправки (из аргументов Bot API).</summary>
-    private static MtProtoTL.DocumentAttribute[] BuildDocumentAttributes(
+    private static DocumentAttribute[] BuildDocumentAttributes(
         MediaType kind, BotUploadFile upload, IReadOnlyDictionary<string, object> args)
     {
         var fileName = string.IsNullOrEmpty(upload.FileName) ? "file" : upload.FileName;
         switch (kind)
         {
             case MediaType.Document:
-                return [new MtProtoTL.DocumentAttributeFilename { file_name = fileName }];
+                return [new DocumentAttributeFilename { file_name = fileName }];
             case MediaType.Audio:
                 {
-                    var audio = new MtProtoTL.DocumentAttributeAudio { flags = 0, duration = (int)ReadIntArg(args, "duration", 0) };
+                    var audio = new DocumentAttributeAudio { flags = 0, duration = (int)ReadIntArg(args, "duration", 0) };
                     var title = ReadStringArg(args, "title");
                     var performer = ReadStringArg(args, "performer");
                     if (!string.IsNullOrEmpty(title))
                     {
-                        audio.flags |= MtProtoTL.DocumentAttributeAudio.Flags.has_title;
+                        audio.flags |= DocumentAttributeAudio.Flags.has_title;
                         audio.title = title;
                     }
 
                     if (!string.IsNullOrEmpty(performer))
                     {
-                        audio.flags |= MtProtoTL.DocumentAttributeAudio.Flags.has_performer;
+                        audio.flags |= DocumentAttributeAudio.Flags.has_performer;
                         audio.performer = performer;
                     }
 
-                    return [audio, new MtProtoTL.DocumentAttributeFilename { file_name = fileName }];
+                    return [audio, new DocumentAttributeFilename { file_name = fileName }];
                 }
             case MediaType.Video:
                 {
-                    MtProtoTL.DocumentAttributeVideo.Flags flags = 0;
+                    DocumentAttributeVideo.Flags flags = 0;
                     if (ReadIntArg(args, "supports_streaming", 1) != 0)
                     {
-                        flags |= MtProtoTL.DocumentAttributeVideo.Flags.supports_streaming;
+                        flags |= DocumentAttributeVideo.Flags.supports_streaming;
                     }
 
                     return
                     [
-                        new MtProtoTL.DocumentAttributeVideo
+                        new DocumentAttributeVideo
                         {
                             flags = flags,
                             duration = ReadIntArg(args, "duration", 0),
                             w = (int)ReadIntArg(args, "width", 0),
                             h = (int)ReadIntArg(args, "height", 0),
                         },
-                        new MtProtoTL.DocumentAttributeFilename { file_name = fileName },
+                        new DocumentAttributeFilename { file_name = fileName },
                     ];
                 }
             case MediaType.Animation:
                 return
                 [
-                    new MtProtoTL.DocumentAttributeAnimated(),
-                    new MtProtoTL.DocumentAttributeFilename { file_name = fileName },
+                    new DocumentAttributeAnimated(),
+                    new DocumentAttributeFilename { file_name = fileName },
                 ];
             case MediaType.Voice:
                 return
                 [
-                    new MtProtoTL.DocumentAttributeAudio { flags = MtProtoTL.DocumentAttributeAudio.Flags.voice, duration = (int)ReadIntArg(args, "duration", 0) },
-                    new MtProtoTL.DocumentAttributeFilename { file_name = fileName },
+                    new DocumentAttributeAudio { flags = DocumentAttributeAudio.Flags.voice, duration = (int)ReadIntArg(args, "duration", 0) },
+                    new DocumentAttributeFilename { file_name = fileName },
                 ];
             case MediaType.VideoNote:
                 {
                     var length = (int)ReadIntArg(args, "length", 0);
                     return
                     [
-                        new MtProtoTL.DocumentAttributeVideo { flags = MtProtoTL.DocumentAttributeVideo.Flags.round_message, duration = ReadIntArg(args, "duration", 0), w = length, h = length },
-                        new MtProtoTL.DocumentAttributeFilename { file_name = fileName },
+                        new DocumentAttributeVideo { flags = DocumentAttributeVideo.Flags.round_message, duration = ReadIntArg(args, "duration", 0), w = length, h = length },
+                        new DocumentAttributeFilename { file_name = fileName },
                     ];
                 }
             case MediaType.Sticker:
                 return
                 [
-                    new MtProtoTL.DocumentAttributeSticker { flags = 0, alt = ReadStringArg(args, "emoji") ?? "", stickerset = null },
-                    new MtProtoTL.DocumentAttributeFilename { file_name = fileName },
+                    new DocumentAttributeSticker { flags = 0, alt = ReadStringArg(args, "emoji") ?? "", stickerset = null },
+                    new DocumentAttributeFilename { file_name = fileName },
                 ];
             default:
-                return [new MtProtoTL.DocumentAttributeFilename { file_name = fileName }];
+                return [new DocumentAttributeFilename { file_name = fileName }];
         }
     }
 
     /// <summary>Собирает DocumentAttribute* для элемента альбома (из JSON-полей элемента).</summary>
-    private static MtProtoTL.DocumentAttribute[] BuildGroupDocumentAttributes(
+    private static DocumentAttribute[] BuildGroupDocumentAttributes(
         MediaType kind, BotUploadFile upload, JsonElement item)
     {
         var fileName = string.IsNullOrEmpty(upload.FileName) ? "file" : upload.FileName;
@@ -3199,57 +3202,57 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         {
             case MediaType.Video:
                 {
-                    MtProtoTL.DocumentAttributeVideo.Flags flags = 0;
+                    DocumentAttributeVideo.Flags flags = 0;
                     if (!GetJsonFalse(item, "supports_streaming"))
                     {
-                        flags |= MtProtoTL.DocumentAttributeVideo.Flags.supports_streaming;
+                        flags |= DocumentAttributeVideo.Flags.supports_streaming;
                     }
 
                     return
                     [
-                        new MtProtoTL.DocumentAttributeVideo
+                        new DocumentAttributeVideo
                         {
                             flags = flags,
                             duration = GetJsonLong(item, "duration"),
                             w = (int)GetJsonLong(item, "width"),
                             h = (int)GetJsonLong(item, "height"),
                         },
-                        new MtProtoTL.DocumentAttributeFilename { file_name = fileName },
+                        new DocumentAttributeFilename { file_name = fileName },
                     ];
                 }
             case MediaType.Audio:
                 {
-                    var audio = new MtProtoTL.DocumentAttributeAudio { flags = 0, duration = (int)GetJsonLong(item, "duration") };
+                    var audio = new DocumentAttributeAudio { flags = 0, duration = (int)GetJsonLong(item, "duration") };
                     var title = GetJsonString(item, "title");
                     var performer = GetJsonString(item, "performer");
                     if (!string.IsNullOrEmpty(title))
                     {
-                        audio.flags |= MtProtoTL.DocumentAttributeAudio.Flags.has_title;
+                        audio.flags |= DocumentAttributeAudio.Flags.has_title;
                         audio.title = title;
                     }
 
                     if (!string.IsNullOrEmpty(performer))
                     {
-                        audio.flags |= MtProtoTL.DocumentAttributeAudio.Flags.has_performer;
+                        audio.flags |= DocumentAttributeAudio.Flags.has_performer;
                         audio.performer = performer;
                     }
 
-                    return [audio, new MtProtoTL.DocumentAttributeFilename { file_name = fileName }];
+                    return [audio, new DocumentAttributeFilename { file_name = fileName }];
                 }
             default:
-                return [new MtProtoTL.DocumentAttributeFilename { file_name = fileName }];
+                return [new DocumentAttributeFilename { file_name = fileName }];
         }
     }
 
     /// <summary>Загружает файл и строит InputFile / InputFileBig (порог 10 МиБ).</summary>
-    private static async Task<MtProtoTL.InputFileBase> UploadMediaAsync(MtProtoClient client, BotUploadFile upload, CancellationToken ct)
+    private static async Task<InputFileBase> UploadMediaAsync(MtProtoClient client, BotUploadFile upload, CancellationToken ct)
     {
         var fileId = NextRandomId();
         var parts = await client.UploadFileAsync(fileId, upload.Stream, ct).ConfigureAwait(false);
         var name = string.IsNullOrEmpty(upload.FileName) ? "file" : upload.FileName;
         return upload.Stream.Length > MtProtoClient.BigFileThreshold
-            ? new MtProtoTL.InputFileBig { id = fileId, parts = parts, name = name }
-            : new MtProtoTL.InputFile { id = fileId, parts = parts, name = name, md5_checksum = "" };
+            ? new InputFileBig { id = fileId, parts = parts, name = name }
+            : new InputFile { id = fileId, parts = parts, name = name, md5_checksum = "" };
     }
 
     private static long NextRandomId() => BitConverter.ToInt64(MtProtoCrypto.RandomBytes(8), 0);
@@ -3266,7 +3269,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Собирает InputReplyToMessage из <c>reply_to_message_id</c>; аргумент отсутствует — null.</summary>
-    internal static MtProtoTL.InputReplyTo ReadReplyToArg(IReadOnlyDictionary<string, object> args)
+    internal static InputReplyTo ReadReplyToArg(IReadOnlyDictionary<string, object> args)
     {
         var replyToMessageId = ReadIntArg(args, "reply_to_message_id", 0);
         if (replyToMessageId == 0)
@@ -3274,11 +3277,11 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             return null;
         }
 
-        return new MtProtoTL.InputReplyToMessage { flags = 0, reply_to_msg_id = (int)replyToMessageId };
+        return new InputReplyToMessage { flags = 0, reply_to_msg_id = (int)replyToMessageId };
     }
 
     /// <summary>Разбирает <c>reply_markup</c> (JSON-объект или строка) в ReplyMarkup; отсутствует/некорректен — null.</summary>
-    internal static MtProtoTL.ReplyMarkup ReadReplyMarkupArg(IReadOnlyDictionary<string, object> args)
+    internal static ReplyMarkup ReadReplyMarkupArg(IReadOnlyDictionary<string, object> args)
     {
         if (args == null || !args.TryGetValue("reply_markup", out var raw) || raw == null)
         {
@@ -3307,7 +3310,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         }
     }
 
-    private static MtProtoTL.ReplyMarkup BuildReplyMarkup(JsonElement root)
+    private static ReplyMarkup BuildReplyMarkup(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object)
         {
@@ -3316,70 +3319,70 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
 
         if (root.TryGetProperty("inline_keyboard", out var inline) && inline.ValueKind == JsonValueKind.Array)
         {
-            return new MtProtoTL.ReplyInlineMarkup { flags = 0, rows = BuildInlineButtons(inline) };
+            return new ReplyInlineMarkup { flags = 0, rows = BuildInlineButtons(inline) };
         }
 
         if (root.TryGetProperty("keyboard", out var keyboard) && keyboard.ValueKind == JsonValueKind.Array)
         {
-            MtProtoTL.ReplyKeyboardMarkup.Flags flags = 0;
+            ReplyKeyboardMarkup.Flags flags = 0;
             if (!GetJsonFalse(root, "resize_keyboard"))
             {
-                flags |= MtProtoTL.ReplyKeyboardMarkup.Flags.resize;
+                flags |= ReplyKeyboardMarkup.Flags.resize;
             }
 
             if (GetJsonTrue(root, "one_time_keyboard"))
             {
-                flags |= MtProtoTL.ReplyKeyboardMarkup.Flags.single_use;
+                flags |= ReplyKeyboardMarkup.Flags.single_use;
             }
 
             if (GetJsonTrue(root, "selective"))
             {
-                flags |= MtProtoTL.ReplyKeyboardMarkup.Flags.selective;
+                flags |= ReplyKeyboardMarkup.Flags.selective;
             }
 
             var placeholder = GetJsonString(root, "input_field_placeholder");
             if (!string.IsNullOrEmpty(placeholder))
             {
-                flags |= MtProtoTL.ReplyKeyboardMarkup.Flags.has_placeholder;
+                flags |= ReplyKeyboardMarkup.Flags.has_placeholder;
             }
 
-            return new MtProtoTL.ReplyKeyboardMarkup { flags = flags, rows = BuildKeyboardButtons(keyboard), placeholder = placeholder };
+            return new ReplyKeyboardMarkup { flags = flags, rows = BuildKeyboardButtons(keyboard), placeholder = placeholder };
         }
 
         if (GetJsonTrue(root, "force_reply"))
         {
-            MtProtoTL.ReplyKeyboardForceReply.Flags flags = 0;
+            ReplyKeyboardForceReply.Flags flags = 0;
             if (GetJsonTrue(root, "selective"))
             {
-                flags |= MtProtoTL.ReplyKeyboardForceReply.Flags.selective;
+                flags |= ReplyKeyboardForceReply.Flags.selective;
             }
 
             var placeholder = GetJsonString(root, "input_field_placeholder");
             if (!string.IsNullOrEmpty(placeholder))
             {
-                flags |= MtProtoTL.ReplyKeyboardForceReply.Flags.has_placeholder;
+                flags |= ReplyKeyboardForceReply.Flags.has_placeholder;
             }
 
-            return new MtProtoTL.ReplyKeyboardForceReply { flags = flags, placeholder = placeholder };
+            return new ReplyKeyboardForceReply { flags = flags, placeholder = placeholder };
         }
 
         if (GetJsonTrue(root, "remove_keyboard"))
         {
-            MtProtoTL.ReplyKeyboardHide.Flags flags = 0;
+            ReplyKeyboardHide.Flags flags = 0;
             if (GetJsonTrue(root, "selective"))
             {
-                flags |= MtProtoTL.ReplyKeyboardHide.Flags.selective;
+                flags |= ReplyKeyboardHide.Flags.selective;
             }
 
-            return new MtProtoTL.ReplyKeyboardHide { flags = flags };
+            return new ReplyKeyboardHide { flags = flags };
         }
 
         return null;
     }
 
-    private static MtProtoTL.KeyboardInlineButtonRow[] BuildInlineButtons(JsonElement rows)
+    private static KeyboardInlineButtonRow[] BuildInlineButtons(JsonElement rows)
     {
-        var result = new List<MtProtoTL.KeyboardInlineButtonRow>();
+        var result = new List<KeyboardInlineButtonRow>();
         foreach (var row in rows.EnumerateArray())
         {
             if (row.ValueKind != JsonValueKind.Array)
@@ -3387,7 +3390,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 continue;
             }
 
-            var buttons = new List<MtProtoTL.KeyboardInlineButton>();
+            var buttons = new List<KeyboardInlineButton>();
             foreach (var b in row.EnumerateArray())
             {
                 var button = BuildInlineButton(b);
@@ -3397,13 +3400,13 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 }
             }
 
-            result.Add(new MtProtoTL.KeyboardInlineButtonRow { buttons = [.. buttons] });
+            result.Add(new KeyboardInlineButtonRow { buttons = [.. buttons] });
         }
 
         return [.. result];
     }
 
-    private static MtProtoTL.KeyboardInlineButton BuildInlineButton(JsonElement b)
+    private static KeyboardInlineButton BuildInlineButton(JsonElement b)
     {
         if (b.ValueKind != JsonValueKind.Object)
         {
@@ -3422,38 +3425,38 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var switchInlineCurrent = GetJsonString(b, "switch_inline_query_current_chat");
         var webApp = b.TryGetProperty("web_app", out var wa) ? wa : default;
 
-        MtProtoTL.InlineButtonType type;
+        InlineButtonType type;
         if (callbackData != null)
         {
-            type = new MtProtoTL.InlineButtonTypeCallback { flags = 0, data = Encoding.UTF8.GetBytes(callbackData) };
+            type = new InlineButtonTypeCallback { flags = 0, data = Encoding.UTF8.GetBytes(callbackData) };
         }
         else if (url != null)
         {
-            type = new MtProtoTL.InlineButtonTypeUrl { url = url };
+            type = new InlineButtonTypeUrl { url = url };
         }
         else if (webApp.ValueKind == JsonValueKind.Object && GetJsonString(webApp, "url") is string webUrl and not null)
         {
-            type = new MtProtoTL.InlineButtonTypeWebView { url = webUrl };
+            type = new InlineButtonTypeWebView { url = webUrl };
         }
         else if (switchInline != null)
         {
-            type = new MtProtoTL.InlineButtonTypeSwitchInline { flags = 0, query = switchInline };
+            type = new InlineButtonTypeSwitchInline { flags = 0, query = switchInline };
         }
         else if (switchInlineCurrent != null)
         {
-            type = new MtProtoTL.InlineButtonTypeSwitchInline { flags = MtProtoTL.InlineButtonTypeSwitchInline.Flags.same_peer, query = switchInlineCurrent };
+            type = new InlineButtonTypeSwitchInline { flags = InlineButtonTypeSwitchInline.Flags.same_peer, query = switchInlineCurrent };
         }
         else
         {
             return null; // неизвестный тип inline-кнопки пропускаем
         }
 
-        return new MtProtoTL.KeyboardInlineButton { flags = 0, text = text, type = type };
+        return new KeyboardInlineButton { flags = 0, text = text, type = type };
     }
 
-    private static MtProtoTL.KeyboardButtonRow[] BuildKeyboardButtons(JsonElement rows)
+    private static KeyboardButtonRow[] BuildKeyboardButtons(JsonElement rows)
     {
-        var result = new List<MtProtoTL.KeyboardButtonRow>();
+        var result = new List<KeyboardButtonRow>();
         foreach (var row in rows.EnumerateArray())
         {
             if (row.ValueKind != JsonValueKind.Array)
@@ -3461,7 +3464,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 continue;
             }
 
-            var buttons = new List<MtProtoTL.KeyboardButton>();
+            var buttons = new List<KeyboardButton>();
             foreach (var b in row.EnumerateArray())
             {
                 var button = BuildKeyboardButton(b);
@@ -3471,13 +3474,13 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
                 }
             }
 
-            result.Add(new MtProtoTL.KeyboardButtonRow { buttons = [.. buttons] });
+            result.Add(new KeyboardButtonRow { buttons = [.. buttons] });
         }
 
         return [.. result];
     }
 
-    private static MtProtoTL.KeyboardButton BuildKeyboardButton(JsonElement b)
+    private static KeyboardButton BuildKeyboardButton(JsonElement b)
     {
         if (b.ValueKind != JsonValueKind.Object)
         {
@@ -3490,33 +3493,33 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             return null;
         }
 
-        MtProtoTL.ButtonType type = null; // buttonTypeDefault — обычная текстовая кнопка
+        ButtonType type = null; // buttonTypeDefault — обычная текстовая кнопка
         if (GetJsonTrue(b, "request_contact") || GetJsonTrue(b, "request_phone"))
         {
-            type = new MtProtoTL.ButtonTypeRequestPhone();
+            type = new ButtonTypeRequestPhone();
         }
         else if (GetJsonTrue(b, "request_location"))
         {
-            type = new MtProtoTL.ButtonTypeRequestGeoLocation();
+            type = new ButtonTypeRequestGeoLocation();
         }
         else if (b.TryGetProperty("request_poll", out var poll) && poll.ValueKind == JsonValueKind.Object)
         {
-            type = new MtProtoTL.ButtonTypeRequestPoll { flags = 0 };
+            type = new ButtonTypeRequestPoll { flags = 0 };
         }
         else if (b.TryGetProperty("web_app", out var wa) && wa.ValueKind == JsonValueKind.Object
                  && GetJsonString(wa, "url") is string webUrl and not null)
         {
-            type = new MtProtoTL.ButtonTypeSimpleWebView { url = webUrl };
+            type = new ButtonTypeSimpleWebView { url = webUrl };
         }
 
-        return new MtProtoTL.KeyboardButton { flags = 0, text = text, type = type };
+        return new KeyboardButton { flags = 0, text = text, type = type };
     }
 
     /// <summary>
     /// Читает сущности текста: готовый массив <c>entities</c> имеет приоритет; иначе применяется
     /// <c>parse_mode</c>. Возвращает (итоговый текст, сущности). HTML разбирается локально, Markdown — нет.
     /// </summary>
-    internal static (string Text, MtProtoTL.MessageEntity[] Entities) ResolveTextAndEntities(
+    internal static (string Text, MessageEntity[] Entities) ResolveTextAndEntities(
         IReadOnlyDictionary<string, object> args, string text)
     {
         var entities = ParseEntitiesArrayArg(args, "entities");
@@ -3528,7 +3531,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         return ApplyParseMode(text, ReadStringArg(args, "parse_mode"));
     }
 
-    private static (string Text, MtProtoTL.MessageEntity[] Entities) ApplyParseMode(string text, string parseMode)
+    private static (string Text, MessageEntity[] Entities) ApplyParseMode(string text, string parseMode)
     {
         if (string.IsNullOrWhiteSpace(parseMode))
         {
@@ -3543,7 +3546,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         };
     }
 
-    private static (string Text, MtProtoTL.MessageEntity[] Entities) ResolveCaptionAndEntities(JsonElement item)
+    private static (string Text, MessageEntity[] Entities) ResolveCaptionAndEntities(JsonElement item)
     {
         var caption = GetJsonString(item, "caption");
         var entities = ParseEntitiesProp(item, "caption_entities");
@@ -3556,7 +3559,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Разрешает подпись из top-level аргументов Bot API (caption + caption_entities + parse_mode).</summary>
-    private static (string Text, MtProtoTL.MessageEntity[] Entities) ResolveCaptionAndEntities(
+    private static (string Text, MessageEntity[] Entities) ResolveCaptionAndEntities(
         IReadOnlyDictionary<string, object> args, string caption)
     {
         var entities = ParseEntitiesArrayArg(args, "caption_entities");
@@ -3569,7 +3572,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Читает <c>entities</c> из аргументов (JSON-массив или строка) и конвертирует в MTProto MessageEntity[].</summary>
-    private static MtProtoTL.MessageEntity[] ParseEntitiesArrayArg(IReadOnlyDictionary<string, object> args, string name)
+    private static MessageEntity[] ParseEntitiesArrayArg(IReadOnlyDictionary<string, object> args, string name)
     {
         if (args == null || !args.TryGetValue(name, out var raw) || raw == null)
         {
@@ -3598,7 +3601,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         }
     }
 
-    private static MtProtoTL.MessageEntity[] ParseEntitiesProp(JsonElement parent, string name)
+    private static MessageEntity[] ParseEntitiesProp(JsonElement parent, string name)
     {
         if (parent.ValueKind != JsonValueKind.Object || !parent.TryGetProperty(name, out var v) || v.ValueKind != JsonValueKind.Array)
         {
@@ -3608,9 +3611,9 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         return ConvertEntities(v);
     }
 
-    private static MtProtoTL.MessageEntity[] ConvertEntities(JsonElement array)
+    private static MessageEntity[] ConvertEntities(JsonElement array)
     {
-        var list = new List<MtProtoTL.MessageEntity>();
+        var list = new List<MessageEntity>();
         foreach (var e in array.EnumerateArray())
         {
             var entity = BuildBotApiEntity(e);
@@ -3624,7 +3627,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     }
 
     /// <summary>Конвертирует Bot API MessageEntity-объект в MTProto MessageEntity (offset/length берутся как есть).</summary>
-    private static MtProtoTL.MessageEntity BuildBotApiEntity(JsonElement e)
+    private static MessageEntity BuildBotApiEntity(JsonElement e)
     {
         if (e.ValueKind != JsonValueKind.Object)
         {
@@ -3641,28 +3644,28 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         var length = (int)GetJsonLong(e, "length");
         switch (type)
         {
-            case "bold": return new MtProtoTL.MessageEntityBold { offset = offset, length = length };
-            case "italic": return new MtProtoTL.MessageEntityItalic { offset = offset, length = length };
-            case "underline": return new MtProtoTL.MessageEntityUnderline { offset = offset, length = length };
-            case "strikethrough": return new MtProtoTL.MessageEntityStrike { offset = offset, length = length };
-            case "spoiler": return new MtProtoTL.MessageEntitySpoiler { offset = offset, length = length };
-            case "blockquote": return new MtProtoTL.MessageEntityBlockquote { offset = offset, length = length };
-            case "code": return new MtProtoTL.MessageEntityCode { offset = offset, length = length };
-            case "pre": return new MtProtoTL.MessageEntityPre { offset = offset, length = length, language = GetJsonString(e, "language") ?? "" };
-            case "text_link": return new MtProtoTL.MessageEntityTextUrl { offset = offset, length = length, url = GetJsonString(e, "url") ?? "" };
-            case "custom_emoji": return new MtProtoTL.MessageEntityCustomEmoji { offset = offset, length = length, document_id = GetJsonLong(e, "custom_emoji_id") };
+            case "bold": return new MessageEntityBold { offset = offset, length = length };
+            case "italic": return new MessageEntityItalic { offset = offset, length = length };
+            case "underline": return new MessageEntityUnderline { offset = offset, length = length };
+            case "strikethrough": return new MessageEntityStrike { offset = offset, length = length };
+            case "spoiler": return new MessageEntitySpoiler { offset = offset, length = length };
+            case "blockquote": return new MessageEntityBlockquote { offset = offset, length = length };
+            case "code": return new MessageEntityCode { offset = offset, length = length };
+            case "pre": return new MessageEntityPre { offset = offset, length = length, language = GetJsonString(e, "language") ?? "" };
+            case "text_link": return new MessageEntityTextUrl { offset = offset, length = length, url = GetJsonString(e, "url") ?? "" };
+            case "custom_emoji": return new MessageEntityCustomEmoji { offset = offset, length = length, document_id = GetJsonLong(e, "custom_emoji_id") };
             case "text_mention":
                 {
                     var userId = e.TryGetProperty("user", out var u) && u.ValueKind == JsonValueKind.Object ? GetJsonLong(u, "id") : 0;
-                    return new MtProtoTL.InputMessageEntityMentionName { offset = offset, length = length, user_id = new MtProtoTL.InputUser { user_id = userId, access_hash = 0 } };
+                    return new InputMessageEntityMentionName { offset = offset, length = length, user_id = new InputUser { user_id = userId, access_hash = 0 } };
                 }
-            case "mention": return new MtProtoTL.MessageEntityMention { offset = offset, length = length };
-            case "hashtag": return new MtProtoTL.MessageEntityHashtag { offset = offset, length = length };
-            case "cashtag": return new MtProtoTL.MessageEntityCashtag { offset = offset, length = length };
-            case "bot_command": return new MtProtoTL.MessageEntityBotCommand { offset = offset, length = length };
-            case "url": return new MtProtoTL.MessageEntityUrl { offset = offset, length = length };
-            case "email": return new MtProtoTL.MessageEntityEmail { offset = offset, length = length };
-            case "phone": return new MtProtoTL.MessageEntityPhone { offset = offset, length = length };
+            case "mention": return new MessageEntityMention { offset = offset, length = length };
+            case "hashtag": return new MessageEntityHashtag { offset = offset, length = length };
+            case "cashtag": return new MessageEntityCashtag { offset = offset, length = length };
+            case "bot_command": return new MessageEntityBotCommand { offset = offset, length = length };
+            case "url": return new MessageEntityUrl { offset = offset, length = length };
+            case "email": return new MessageEntityEmail { offset = offset, length = length };
+            case "phone": return new MessageEntityPhone { offset = offset, length = length };
             default: return null;
         }
     }
@@ -3671,10 +3674,10 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     /// Микро-парсер HTML-разметки в текст + MessageEntity[]. Поддерживает b/strong, i/em, code, pre,
     /// a (href), s/strike/del, u, blockquote, tg-spoiler, span[class~=tg-spoiler]. Смещения — в UTF-16 code units.
     /// </summary>
-    private static (string Text, MtProtoTL.MessageEntity[] Entities) ParseHtml(string html)
+    private static (string Text, MessageEntity[] Entities) ParseHtml(string html)
     {
         var sb = new StringBuilder(html.Length);
-        var entities = new List<MtProtoTL.MessageEntity>();
+        var entities = new List<MessageEntity>();
         var stack = new Stack<HtmlTag>();
 
         var i = 0;
@@ -3776,41 +3779,41 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         {
             case "b":
             case "strong":
-                return new HtmlTag("b", offset, (o, l) => new MtProtoTL.MessageEntityBold { offset = o, length = l });
+                return new HtmlTag("b", offset, (o, l) => new MessageEntityBold { offset = o, length = l });
             case "i":
             case "em":
-                return new HtmlTag("i", offset, (o, l) => new MtProtoTL.MessageEntityItalic { offset = o, length = l });
+                return new HtmlTag("i", offset, (o, l) => new MessageEntityItalic { offset = o, length = l });
             case "code":
-                return new HtmlTag("code", offset, (o, l) => new MtProtoTL.MessageEntityCode { offset = o, length = l });
+                return new HtmlTag("code", offset, (o, l) => new MessageEntityCode { offset = o, length = l });
             case "pre":
-                return new HtmlTag("pre", offset, (o, l) => new MtProtoTL.MessageEntityPre { offset = o, length = l, language = GetHtmlAttribute(attrs, "language") ?? "" });
+                return new HtmlTag("pre", offset, (o, l) => new MessageEntityPre { offset = o, length = l, language = GetHtmlAttribute(attrs, "language") ?? "" });
             case "a":
-                return new HtmlTag("a", offset, (o, l) => new MtProtoTL.MessageEntityTextUrl { offset = o, length = l, url = GetHtmlAttribute(attrs, "href") ?? "" });
+                return new HtmlTag("a", offset, (o, l) => new MessageEntityTextUrl { offset = o, length = l, url = GetHtmlAttribute(attrs, "href") ?? "" });
             case "s":
             case "strike":
             case "del":
-                return new HtmlTag("s", offset, (o, l) => new MtProtoTL.MessageEntityStrike { offset = o, length = l });
+                return new HtmlTag("s", offset, (o, l) => new MessageEntityStrike { offset = o, length = l });
             case "u":
-                return new HtmlTag("u", offset, (o, l) => new MtProtoTL.MessageEntityUnderline { offset = o, length = l });
+                return new HtmlTag("u", offset, (o, l) => new MessageEntityUnderline { offset = o, length = l });
             case "blockquote":
-                return new HtmlTag("blockquote", offset, (o, l) => new MtProtoTL.MessageEntityBlockquote { offset = o, length = l });
+                return new HtmlTag("blockquote", offset, (o, l) => new MessageEntityBlockquote { offset = o, length = l });
             case "tg-spoiler":
-                return new HtmlTag("tg-spoiler", offset, (o, l) => new MtProtoTL.MessageEntitySpoiler { offset = o, length = l });
+                return new HtmlTag("tg-spoiler", offset, (o, l) => new MessageEntitySpoiler { offset = o, length = l });
             case "span":
                 var cls = GetHtmlAttribute(attrs, "class") ?? "";
                 return cls.Contains("tg-spoiler", StringComparison.OrdinalIgnoreCase)
-                    ? new HtmlTag("span", offset, (o, l) => new MtProtoTL.MessageEntitySpoiler { offset = o, length = l })
+                    ? new HtmlTag("span", offset, (o, l) => new MessageEntitySpoiler { offset = o, length = l })
                     : null;
             default:
                 return null;
         }
     }
 
-    private sealed class HtmlTag(string name, int offset, Func<int, int, MtProtoTL.MessageEntity> create)
+    private sealed class HtmlTag(string name, int offset, Func<int, int, MessageEntity> create)
     {
         public string Name { get; } = name;
         public int Offset { get; } = offset;
-        public Func<int, int, MtProtoTL.MessageEntity> Create { get; } = create;
+        public Func<int, int, MessageEntity> Create { get; } = create;
     }
 
     private static JsonElement? ReadJsonArrayArg(IReadOnlyDictionary<string, object> args, string name)
@@ -3922,7 +3925,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     /// [0]=type(2), [1:5]=dc_id(int32), [5:13]=id(uint64), [13:21]=access_hash(uint64), [21:]=file_reference.
     /// Смещения сверены с общепринятой раскладкой Bot API file_id, но требуют ручной проверки на реальных ID.
     /// </summary>
-    internal static MtProtoTL.InputPhoto DecodeInputPhoto(string fileId)
+    internal static InputPhoto DecodeInputPhoto(string fileId)
     {
         var data = DecodeFileIdBytes(fileId);
         if (data.Length < 21 || data[0] != 2)
@@ -3930,7 +3933,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             throw new BotGatewayException(400, "invalid photo file_id");
         }
 
-        return new MtProtoTL.InputPhoto
+        return new InputPhoto
         {
             id = BitConverter.ToInt64(data, 5),
             access_hash = BitConverter.ToInt64(data, 13),
@@ -3943,7 +3946,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
     /// [0]=type(5|8), [1]=subtype, [2:6]=dc_id(int32), [6:14]=id(uint64), [14:22]=access_hash(uint64), [22:]=file_reference.
     /// Смещения сверены с общепринятой раскладкой Bot API file_id, но требуют ручной проверки на реальных ID.
     /// </summary>
-    internal static MtProtoTL.InputDocument DecodeInputDocument(string fileId)
+    internal static InputDocument DecodeInputDocument(string fileId)
     {
         var data = DecodeFileIdBytes(fileId);
         if (data.Length < 22 || data[0] != 5 && data[0] != 8)
@@ -3951,7 +3954,7 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
             throw new BotGatewayException(400, "invalid document file_id");
         }
 
-        return new MtProtoTL.InputDocument
+        return new InputDocument
         {
             id = BitConverter.ToInt64(data, 6),
             access_hash = BitConverter.ToInt64(data, 14),
@@ -4075,9 +4078,9 @@ public sealed class BotGateway(BotApiConfig config, ILogger<BotGateway> logger)
         return -1;
     }
 
-    private sealed class BotConnection(MtProtoClient client, MtProtoTL.UserBase me)
+    private sealed class BotConnection(MtProtoClient client, UserBase me)
     {
         public MtProtoClient Client { get; } = client;
-        public MtProtoTL.UserBase Me { get; } = me;
+        public UserBase Me { get; } = me;
     }
 }

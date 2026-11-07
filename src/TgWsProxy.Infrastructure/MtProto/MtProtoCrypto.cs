@@ -4,7 +4,6 @@ using System.Buffers.Binary;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using TgWsProxy.Infrastructure.MtProto;
 
 namespace TgWsProxy.Infrastructure.MtProto;
 
@@ -179,12 +178,16 @@ j4WcDuXc2CTHgH8gFTNhp/Y8/SpDOhvn9QIDAQAB
     private static ulong PQFactorize(ulong pq) { if (pq % 2 == 0) { return 2; } for (ulong d = 3; d * d <= pq; d += 2) { if (pq % d == 0) { return d; } } throw new InvalidOperationException("factor fail"); }
     private static byte[] ToBigEndianBytes(ulong v) { var b = new byte[8]; for (var i = 7; i >= 0; i--) { b[i] = (byte)(v & 0xFF); v >>= 8; } var s = 0; while (s < b.Length - 1 && b[s] == 0) { s++; } var r = new byte[b.Length - s]; Array.Copy(b, s, r, 0, r.Length); return r; }
     public static byte[] ModPowBytes(byte[] baseBytes, byte[] expBytes, byte[] modBytes) { var b = BigEndianToBigInteger(baseBytes); var e = BigEndianToBigInteger(expBytes); var m = BigEndianToBigInteger(modBytes); var r = BigInteger.ModPow(b, e, m); return BigIntegerToBigEndian(r, modBytes.Length); }
-    public static void CheckGoodPrime(BigInteger p) { if (p.GetBitLength() != 2048)
+    public static void CheckGoodPrime(BigInteger p)
+    {
+        if (p.GetBitLength() != 2048)
         {
             throw new InvalidOperationException("bad prime");
         }
     }
-    public static void CheckGoodGaAndGb(BigInteger g, BigInteger p) { if (g <= 1 || g >= p - 1)
+    public static void CheckGoodGaAndGb(BigInteger g, BigInteger p)
+    {
+        if (g <= 1 || g >= p - 1)
         {
             throw new InvalidOperationException("bad ga/gb");
         }
