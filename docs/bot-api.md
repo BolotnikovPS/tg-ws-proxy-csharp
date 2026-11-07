@@ -42,6 +42,66 @@ Telegram DC (TCP / MTProxy при botApi.secret)
 Сервис не перечисляет методы «прозрачно»: каждый поддерживаемый Bot API-метод
 явно сопоставлен с конкретным MTProto-методом и DTO-сериализацией.
 
+## MTProto-слой (TgWsProxy.Infrastructure/MtProto)
+
+Реализация MTProto в `Infrastructure`: транспорт, криптография, handshake, RPC и «bridge»
+уже установленной сессии. TL-слой сгенерирован (layer 229), реестр конструкторов собирается рефлексией.
+
+**Hand-written движок**
+
+| Файл | Роль |
+| --- | --- |
+| `MtProtoBridgeEngine.cs` | ядро «после handshake» (init → relay → Telegram) |
+| `MtProtoClient.cs` | нативный MTProto-RPC: auth key, шифрование, вызов методов |
+| `MtProtoCrypto.cs` | криптография: AES-IGE, RSA, DH, факторизация |
+| `MtProtoTransport.cs` | transport-кадрирование |
+| `MtProtoInspector.cs` / `IMtProtoInspector.cs` | obfs2-handshake / relay-init |
+| `ClientInitReader.cs` / `ClientInitResult.cs` / `ClientInitStatus.cs` | разбор клиентского `init` |
+| `BotGateway.cs` / `BotSession.cs` / `BotSessionStore.cs` | bot-сессии (bot API поверх MTProto) |
+
+**Сгенерированный TL-слой**
+
+| Файл | namespace | Роль |
+| --- | --- | --- |
+| `TL.Schema.cs` | `…MtProto.TL` | полная schema layer 229 (1473 `[TLDef]`) |
+| `TL.MTProto.cs` | `…MtProto` | transport/auth-типы (`ResPQ`, `ServerDH…`, 56 `[TLDef]`) |
+| `TL.Methods.cs` | `…MtProto.TL.Methods` | RPC-методы (`IMethod<>`, 29 `[TLDef]`) |
+| `TL.Xtended.cs` | `…MtProto.TL` | engine-хелперы (`IPeerInfo`, `InputPeer*`, приведения) |
+
+**Обвязка типов и сериализация** (разнесённый `TL.cs`)
+
+| Файл | Роль |
+| --- | --- |
+| `TlAttributes.cs` | `[TLDef]`, `[IfFlag]` |
+| `TlInterfaces.cs` | `IObject`, `IMethod<>`, `IPeerResolver` |
+| `TlPrimitives.cs` | `TLVector`, `Int128`, `Int256`, `BoolValue` |
+| `TlSerializer.cs` | `Serialization`: read/write значений, строк, байтов, vector, dictionary, gzip |
+| `MtProtoEnvelope.cs` | envelope-типы tdesktop: `RSAPublicKey`, `RpcResult`, `_Message`, `MsgContainer`, `MsgCopy`, `GzipPacked` |
+| `TL.Table.cs` | `Layer.Table` (ctor → Type), `Nullables`, `EmptyCtors` |
+
+`RpcException` вынесена в `TgWsProxy.Domain.Exceptions` — это доменное исключение («RPC вернул
+ошибку»), одноранговое с `MTProtoTransportException`.
+
+> `IObject` / `IMethod<>` — маркеры wire-схемы, `IPeerResolver` — внутренняя утилита адаптера
+> (реализована ~100 типами схемы, тянет `Peer`/`IPeerInfo`). Они намеренно остаются в
+> `Infrastructure.MtProto`, а не в `Application`: это контракты адаптера, а не порты прикладного слоя.
+
+### Реестр конструкторов
+
+`Layer.Table` (`ctor → Type`) строится один раз рефлексией по сборке `TgWsProxy.Infrastructure`:
+
+1. сканируются все типы с `[TLDef]`;
+2. `IMethod<>`-реализации исключаются (это вызовы, а не данные);
+3. ctor из `EmptyCtors` (null/empty/notModified/default) исключаются — такие конструкторы
+   десериализуются в `null` (например `Null#56730bcc`, `emojiStatusEmpty#2de11aae`);
+4. дубликат ctor → `InvalidOperationException` («Duplicate TL constructor»).
+
+`Nullables` (`base-type → ctor`) — ctor empty/notModified-варианта базового типа, используется
+`Serialization.WriteTLNull`. `EmptyCtors` (`ctor → null`) — конструкторы, читающиеся как `null`.
+
+Преимущество перед прежней ручной таблицей на ~1650 строк: реестр не может разойтись с
+`[TLDef]`-атрибутами — расхождение либо отсутствует, либо падает сразу при первом обращении.
+
 ## Включение
 
 В `config.json` добавьте блок `botApi`:
