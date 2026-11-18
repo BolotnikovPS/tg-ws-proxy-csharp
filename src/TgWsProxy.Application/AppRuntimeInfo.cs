@@ -9,7 +9,7 @@ namespace TgWsProxy.Application;
 /// Регистрируется один раз при построении контейнера, поэтому <c>uptimeSeconds</c>
 /// отсчитывается от старта приложения, а не от первого запроса.
 /// </summary>
-/// <param name="Version">Информационная версия сборки (например, <c>3.2.0-beta2</c>).</param>
+/// <param name="Version">Информационная версия сборки (например, <c>3.2.0-beta7</c>).</param>
 /// <param name="StartedAt">Момент старта процесса (UTC).</param>
 public sealed record AppRuntimeInfo(string Version, DateTimeOffset StartedAt)
 {
