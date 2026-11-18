@@ -203,7 +203,7 @@ public class WebProxySessionManagerTests
     private static byte[] HelloFrame()
     {
         var buffer = new byte[RelayFrameCodec.FrameSize(1)];
-        RelayFrameCodec.Write(buffer, RelayFrameType.Hello, 0, [RelayFrameCodec.HelloProtocolVersion]);
+        RelayFrameCodec.Write(buffer, RelayFrameType.Hello, 0, [AppConstants.WebProxy.HelloProtocolVersion]);
         return buffer;
     }
 

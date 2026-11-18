@@ -27,7 +27,7 @@ public class MtProtoTransport(string host, int port, byte[] secret = null) : IDi
     private IncrementalCipher _recvCtr;
     private bool _obfuscationInitialized;
 
-    public async Task ConnectAsync(CancellationToken ct = default)
+    public async Task ConnectAsync(CancellationToken ct)
     {
         _tcp = new TcpClient();
         await _tcp.ConnectAsync(_host, _port, ct);
@@ -143,7 +143,7 @@ public class MtProtoTransport(string host, int port, byte[] secret = null) : IDi
         _obfuscationInitialized = true;
     }
 
-    public async Task SendAsync(byte[] data, CancellationToken ct = default)
+    public async Task SendAsync(byte[] data, CancellationToken ct)
     {
         if (_obfuscationInitialized && _sendCtr != null)
         {
@@ -159,7 +159,7 @@ public class MtProtoTransport(string host, int port, byte[] secret = null) : IDi
         await _stream.FlushAsync(ct);
     }
 
-    public async Task<byte[]> ReceiveAsync(CancellationToken ct = default)
+    public async Task<byte[]> ReceiveAsync(CancellationToken ct)
     {
         // Intermediate transport: first 4 bytes = payload length (little-endian).
         var lenBuf = new byte[4];

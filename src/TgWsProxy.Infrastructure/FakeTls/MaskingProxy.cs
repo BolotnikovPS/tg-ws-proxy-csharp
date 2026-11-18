@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain.Abstractions;
+using static TgWsProxy.Domain.AppConstants.FakeTls;
 
 namespace TgWsProxy.Infrastructure.FakeTls;
 
@@ -15,11 +16,7 @@ internal sealed class MaskingProxy(IProxyStats stats, ILogger<MaskingProxy> logg
     /// <summary>Таймаут установки соединения с доменом маскировки.</summary>
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(10);
 
-    /// <summary>Размер буфера пересылки.</summary>
-    private const int BufferSize = 16384;
 
-    /// <summary>Порт домена маскировки.</summary>
-    private const int MaskingPort = 443;
 
     /// <summary>
     /// Устанавливает соединение с <paramref name="domain"/>:443, отправляет уже прочитанные

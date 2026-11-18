@@ -114,7 +114,7 @@ internal sealed class WebProxyRelaySession(
                 ["StreamId"] = stream.StreamId,
             });
 
-            var init = new byte[Protocol.HandshakeLen];
+            var init = new byte[AppConstants.Protocol.HandshakeLen];
             await ReadExactlyAsync(stream, init, ct).ConfigureAwait(false);
 
             var handshake = inspector.TryHandshake(init, token.Secret);

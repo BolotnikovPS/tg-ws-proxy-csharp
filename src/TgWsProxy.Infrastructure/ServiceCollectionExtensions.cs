@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.Diagnostics;
@@ -35,7 +36,7 @@ public static class ServiceCollectionExtensions
             .AddSingleton<MaskingProxy>()
             .AddSingleton<IMtProtoInspector, MtProtoInspector>()
             // Локальный Bot API-сервер: кэш MTProto-соединений ботов + файловые сессии (botApi.DataDir).
-            .AddSingleton(sp => new BotGateway(sp.GetRequiredService<Config>().BotApi, sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<BotGateway>>()))
+            .AddSingleton(sp => new BotGateway(sp.GetRequiredService<Config>().BotApi, sp.GetRequiredService<ILogger<BotGateway>>()))
             // Ядро «после handshake» — общее для TCP-режима и web-proxy (DESIGN-WEB-PROXY §4.3).
             .AddSingleton<MtProtoBridgeEngine>()
             // Relay-сессия WEB proxy: подбор токена по HMAC bridge-capability и жизненный цикл

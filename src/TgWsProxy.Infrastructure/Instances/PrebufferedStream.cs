@@ -33,7 +33,7 @@ internal sealed class PrebufferedStream(Stream inner, byte[] prefix) : Stream
         return served > 0 ? served : inner.Read(buffer, offset, count);
     }
 
-    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
         var served = ServePrefix(buffer.Span);
         return served > 0
@@ -46,7 +46,7 @@ internal sealed class PrebufferedStream(Stream inner, byte[] prefix) : Stream
 
     public override void Write(byte[] buffer, int offset, int count) => inner.Write(buffer, offset, count);
 
-    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
         => inner.WriteAsync(buffer, cancellationToken);
 
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)

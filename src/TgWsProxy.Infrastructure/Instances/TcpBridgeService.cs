@@ -9,6 +9,7 @@ using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Domain.Exceptions;
 using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
+using static TgWsProxy.Domain.AppConstants.Server;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -36,8 +37,6 @@ internal sealed class TcpBridgeService(
     /// <summary>Таймаут подключения к CF proxy / CF worker.</summary>
     private static readonly TimeSpan CfConnectTimeout = TimeSpan.FromSeconds(10);
 
-    /// <summary>Размер буфера чтения от клиента (как 65536 в upstream <c>bridge.py</c>).</summary>
-    private const int ClientReadBufferSize = 65536;
 
     private readonly Dictionary<(string Dst, int Port), int> tcpFailures = [];
     private readonly Dictionary<(string Dst, int Port), DateTimeOffset> tcpRetryAfter = [];
@@ -300,7 +299,7 @@ internal sealed class TcpBridgeService(
         }
         else
         {
-            var path = $"{Protocol.WsPath}?dst={Uri.EscapeDataString(fallbackDst)}&dc={request.Dc}";
+            var path = $"{AppConstants.Protocol.WsPath}?dst={Uri.EscapeDataString(fallbackDst)}&dc={request.Dc}";
             foreach (var workerDomain in cfWorkerPool.AvailableDomains(workerDomains))
             {
                 logger.LogInformation(
@@ -370,7 +369,7 @@ internal sealed class TcpBridgeService(
                     .Connect(
                         domain,
                         domain,
-                        Protocol.WsPath,
+                        AppConstants.Protocol.WsPath,
                         request.Scope,
                         CfConnectTimeout,
                         secure: !config.DisableSecure)
@@ -420,7 +419,7 @@ internal sealed class TcpBridgeService(
         string dst,
         CancellationToken cancellationToken)
     {
-        const int port = Protocol.WsPort;
+        const int port = AppConstants.Protocol.WsPort;
         var key = (dst, port);
 
         lock (tcpSync)

@@ -1,4 +1,5 @@
 using TgWsProxy.Infrastructure.WebProxy;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Test;
 
@@ -11,7 +12,7 @@ public class RelayFrameCodecTests
     [Fact]
     public void WriteHeader_ProducesBigEndianLayout()
     {
-        var buffer = new byte[RelayFrameCodec.FrameHeaderSize];
+        var buffer = new byte[AppConstants.WebProxy.FrameHeaderSize];
 
         RelayFrameCodec.WriteHeader(buffer, RelayFrameType.Data, 0x010203, 0x04050607);
 
@@ -30,7 +31,7 @@ public class RelayFrameCodecTests
     public void TryParse_Roundtrip_ReturnsPayloadSlice()
     {
         var payload = new byte[] { 1, 2, 3, 4, 5 };
-        var buffer = new byte[RelayFrameCodec.FrameHeaderSize + payload.Length];
+        var buffer = new byte[AppConstants.WebProxy.FrameHeaderSize + payload.Length];
         RelayFrameCodec.Write(buffer, RelayFrameType.Data, 7, payload);
 
         var ok = RelayFrameCodec.TryParse(buffer, out var frame, out var error);
@@ -44,10 +45,10 @@ public class RelayFrameCodecTests
 
     [Theory]
     [InlineData(0)]
-    [InlineData(RelayFrameCodec.MaxStreamId)]
+    [InlineData(AppConstants.WebProxy.MaxStreamId)]
     public void TryParse_StreamIdBoundary_Accepted(int streamId)
     {
-        var buffer = new byte[RelayFrameCodec.FrameHeaderSize];
+        var buffer = new byte[AppConstants.WebProxy.FrameHeaderSize];
         RelayFrameCodec.WriteHeader(buffer, RelayFrameType.Open, streamId, 0);
 
         var ok = RelayFrameCodec.TryParse(buffer, out var frame, out var error);
@@ -60,9 +61,9 @@ public class RelayFrameCodecTests
     [Fact]
     public void TryParse_PayloadTooLarge_Rejected()
     {
-        var buffer = new byte[RelayFrameCodec.FrameHeaderSize];
+        var buffer = new byte[AppConstants.WebProxy.FrameHeaderSize];
         // Объявленная длина превышает kMaxFramePayload; буфер при этом не обязан её содержать.
-        RelayFrameCodec.WriteHeader(buffer, RelayFrameType.Data, 1, RelayFrameCodec.MaxFramePayload + 1);
+        RelayFrameCodec.WriteHeader(buffer, RelayFrameType.Data, 1, AppConstants.WebProxy.MaxFramePayload + 1);
 
         var ok = RelayFrameCodec.TryParse(buffer, out var frame, out var error);
 
@@ -74,7 +75,7 @@ public class RelayFrameCodecTests
     [Fact]
     public void TryParse_TruncatedPayload_Rejected()
     {
-        var buffer = new byte[RelayFrameCodec.FrameHeaderSize];
+        var buffer = new byte[AppConstants.WebProxy.FrameHeaderSize];
         RelayFrameCodec.WriteHeader(buffer, RelayFrameType.Data, 1, 16);
 
         var ok = RelayFrameCodec.TryParse(buffer, out _, out var error);
@@ -86,7 +87,7 @@ public class RelayFrameCodecTests
     [Fact]
     public void TryParse_ShorterThanHeader_Rejected()
     {
-        var buffer = new byte[RelayFrameCodec.FrameHeaderSize - 1];
+        var buffer = new byte[AppConstants.WebProxy.FrameHeaderSize - 1];
 
         var ok = RelayFrameCodec.TryParse(buffer, out _, out var error);
 
@@ -97,7 +98,7 @@ public class RelayFrameCodecTests
     [Fact]
     public void TryParse_UnknownType_Rejected()
     {
-        var buffer = new byte[RelayFrameCodec.FrameHeaderSize];
+        var buffer = new byte[AppConstants.WebProxy.FrameHeaderSize];
         buffer[0] = 0x7F;
 
         var ok = RelayFrameCodec.TryParse(buffer, out _, out var error);
@@ -109,7 +110,7 @@ public class RelayFrameCodecTests
     [Fact]
     public void FrameSize_AddsHeaderToPayloadLength()
     {
-        Assert.Equal(RelayFrameCodec.FrameHeaderSize, RelayFrameCodec.FrameSize(0));
-        Assert.Equal(RelayFrameCodec.FrameHeaderSize + 100, RelayFrameCodec.FrameSize(100));
+        Assert.Equal(AppConstants.WebProxy.FrameHeaderSize, RelayFrameCodec.FrameSize(0));
+        Assert.Equal(AppConstants.WebProxy.FrameHeaderSize + 100, RelayFrameCodec.FrameSize(100));
     }
 }

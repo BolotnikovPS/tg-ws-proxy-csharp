@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Infrastructure.WebProxy;
 
@@ -14,11 +15,11 @@ public sealed class RelayStream : Stream
     private long _inboundBytes;
     private readonly RelayFrameSender _sender;
     private readonly SendWindowGate _sendWindow;
-    private readonly byte[] _windowCreditBuffer = new byte[RelayFrameCodec.WindowCreditSize];
+    private readonly byte[] _windowCreditBuffer = new byte[AppConstants.WebProxy.WindowCreditSize];
     private ReadOnlyMemory<byte> _current;
     private int _disposed;
 
-    internal RelayStream(int streamId, RelayFrameSender sender, long initialSendWindow = RelayFrameCodec.InitialStreamWindow)
+    internal RelayStream(int streamId, RelayFrameSender sender, long initialSendWindow = AppConstants.WebProxy.InitialStreamWindow)
     {
         StreamId = streamId;
         _sender = sender;
@@ -39,12 +40,12 @@ public sealed class RelayStream : Stream
 
     /// <summary>
     /// Помещает payload кадра <c>Data</c> во входящую очередь. Возвращает <see langword="false"/>,
-    /// если после добавления невычитанный входящий объём превысит <see cref="RelayFrameCodec.InitialStreamWindow"/>
+    /// если после добавления невычитанный входящий объём превысит <see cref="AppConstants.WebProxy.InitialStreamWindow"/>
     /// — кадр отклоняется, поток закрывается мультиплексором (F-W.25, симметрично исходящей очереди).
     /// </summary>
     internal bool EnqueueData(ReadOnlyMemory<byte> payload)
     {
-        if (Interlocked.Add(ref _inboundBytes, payload.Length) > RelayFrameCodec.InitialStreamWindow)
+        if (Interlocked.Add(ref _inboundBytes, payload.Length) > AppConstants.WebProxy.InitialStreamWindow)
         {
             return false; // счётчик сбрасывается при закрытии потока
         }
@@ -58,7 +59,7 @@ public sealed class RelayStream : Stream
     /// <summary>Возвращает кредит окна отправки (кадр <c>Window</c> от противоположной стороны).</summary>
     internal void AddSendCredit(int credit) => _sendWindow.Add(credit);
 
-    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
         while (_current.IsEmpty)
         {
@@ -84,20 +85,20 @@ public sealed class RelayStream : Stream
         return count;
     }
 
-    public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
     {
         var remaining = buffer;
         while (!remaining.IsEmpty)
         {
             var credit = await _sendWindow.WaitAsync(cancellationToken).ConfigureAwait(false);
-            var chunk = Math.Min(remaining.Length, (int)Math.Min(credit, RelayFrameCodec.MaxFramePayload));
+            var chunk = Math.Min(remaining.Length, (int)Math.Min(credit, AppConstants.WebProxy.MaxFramePayload));
             await _sender(RelayFrameType.Data, StreamId, remaining[..chunk], cancellationToken).ConfigureAwait(false);
             _sendWindow.Consume(chunk);
             remaining = remaining[chunk..];
         }
     }
 
-    public override Task FlushAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public override Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public override async ValueTask DisposeAsync()
     {

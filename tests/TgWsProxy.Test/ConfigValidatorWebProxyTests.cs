@@ -94,7 +94,7 @@ public class ConfigValidatorWebProxyTests
     public void Validate_RejectsPendingQueueAboveCap()
     {
         var config = TestConfig.Create(
-            c => c.WebProxy.MaxPendingBytesPerSession = ConfigValidator.MaxWebProxyPendingBytes + 1);
+            c => c.WebProxy.MaxPendingBytesPerSession = AppConstants.Config.MaxWebProxyPendingBytes + 1);
 
         var error = Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(config));
         Assert.Contains("webProxy.maxPendingBytesPerSession", error.Message, StringComparison.Ordinal);

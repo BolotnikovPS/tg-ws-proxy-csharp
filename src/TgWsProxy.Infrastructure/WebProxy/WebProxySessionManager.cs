@@ -331,12 +331,12 @@ public sealed class WebProxySessionManager(
         return frame.Type == RelayFrameType.Hello
             && frame.StreamId == 0
             && frame.Payload.Length == 1
-            && frame.Payload.Span[0] == RelayFrameCodec.HelloProtocolVersion;
+            && frame.Payload.Span[0] == AppConstants.WebProxy.HelloProtocolVersion;
     }
 
     private static byte[] BuildWelcome()
     {
-        var welcome = new byte[RelayFrameCodec.FrameHeaderSize];
+        var welcome = new byte[AppConstants.WebProxy.FrameHeaderSize];
         RelayFrameCodec.WriteHeader(welcome, RelayFrameType.Welcome, 0, 0);
         return welcome;
     }

@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Infrastructure.Transport;
+using static TgWsProxy.Domain.AppConstants.Wire;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Infrastructure.Wire;
 
@@ -10,8 +12,6 @@ namespace TgWsProxy.Infrastructure.Wire;
 /// </summary>
 internal static class H2PacketCodec
 {
-    /// <summary>Минимальный допустимый размер MTProto-пакета.</summary>
-    public const int MinPacketLength = 24;
 
     private static readonly byte[] Zero8 = new byte[8];
 
@@ -59,7 +59,7 @@ internal static class H2PacketCodec
             length = (int)(value & 0x7FFFFFFF);
         }
 
-        var limit = Protocol.H2MaxPacket + (secure ? Protocol.H2MaxPlainPadding : 0);
+        var limit = AppConstants.Protocol.H2MaxPacket + (secure ? AppConstants.Protocol.H2MaxPlainPadding : 0);
         if (length < MinPacketLength || length > limit)
         {
             throw new InvalidDataException($"native packet length outside supported range: {length}");
@@ -74,7 +74,7 @@ internal static class H2PacketCodec
             if (body.AsSpan(0, 8).SequenceEqual(Zero8))
             {
                 packetLength = 20 + BinaryPrimitives.ReadInt32LittleEndian(body.AsSpan(16, 4));
-                maxPadding = Protocol.H2MaxPlainPadding;
+                maxPadding = AppConstants.Protocol.H2MaxPlainPadding;
             }
             else
             {
@@ -92,7 +92,7 @@ internal static class H2PacketCodec
             body = body.AsSpan(0, packetLength).ToArray();
         }
 
-        if (body.Length % 4 != 0 || body.Length > Protocol.H2MaxPacket)
+        if (body.Length % 4 != 0 || body.Length > AppConstants.Protocol.H2MaxPacket)
         {
             throw new InvalidDataException("invalid native packet alignment or size");
         }
@@ -104,13 +104,13 @@ internal static class H2PacketCodec
     /// Кодирует ответ Telegram в кадр соответствующего MTProto-протокола
     /// (порт upstream <c>_encode_reply</c>).
     /// </summary>
-    /// <param name="body">Тело ответа (кратно 4 байтам, не больше <see cref="Protocol.H2MaxPacket"/>).</param>
+    /// <param name="body">Тело ответа (кратно 4 байтам, не больше <see cref="AppConstants.Protocol.H2MaxPacket"/>).</param>
     /// <param name="protoTag">4 байта proto tag текущей сессии.</param>
     /// <returns>Готовый к отправке клиенту кадр.</returns>
     /// <exception cref="InvalidDataException">Тело пустое, не выровнено или слишком велико.</exception>
     public static byte[] EncodeReply(byte[] body, byte[] protoTag)
     {
-        if (body.Length == 0 || body.Length % 4 != 0 || body.Length > Protocol.H2MaxPacket)
+        if (body.Length == 0 || body.Length % 4 != 0 || body.Length > AppConstants.Protocol.H2MaxPacket)
         {
             throw new InvalidDataException($"invalid HTTP MTProto response length: {body.Length}");
         }

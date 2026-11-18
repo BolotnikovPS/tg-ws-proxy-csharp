@@ -6,6 +6,7 @@ using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.Transport;
+using static TgWsProxy.Domain.AppConstants.CfWorkerPool;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -13,6 +14,14 @@ namespace TgWsProxy.Infrastructure.Instances;
 /// Пул соединений через Cloudflare Worker (порт upstream <c>_CfWorkerPool</c>).
 /// Воркер принимает путь <c>/apiws?dst=...&amp;dc=...</c> и проксирует трафик в нужный DC.
 /// </summary>
+/// <remarks>
+/// С v1.11.4 пул воркеров обслуживает себя сам, как и пул прямых WS-соединений:
+/// промах <see cref="TryGet"/> и периодическая ротация запускают наполнение, а
+/// серия неудачных подключений включает экспоненциальный backoff. До этого
+/// наполнение запускалось только при попадании в пул и в <see cref="Warmup"/>,
+/// поэтому единственная неудача подключения оставляла DC без соединений до
+/// перезапуска процесса (upstream 1636903c).
+/// </remarks>
 internal sealed class CfWorkerPool(
     Config config,
     Dictionary<int, string> dcOpt,
@@ -21,18 +30,30 @@ internal sealed class CfWorkerPool(
     ILogger<CfWorkerPool> logger) : ICfWorkerPool, IDisposable
 {
     /// <summary>Максимальный возраст соединения воркера (WS_POOL_MAX_AGE).</summary>
-    private static readonly TimeSpan MaxAge = TimeSpan.FromSeconds(100);
+    private static readonly TimeSpan MaxAge = TimeSpan.FromSeconds(MaxAgeSeconds);
 
-    /// <summary>Максимум соединений на один DC (PER_DC_LIMIT).</summary>
-    private const int PerDcLimit = 1;
-
-    /// <summary>Таймаут подключения к воркеру (секунды).</summary>
-    private const int ConnectTimeoutSeconds = 8;
+    /// <summary>Период обслуживания пула (WS_POOL_CHECK_INTERVAL).</summary>
+    private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(CheckIntervalSeconds);
 
     private readonly ConcurrentDictionary<int, ConcurrentQueue<PooledWorkerWs>> idle = new();
     private readonly ConcurrentDictionary<int, byte> refilling = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> exhaustedUntil = new(StringComparer.OrdinalIgnoreCase);
     private readonly CancellationTokenSource lifetime = new();
+
+    /// <summary>
+    /// Параметры наполнения по DC (fallback-DC и список доменов воркера). Нужны
+    /// фоновой ротации: она обходит все известные DC, а не только запрошенные.
+    /// </summary>
+    private readonly ConcurrentDictionary<int, RefillTarget> targets = new();
+
+    /// <summary>Число подряд идущих неудачных наполнений по DC (REFILL_BACKOFF).</summary>
+    private readonly ConcurrentDictionary<int, int> refillFailures = new();
+
+    /// <summary>Момент, раньше которого наполнение DC не повторяется (backoff).</summary>
+    private readonly ConcurrentDictionary<int, DateTimeOffset> refillAfter = new();
+
+    /// <summary>Флаг однократного запуска фоновой ротации (0 — не запущена, 1 — запущена).</summary>
+    private int rotationStarted;
 
     /// <inheritdoc />
     public (IRawWebSocket Ws, string Domain)? TryGet(int dc, string fallbackDst, IReadOnlyList<string> workerDomains)
@@ -61,7 +82,10 @@ internal sealed class CfWorkerPool(
             return (entry.Ws, entry.Domain);
         }
 
+        // Промах — тоже повод наполнить пул. Без этого пустой бакет оставался
+        // пустым навсегда: попаданий больше не будет, а значит и наполнения тоже.
         stats.IncCfPoolMiss();
+        ScheduleRefill(dc, fallbackDst, workerDomains);
         return null;
     }
 
@@ -140,6 +164,9 @@ internal sealed class CfWorkerPool(
         idle.Clear();
         refilling.Clear();
         exhaustedUntil.Clear();
+        targets.Clear();
+        refillFailures.Clear();
+        refillAfter.Clear();
     }
 
     /// <summary>Останавливает фоновое наполнение пула и освобождает ресурсы.</summary>
@@ -149,17 +176,34 @@ internal sealed class CfWorkerPool(
         lifetime.Dispose();
     }
 
+    /// <summary>Целевой размер бакета одного DC.</summary>
+    private int TargetSize => Math.Min(config.MtProto.WsPoolSize, PerDcLimit);
+
     /// <summary>
-    /// Планирует фоновое наполнение пула для DC, если оно ещё не запущено.
+    /// Планирует фоновое наполнение пула для DC: запоминает параметры подключения,
+    /// запускает ротацию (однократно) и, если не мешает backoff, — наполнение.
     /// </summary>
     private void ScheduleRefill(int dc, string fallbackDst, IReadOnlyList<string> workerDomains)
     {
-        if (config.MtProto.WsPoolSize <= 0 || !refilling.TryAdd(dc, 0))
+        if (config.MtProto.WsPoolSize <= 0 || workerDomains.Count == 0)
         {
             return;
         }
 
-        var domains = workerDomains.ToArray();
+        targets[dc] = new RefillTarget(fallbackDst, workerDomains.ToArray());
+        EnsureRotationStarted();
+
+        if (refillAfter.TryGetValue(dc, out var after) && after > DateTimeOffset.UtcNow)
+        {
+            return;
+        }
+
+        if (!refilling.TryAdd(dc, 0))
+        {
+            return;
+        }
+
+        var domains = targets[dc].Domains;
         BackgroundTaskRunner.RunDetachedSafe(
             ct => RefillAsync(dc, fallbackDst, domains, ct),
             logger,
@@ -167,21 +211,87 @@ internal sealed class CfWorkerPool(
             lifetime.Token);
     }
 
+    /// <summary>Запускает фоновую ротацию один раз на весь жизненный цикл пула.</summary>
+    private void EnsureRotationStarted()
+    {
+        if (Interlocked.CompareExchange(ref rotationStarted, 1, 0) != 0)
+        {
+            return;
+        }
+
+        BackgroundTaskRunner.RunDetachedSafe(RotateAsync, logger, "[cf-pool] rotation", lifetime.Token);
+    }
+
     /// <summary>
-    /// Открывает недостающие соединения воркера и складывает их в пул.
+    /// Фоновая ротация: срезает протухшие соединения и поддерживает целевой размер
+    /// бакета для каждого известного DC (upstream <c>_rotate</c>).
+    /// </summary>
+    private async Task RotateAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(CheckInterval);
+        while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+        {
+            foreach (var (dc, target) in targets)
+            {
+                try
+                {
+                    RotateDc(dc, target);
+                }
+                catch (Exception ex)
+                {
+                    // Один сбойный DC не должен останавливать ротацию остальных.
+                    logger.LogDebug(ex, "CF worker pool rotation for DC{Dc} failed", dc);
+                }
+            }
+        }
+    }
+
+    /// <summary>Срезает протухшие соединения DC и запускает наполнение при недоборе.</summary>
+    private void RotateDc(int dc, RefillTarget target)
+    {
+        var bucket = idle.GetOrAdd(dc, _ => new ConcurrentQueue<PooledWorkerWs>());
+        var now = DateTimeOffset.UtcNow;
+
+        var alive = new List<PooledWorkerWs>(bucket.Count);
+        while (bucket.TryDequeue(out var entry))
+        {
+            if (IsStale(entry, now))
+            {
+                CloseQuietly(entry.Ws);
+            }
+            else
+            {
+                alive.Add(entry);
+            }
+        }
+
+        foreach (var entry in alive)
+        {
+            bucket.Enqueue(entry);
+        }
+
+        if (alive.Count < TargetSize)
+        {
+            ScheduleRefill(dc, target.FallbackDst, target.Domains);
+        }
+    }
+
+    /// <summary>
+    /// Открывает недостающие соединения воркера и складывает их в пул. Серия
+    /// неудачных наполнений включает экспоненциальный backoff (REFILL_BACKOFF).
     /// </summary>
     private async Task RefillAsync(int dc, string fallbackDst, string[] workerDomains, CancellationToken cancellationToken)
     {
         try
         {
             var bucket = idle.GetOrAdd(dc, _ => new ConcurrentQueue<PooledWorkerWs>());
-            var targetSize = Math.Min(config.MtProto.WsPoolSize, PerDcLimit);
-            var needed = targetSize - bucket.Count;
+            var needed = TargetSize - bucket.Count;
             if (needed <= 0)
             {
                 return;
             }
 
+            var fresh = 0;
             for (var i = 0; i < needed; i++)
             {
                 var connected = await ConnectOneAsync(workerDomains, fallbackDst, dc, cancellationToken).ConfigureAwait(false);
@@ -191,9 +301,28 @@ internal sealed class CfWorkerPool(
                 }
 
                 bucket.Enqueue(new PooledWorkerWs(connected.Value.Ws, DateTimeOffset.UtcNow, connected.Value.Domain));
+                fresh++;
             }
 
-            logger.LogDebug("CF worker pool refilled DC{Dc}: {Count} ready", dc, bucket.Count);
+            if (fresh > 0)
+            {
+                refillFailures.TryRemove(dc, out _);
+                refillAfter.TryRemove(dc, out _);
+                logger.LogDebug("CF worker pool refilled DC{Dc}: {Count} ready", dc, bucket.Count);
+                return;
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            var failures = refillFailures.AddOrUpdate(dc, 1, (_, value) => value + 1);
+            var delay = Math.Min(
+                RefillBackoffInitialSeconds * Math.Pow(2, Math.Min(failures - 1, 12)),
+                RefillBackoffMaxSeconds);
+            refillAfter[dc] = DateTimeOffset.UtcNow.AddSeconds(delay);
+            logger.LogInformation("CF worker pool refill failed for DC{Dc}, retry in {Delay:F0}s", dc, delay);
         }
         finally
         {
@@ -210,7 +339,7 @@ internal sealed class CfWorkerPool(
         int dc,
         CancellationToken cancellationToken)
     {
-        var path = $"{Protocol.WsPath}?dst={Uri.EscapeDataString(fallbackDst)}&dc={dc}";
+        var path = $"{AppConstants.Protocol.WsPath}?dst={Uri.EscapeDataString(fallbackDst)}&dc={dc}";
 
         foreach (var workerDomain in AvailableDomains(workerDomains))
         {
@@ -233,6 +362,9 @@ internal sealed class CfWorkerPool(
             }
             catch (Exception ex)
             {
+                logger.LogDebug(
+                    "CF worker pool connect DC{Dc} via {Domain} for {Dst} failed: {Error}",
+                    dc, workerDomain, fallbackDst, ex.Message);
                 ReportFailure(workerDomain, ex);
             }
         }
@@ -268,4 +400,7 @@ internal sealed class CfWorkerPool(
 
     /// <summary>Соединение воркера вместе со временем создания и доменом.</summary>
     private readonly record struct PooledWorkerWs(IRawWebSocket Ws, DateTimeOffset Created, string Domain);
+
+    /// <summary>Параметры наполнения бакета одного DC.</summary>
+    private readonly record struct RefillTarget(string FallbackDst, string[] Domains);
 }

@@ -1,6 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.Logging;
-using TgWsProxy.Infrastructure.Logging;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Infrastructure.Session;
 
@@ -23,13 +23,13 @@ internal static class SessionLogScope
 
         var state = new Dictionary<string, object>
         {
-            [LoggingConstants.ConnectionId] = context.ConnectionId,
-            [LoggingConstants.Peer] = context.Peer,
+            [AppConstants.Logging.ConnectionId] = context.ConnectionId,
+            [AppConstants.Logging.Peer] = context.Peer,
         };
 
         if (!string.IsNullOrEmpty(context.TokenId))
         {
-            state[LoggingConstants.TokenId] = context.TokenId;
+            state[AppConstants.Logging.TokenId] = context.TokenId;
         }
 
         return logger.BeginScope(state);
@@ -44,9 +44,9 @@ internal static class SessionLogScope
 
         return logger.BeginScope(new Dictionary<string, object>
         {
-            [LoggingConstants.TokenId] = tokenId,
-            [LoggingConstants.Dc] = dc?.ToString(CultureInfo.InvariantCulture) ?? "-",
-            [LoggingConstants.Media] = media,
+            [AppConstants.Logging.TokenId] = tokenId,
+            [AppConstants.Logging.Dc] = dc?.ToString(CultureInfo.InvariantCulture) ?? "-",
+            [AppConstants.Logging.Media] = media,
         });
     }
 }

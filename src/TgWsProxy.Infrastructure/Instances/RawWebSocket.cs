@@ -7,17 +7,12 @@ using Microsoft.Extensions.Logging;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain.Exceptions;
 using TgWsProxy.Infrastructure.IO;
+using static TgWsProxy.Domain.AppConstants.Ws;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
 internal sealed class RawWebSocket(Socket client, Stream transport, string scope, ILogger logger, int wsMaxFrameBytes) : IRawWebSocket
 {
-    /// <summary>
-    /// Предельный суммарный размер пачки кадров, которые склеиваются в один write.
-    /// Выше этого порога кадры отправляются по одному, чтобы не арендовать
-    /// крупный буфер из пула.
-    /// </summary>
-    private const int MaxCoalescedBatchBytes = 256 * 1024;
 
     /// <summary>
     /// Переиспользуемый буфер для чтения коротких заголовков WS-фрейма (2 байта
@@ -169,20 +164,27 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
     {
         try
         {
-            if (IsClosed)
+            // Отправка close-кадра — только для соединения, которое мы закрываем первыми.
+            if (!IsClosed)
             {
-                return;
+                IsClosed = true;
+                _assembler.Reset();
+                try { await WriteMaskedFrame(0x8, ReadOnlyMemory<byte>.Empty, cancellationToken); } catch { }
             }
-
-            IsClosed = true;
-            _assembler.Reset();
-            try { await WriteMaskedFrame(0x8, ReadOnlyMemory<byte>.Empty, cancellationToken); } catch { }
-            try { await transport.DisposeAsync(); } catch { }
-            try { client.Close(); } catch { }
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "[{Scope}] Failed to close WS connection", scope);
+        }
+        finally
+        {
+            // Освобождение ресурсов не должно зависеть от того, кто выставил IsClosed.
+            // Путь чтения ставит флаг раньше (EOF в Recv или close-кадр от сервера),
+            // и ранний выход из метода оставлял сокет и поток открытыми до финализатора:
+            // протухшие соединения из пула так и не освобождали дескриптор.
+            // Порт upstream v1.11.4 (1636903c), где закрытие writer перенесено в finally.
+            try { await transport.DisposeAsync(); } catch { }
+            try { client.Close(); } catch { }
         }
     }
 

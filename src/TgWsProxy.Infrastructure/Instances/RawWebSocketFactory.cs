@@ -12,6 +12,7 @@ using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Exceptions;
 using TgWsProxy.Infrastructure.Transport;
+using static TgWsProxy.Domain.AppConstants.Ws;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -22,11 +23,7 @@ namespace TgWsProxy.Infrastructure.Instances;
 /// </summary>
 internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, Config cfg) : IRawWebSocketFactory
 {
-    /// <summary>Верхняя граница на TCP+TLS фазу (как upstream <c>min(timeout, 10)</c>).</summary>
-    private const double TcpTlsHandshakeCapSeconds = 10;
 
-    /// <summary>Максимальный размер блока чтения заголовков ответа.</summary>
-    private const int HeaderReadChunk = 8 * 1024;
 
     public async Task<IRawWebSocket> Connect(
         string ip,
@@ -40,7 +37,7 @@ internal sealed class RawWebSocketFactory(ILogger<RawWebSocketFactory> logger, C
         var handshakeTimeout = timeout ?? TimeSpan.FromSeconds(cfg.MtProto.WsConnectTimeoutSeconds);
         var establishTimeout = TimeSpan.FromSeconds(Math.Min(handshakeTimeout.TotalSeconds, TcpTlsHandshakeCapSeconds));
         var socketBuf = Math.Max(4, cfg.MtProto.SocketBufferKb) * 1024;
-        var port = secure ? Protocol.WsPort : Protocol.WsPlainPort;
+        var port = secure ? AppConstants.Protocol.WsPort : AppConstants.Protocol.WsPlainPort;
 
         // Upstream отдаёт host прямо в asyncio.open_connection, который резолвит DNS сам.
         // Здесь host — это либо литеральный IP (--dc-ip, пул WS), либо домен

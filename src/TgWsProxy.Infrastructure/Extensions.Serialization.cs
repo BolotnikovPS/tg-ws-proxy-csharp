@@ -6,6 +6,7 @@ using System.Text;
 using TgWsProxy.Infrastructure.MtProto;
 using TgWsProxy.Infrastructure.MtProto.TL;
 using TgWsProxy.Infrastructure.MtProto.TL.Abstractions;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Infrastructure;
 
@@ -60,12 +61,12 @@ internal static partial class Extensions
             ctorNb = reader.ReadUInt32();
         }
 
-        if (ctorNb == Layer.GZipedCtor)
+        if (ctorNb == AppConstants.Tl.GZipedCtor)
         {
             return (IObject)reader.ReadTLGzipped(typeof(IObject));
         }
 
-        if (ctorNb == Layer.VectorCtor)
+        if (ctorNb == AppConstants.Tl.VectorCtor)
         {
             var count = reader.ReadInt32();
             var items = new IObject[count];
@@ -215,7 +216,7 @@ internal static partial class Extensions
                 {
                     0x997275b5 => true,
                     0xbc799737 => false,
-                    Layer.RpcErrorCtor => reader.ReadTLObject(Layer.RpcErrorCtor),
+                    AppConstants.Tl.RpcErrorCtor => reader.ReadTLObject(AppConstants.Tl.RpcErrorCtor),
                     var value => throw new FormatException($"Invalid boolean value #{value:x}")
                 };
             case TypeCode.Object:
@@ -283,7 +284,7 @@ internal static partial class Extensions
 
     internal static void WriteTLVector(this BinaryWriter writer, Array array)
     {
-        writer.Write(Layer.VectorCtor);
+        writer.Write(AppConstants.Tl.VectorCtor);
         if (array == null) { writer.Write(0); return; }
         var count = array.Length;
         writer.Write(count);
@@ -297,7 +298,7 @@ internal static partial class Extensions
     internal static T[] ReadTLVector<T>(this BinaryReader reader)
     {
         var elementType = typeof(T);
-        if (reader.ReadUInt32() is not Layer.VectorCtor and uint ctorNb)
+        if (reader.ReadUInt32() is not AppConstants.Tl.VectorCtor and uint ctorNb)
         {
             throw new FormatException($"Cannot deserialize {elementType.Name}[] with ctor #{ctorNb:x}");
         }
@@ -316,7 +317,7 @@ internal static partial class Extensions
     {
         var elementType = type.GetElementType();
         var ctorNb = reader.ReadUInt32();
-        if (ctorNb == Layer.VectorCtor)
+        if (ctorNb == AppConstants.Tl.VectorCtor)
         {
             var count = reader.ReadInt32();
             var array = (Array)Activator.CreateInstance(type, count);
@@ -357,7 +358,7 @@ internal static partial class Extensions
     internal static Dictionary<long, T> ReadTLDictionary<T>(this BinaryReader reader) where T : class, IPeerInfo
     {
         var ctorNb = reader.ReadUInt32();
-        if (ctorNb != Layer.VectorCtor)
+        if (ctorNb != AppConstants.Tl.VectorCtor)
         {
             throw new FormatException($"Cannot deserialize Vector<{typeof(T).Name}> with ctor #{ctorNb:x}");
         }
@@ -455,12 +456,12 @@ internal static partial class Extensions
         if (type == typeof(string)) { }
         else if (!type.IsArray)
         {
-            writer.Write(Layer.Nullables.TryGetValue(type, out var nullCtor) ? nullCtor : Layer.NullCtor);
+            writer.Write(Layer.Nullables.TryGetValue(type, out var nullCtor) ? nullCtor : AppConstants.Tl.NullCtor);
             return;
         }
         else if (type != typeof(byte[]))
         {
-            writer.Write(Layer.VectorCtor); // not raw bytes but a vector => needs a VectorCtor
+            writer.Write(AppConstants.Tl.VectorCtor); // not raw bytes but a vector => needs a VectorCtor
         }
 
         writer.Write(0);    // null arrays/strings are serialized as empty

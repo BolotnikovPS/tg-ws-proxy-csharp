@@ -112,17 +112,17 @@ public class MetricsHistoryTests
     public void Record_Evicts_Oldest_When_Capacity_Exceeded()
     {
         var history = new MetricsHistory();
-        var total = MetricsHistory.Capacity + 10;
+        var total = AppConstants.Metrics.Capacity + 10;
         for (var i = 0; i < total; i++)
         {
-            history.Record(Origin.AddSeconds(i * MetricsHistory.DefaultStepSeconds), Snapshot(active: i));
+            history.Record(Origin.AddSeconds(i * AppConstants.Metrics.DefaultStepSeconds), Snapshot(active: i));
         }
 
         var result = history.Query(TimeSpan.FromHours(1), TimeSpan.FromSeconds(5), Origin.AddSeconds(total * 5));
 
         // История ограничена Capacity точками и вытесняет самые старые.
-        Assert.True(result.Points.Count <= MetricsHistory.Capacity);
-        Assert.Equal(total - MetricsHistory.Capacity, result.Points[0].ConnectionsActive);
+        Assert.True(result.Points.Count <= AppConstants.Metrics.Capacity);
+        Assert.Equal(total - AppConstants.Metrics.Capacity, result.Points[0].ConnectionsActive);
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using static TgWsProxy.Domain.AppConstants.Config;
 namespace TgWsProxy.Application.StartConfig;
 
 /// <summary>
@@ -12,8 +13,6 @@ namespace TgWsProxy.Application.StartConfig;
 /// </summary>
 public sealed record BootstrapOptions
 {
-    /// <summary>Прежний флаг пути к файлу конфигурации. Удалён: путь задаёт только <c>TGWS_CONFIG</c>.</summary>
-    public const string ConfigFlag = "--config";
 
     /// <summary>Экземпляр для безаргументного запуска.</summary>
     public static readonly BootstrapOptions Empty = new();

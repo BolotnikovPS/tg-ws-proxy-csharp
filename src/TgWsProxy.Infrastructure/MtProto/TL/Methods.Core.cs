@@ -55,14 +55,18 @@ public sealed partial class GetFutureSalts : IMethod<FutureSalts>
     public int num;
 }
 
+// ping — сервисное сообщение, а не RPC-запрос: сервер сам присылает его простаивающему соединению.
+// Поэтому IObject, а не IMethod<Pong> (методы исключены из Layer.Table и не читались бы из потока).
 [TLDef(0x7ABE77EC)] //ping#7abe77ec ping_id:long = Pong
-public sealed partial class Ping : IMethod<Pong>
+public sealed partial class Ping : IObject
 {
     public long ping_id;
 }
 
+// ping_delay_disconnect — наш keep-alive: просит сервер держать соединение ещё disconnect_delay секунд
+// и присылать ping, если трафика нет. Отправляется без ожидания ответа, поэтому тоже IObject.
 [TLDef(0xF3427B8C)] //ping_delay_disconnect#f3427b8c ping_id:long disconnect_delay:int = Pong
-public sealed partial class PingDelayDisconnect : IMethod<Pong>
+public sealed partial class PingDelayDisconnect : IObject
 {
     public long ping_id;
     public int disconnect_delay;

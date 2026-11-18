@@ -5,6 +5,7 @@ using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.Transport;
+using static TgWsProxy.Domain.AppConstants.CfDomainRefresher;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -18,15 +19,10 @@ internal sealed class CfDomainRefresher(
     ICfDomainBalancer balancer,
     ILogger<CfDomainRefresher> logger) : ICfDomainRefresher
 {
-    /// <summary>URL со списком закодированных доменов (CFPROXY_DOMAINS_URL).</summary>
-    private const string DomainsUrl =
-        "https://raw.githubusercontent.com/Flowseal/tg-ws-proxy/main/.github/cfproxy-domains.txt";
 
     /// <summary>Период обновления списка доменов (секунды).</summary>
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromHours(1);
 
-    /// <summary>Минимальное число валидных доменов, чтобы принять новый список.</summary>
-    private const int MinValidDomains = 3;
 
     private CancellationTokenSource? lifetime;
 

@@ -78,7 +78,7 @@ public sealed class WebProxyLinkBuilderTests
         var config = WebProxyConfig("bridge.example.com");
 
         Assert.Equal(
-            $"{WebProxyLinkBuilder.ShareLinkPrefix}?server=bridge.example.com&secret={TestConfig.TokenSecret}",
+            $"{AppConstants.WebProxy.ShareLinkPrefix}?server=bridge.example.com&secret={TestConfig.TokenSecret}",
             WebProxyLinkBuilder.BuildShareLink(config, Token(config)));
     }
 
@@ -89,7 +89,7 @@ public sealed class WebProxyLinkBuilderTests
         var marker = WebProxyLinkBuilder.BuildMarkerSecret(TestConfig.TokenSecret, "v1");
 
         Assert.Equal(
-            $"{WebProxyLinkBuilder.ShareLinkPrefix}?server=bridge.example.com%2Fv1&secret={marker}",
+            $"{AppConstants.WebProxy.ShareLinkPrefix}?server=bridge.example.com%2Fv1&secret={marker}",
             WebProxyLinkBuilder.BuildShareLink(config, Token(config)));
     }
 
@@ -99,7 +99,7 @@ public sealed class WebProxyLinkBuilderTests
         var config = WebProxyConfig("bridge.example.com");
 
         Assert.Equal(
-            $"{WebProxyLinkBuilder.DeepLinkPrefix}?server=bridge.example.com&secret={TestConfig.TokenSecret}",
+            $"{AppConstants.WebProxy.DeepLinkPrefix}?server=bridge.example.com&secret={TestConfig.TokenSecret}",
             WebProxyLinkBuilder.BuildDeepLink(config, Token(config)));
     }
 
@@ -125,7 +125,7 @@ public sealed class WebProxyLinkBuilderTests
         var config = WebProxyConfig("bücher.example");
 
         Assert.Equal(
-            $"{WebProxyLinkBuilder.ShareLinkPrefix}?server=xn--bcher-kva.example&secret={TestConfig.TokenSecret}",
+            $"{AppConstants.WebProxy.ShareLinkPrefix}?server=xn--bcher-kva.example&secret={TestConfig.TokenSecret}",
             WebProxyLinkBuilder.BuildShareLink(config, Token(config)));
     }
 

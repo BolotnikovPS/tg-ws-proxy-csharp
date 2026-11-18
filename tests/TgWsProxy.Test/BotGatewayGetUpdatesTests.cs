@@ -106,23 +106,21 @@ public class BotGatewayGetUpdatesTests
     }
 
     [Fact]
-    public void BuildUpdates_FiltersByOffset_SkipsEmpty_AndSorts()
+    public void BuildUpdates_SkipsEmpty_AndKeepsMessageOrder()
     {
         var m2 = new MtProtoTL.Message { id = 2, date = DateTime.UnixEpoch, message = "two", peer_id = null };
         var m5 = new MtProtoTL.Message { id = 5, date = DateTime.UnixEpoch, message = "five", peer_id = null };
         var empty = new MtProtoTL.MessageEmpty { id = 1 };
 
-        var result = BotGateway.BuildUpdates(
-            [m5, empty, m2],
-            [],
-            null,
-            offset: 3);
+        var result = BotGateway.BuildUpdates([m5, empty, m2], [], null);
 
-        Assert.Single(result);
-        Assert.Equal(5, (int)result[0]["update_id"]);
+        // update_id присваивает очередь, поэтому BuildUpdates отдаёт только полезную нагрузку
+        // и сохраняет порядок прихода из updates.difference.
+        Assert.Equal(2, result.Count);
+        Assert.False(result[0].ContainsKey("update_id"));
 
-        var message = (Dictionary<string, object>)result[0]["message"];
-        Assert.Equal("five", (string)message["text"]);
+        Assert.Equal("five", (string)((Dictionary<string, object>)result[0]["message"])["text"]);
+        Assert.Equal("two", (string)((Dictionary<string, object>)result[1]["message"])["text"]);
     }
 
     [Fact]
@@ -184,15 +182,30 @@ public class BotGatewayGetUpdatesTests
         Assert.False(built.ContainsKey("text"));
         Assert.Equal("a caption", (string)built["caption"]);
 
-        var ps = Assert.Single((Dictionary<string, object>[])built["photo"]);
-        Assert.Equal(1280, (int)ps["width"]);
-        Assert.Equal(960, (int)ps["height"]);
-        Assert.Equal(98765, (int)ps["file_size"]);
+        // Каждый PhotoSize даёт отдельную запись: Bot API отдаёт массив размеров,
+        // и file_id кодирует thumb_size — без него upload.getFile возвращает FILE_REFERENCE_EXPIRED.
+        var sizes = (Dictionary<string, object>[])built["photo"];
+        Assert.Equal(2, sizes.Length);
 
-        var decoded = BotGateway.DecodeInputPhoto((string)ps["file_id"]);
+        Assert.Equal("m", BotGateway.DecodePhotoLocation((string)sizes[0]["file_id"]).ThumbSize);
+        Assert.Equal(320, (int)sizes[0]["width"]);
+        Assert.Equal(240, (int)sizes[0]["height"]);
+        Assert.Equal(12345, (int)sizes[0]["file_size"]);
+
+        Assert.Equal("x", BotGateway.DecodePhotoLocation((string)sizes[1]["file_id"]).ThumbSize);
+        Assert.Equal(1280, (int)sizes[1]["width"]);
+        Assert.Equal(960, (int)sizes[1]["height"]);
+        Assert.Equal(98765, (int)sizes[1]["file_size"]);
+
+        var decoded = BotGateway.DecodeInputPhoto((string)sizes[1]["file_id"]);
         Assert.Equal(photo.id, decoded.id);
         Assert.Equal(photo.access_hash, decoded.access_hash);
         Assert.Equal(photo.file_reference, decoded.file_reference);
+
+        // file_unique_id общий: он зависит только от id фото, а не от размера.
+        Assert.Equal(
+            (string)sizes[0]["file_unique_id"],
+            (string)sizes[1]["file_unique_id"]);
     }
 
     [Fact]

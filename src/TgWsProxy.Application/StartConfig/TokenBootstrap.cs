@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using TgWsProxy.Domain;
+using static TgWsProxy.Domain.AppConstants.Config;
 
 namespace TgWsProxy.Application.StartConfig;
 
@@ -14,11 +15,7 @@ namespace TgWsProxy.Application.StartConfig;
 /// </summary>
 public static class TokenBootstrap
 {
-    /// <summary>Идентификатор токена, созданного миграцией прежнего единственного секрета (F-8.3).</summary>
-    public const string DefaultTokenId = "default";
 
-    /// <summary>Имя токена, созданного миграцией прежнего единственного секрета.</summary>
-    public const string DefaultTokenName = "default";
 
     /// <summary>
     /// Дополняет конфигурацию до работоспособного набора токенов: заполняет пропущенные

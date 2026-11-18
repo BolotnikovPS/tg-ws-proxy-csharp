@@ -410,3 +410,53 @@ public sealed partial class Channels_LeaveChannel : IMethod<UpdatesBase>
 {
     public InputChannelBase channel;
 }
+
+/// <summary>
+/// Резолв публичного username в пир (<c>contacts.resolveUsername</c>). Нужен для Bot API
+/// <c>chat_id = "@channelusername"</c>: боты могут резолвить только публичные username.
+/// </summary>
+[TLDef(0x725AFBBC)]
+public sealed partial class Contacts_ResolveUsername : IMethod<Contacts_ResolvedPeer>
+{
+    public Flags flags;
+    public string username;
+    [IfFlag(0)] public string referer;
+
+    [Flags] public enum Flags : uint
+    {
+        has_referer = 0x1,
+    }
+}
+
+/// <summary>
+/// Удаление сообщений в канале/супергруппе (<c>channels.deleteMessages</c>). Обязателен для
+/// Bot API <c>deleteMessage</c>/<c>deleteMessages</c>: в каналах <c>messages.deleteMessages</c>
+/// сообщения не удаляет (он работает только для обычных чатов и приватных диалогов).
+/// </summary>
+[TLDef(0x84C1FD4E)]
+public sealed partial class Channels_DeleteMessages : IMethod<Messages_AffectedMessages>
+{
+    public InputChannelBase channel;
+    public int[] id;
+}
+
+/// <summary>
+/// Загрузка медиа «на сервер» до отправки (<c>messages.uploadMedia</c>): принимает
+/// <c>InputMediaUploadedPhoto</c>/<c>InputMediaUploadedDocument</c> и возвращает готовый
+/// <c>MessageMediaPhoto</c>/<c>MessageMediaDocument</c>. Обязательна для альбомов: в
+/// <c>messages.sendMultiMedia</c> сервер отвечает <c>MEDIA_INVALID</c> на <c>inputMediaUploaded*</c>,
+/// поэтому элементы альбома с локальной загрузкой сначала прогоняются через uploadMedia.
+/// </summary>
+[TLDef(0x14967978)]
+public sealed partial class Messages_UploadMedia : IMethod<MessageMedia>
+{
+    public Flags flags;
+    [IfFlag(0)] public string business_connection_id;
+    public InputPeer peer;
+    public InputMedia media;
+
+    [Flags] public enum Flags : uint
+    {
+        has_business_connection_id = 0x1,
+    }
+}

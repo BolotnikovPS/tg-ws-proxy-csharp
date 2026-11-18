@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Infrastructure.Transport;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Infrastructure.Wire;
 
@@ -189,12 +190,12 @@ public sealed class MsgSplitter(int protoInt)
             return null;
         }
 
-        if (_proto == Protocol.ProtoAbridgedInt)
+        if (_proto == AppConstants.Protocol.ProtoAbridgedInt)
         {
             return NextAbridgedLen(offset, avail);
         }
 
-        if (_proto is Protocol.ProtoIntermediateInt or Protocol.ProtoPaddedIntermediateInt)
+        if (_proto is AppConstants.Protocol.ProtoIntermediateInt or AppConstants.Protocol.ProtoPaddedIntermediateInt)
         {
             return NextIntermediateLen(offset, avail);
         }

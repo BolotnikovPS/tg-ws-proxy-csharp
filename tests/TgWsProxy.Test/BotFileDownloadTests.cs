@@ -60,10 +60,48 @@ public class BotFileDownloadTests
     [Fact]
     public void DecodeInputPhoto_Throws400_WhenWrongType()
     {
-        var bytes = new byte[21];
-        bytes[0] = 3; // не фото (фото — тип 2)
+        var bytes = new byte[22];
+        bytes[0] = 4; // не фото (фото — тип 2 или 3)
         var ex = Assert.Throws<BotGatewayException>(() => BotGateway.DecodeInputPhoto(Convert.ToBase64String(bytes)));
         Assert.Equal(400, ex.ErrorCode);
+    }
+
+    [Fact]
+    public void DecodePhotoLocation_ReadsThumbSize()
+    {
+        // Раскладка текущего формата: type=3 | dc | id | access_hash | len | thumb | file_reference.
+        var blob = new byte[22 + 3];
+        blob[0] = 3;
+        BitConverter.GetBytes(2).CopyTo(blob, 1);
+        BitConverter.GetBytes(1234L).CopyTo(blob, 5);
+        BitConverter.GetBytes(-5678L).CopyTo(blob, 13);
+        blob[21] = 1;
+        blob[22] = (byte)'m';
+
+        var (photo, thumbSize) = BotGateway.DecodePhotoLocation(Convert.ToBase64String(blob));
+
+        Assert.Equal("m", thumbSize);
+        Assert.Equal(1234L, photo.id);
+        Assert.Equal(-5678L, photo.access_hash);
+    }
+
+    [Fact]
+    public void DecodePhotoLocation_LegacyFileId_HasEmptyThumbSize()
+    {
+        // file_id старого формата (type=2, без thumb_size) остаётся читаемым;
+        // пустой thumb_size подменяется на LegacyPhotoThumbSize при скачивании.
+        var blob = new byte[21];
+        blob[0] = 2;
+        BitConverter.GetBytes(2).CopyTo(blob, 1);
+        BitConverter.GetBytes(99L).CopyTo(blob, 5);
+        BitConverter.GetBytes(-77L).CopyTo(blob, 13);
+
+        var (photo, thumbSize) = BotGateway.DecodePhotoLocation(Convert.ToBase64String(blob));
+
+        Assert.Equal("", thumbSize);
+        Assert.Equal("x", AppConstants.BotApi.LegacyPhotoThumbSize);
+        Assert.Equal(99L, photo.id);
+        Assert.Equal(-77L, photo.access_hash);
     }
 
     [Fact]

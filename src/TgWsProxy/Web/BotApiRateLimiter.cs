@@ -61,4 +61,18 @@ internal sealed class BotApiRateLimiter
             return true;
         }
     }
+
+    /// <summary>
+    /// Сколько секунд осталось до сброса текущего окна — значение для <c>parameters.retry_after</c>
+    /// в ответе 429 и для HTTP-заголовка <c>Retry-After</c>. Окно фиксированное и длиной
+    /// в одну секунду, поэтому результат всегда равен 1 (минимум — 1, даже на границе окна).
+    /// </summary>
+    public int GetRetryAfterSeconds()
+    {
+        lock (_sync)
+        {
+            var remaining = _windowStart + 1 - _clock();
+            return remaining <= 0 ? 1 : (int)Math.Ceiling(remaining);
+        }
+    }
 }

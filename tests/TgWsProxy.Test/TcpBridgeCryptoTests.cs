@@ -2,6 +2,7 @@ using TgWsProxy.Application.Logic;
 using TgWsProxy.Infrastructure.Instances;
 using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Test;
 
@@ -63,7 +64,7 @@ public class TcpBridgeCryptoTests
         using var ctx = CreateCtx();
         var buffer = (byte[])clientCipher.Clone();
         var plainBuffer = new byte[clientCipher.Length];
-        var splitter = new MsgSplitter(Protocol.ProtoAbridgedInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoAbridgedInt);
 
         var parts = TcpBridgeService.TransformUpstream(ctx, splitter, buffer, plainBuffer, clientCipher.Length);
 

@@ -1,5 +1,6 @@
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
+using static TgWsProxy.Domain.AppConstants.Config;
 
 namespace TgWsProxy.Application.StartConfig;
 
@@ -122,11 +123,7 @@ public static class ConfigValidator
         }
     }
 
-    /// <summary>Максимальное число токенов доступа (F-8.2).</summary>
-    public const int MaxTokens = 64;
 
-    /// <summary>Максимальная длина имени токена (F-8.1).</summary>
-    public const int MaxTokenNameLength = 64;
 
     /// <summary>
     /// Проверяет набор токенов доступа прокси (F-8.1, F-8.2): непустой список, не больше
@@ -219,8 +216,6 @@ public static class ConfigValidator
         }
     }
 
-    /// <summary>Максимальная длина <c>webProxy.basePath</c> (совпадает с MaxBasePathLength в verifier).</summary>
-    public const int MaxWebProxyBasePathLength = 128;
 
     /// <summary>
     /// Проверяет конфигурацию WEB proxy (browser-relay) bridge-листенера (F-W.1, F-W.5):
@@ -289,8 +284,6 @@ public static class ConfigValidator
         }
     }
 
-    /// <summary>Предел объёма исходящей очереди одной сессии (верхняя граница — 64 МиБ).</summary>
-    public const int MaxWebProxyPendingBytes = 64 * 1024 * 1024;
 
     /// <summary>
     /// Лимиты ресурсов WEB proxy (F-W.25): сессии, потоки, исходящая очередь. Значения должны

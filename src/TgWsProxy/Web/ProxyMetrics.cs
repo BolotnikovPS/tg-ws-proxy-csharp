@@ -4,6 +4,7 @@ using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
+using static TgWsProxy.Domain.AppConstants.Metrics;
 
 namespace TgWsProxy.Web;
 
@@ -22,14 +23,8 @@ namespace TgWsProxy.Web;
 /// </remarks>
 internal sealed class ProxyMetrics
 {
-    /// <summary>Content-Type экспозиции Prometheus (text format 0.0.4).</summary>
-    public const string ContentType = "text/plain; version=0.0.4; charset=utf-8";
 
-    /// <summary>Префикс глобальных метрик прокси.</summary>
-    public const string Prefix = "tgwsproxy";
 
-    /// <summary>Префикс метрик по парам (IP, токен).</summary>
-    public const string PeerPrefix = "tgws_peer";
 
     private static readonly (string Name, string Help)[] GlobalCounters =
     [

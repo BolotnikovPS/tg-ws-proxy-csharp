@@ -1,4 +1,5 @@
 using TgWsProxy.Infrastructure.WebProxy;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Test;
 
@@ -13,7 +14,7 @@ public class WebProxyHttpSessionTests
     public async Task ProcessUp_AcceptsFirstSequence()
     {
         var session = CreateSession();
-        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { AppConstants.WebProxy.HelloProtocolVersion });
 
         var result = await session.ProcessUpAsync(1, hello, default);
 
@@ -26,7 +27,7 @@ public class WebProxyHttpSessionTests
     public async Task ProcessUp_RejectsGapInSequence()
     {
         var session = CreateSession();
-        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { AppConstants.WebProxy.HelloProtocolVersion });
 
         await session.ProcessUpAsync(1, hello, default);
         var gap = await session.ProcessUpAsync(3, hello, default);
@@ -39,7 +40,7 @@ public class WebProxyHttpSessionTests
     public async Task ProcessUp_RejectsSeqZero()
     {
         var session = CreateSession();
-        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { AppConstants.WebProxy.HelloProtocolVersion });
 
         var result = await session.ProcessUpAsync(0, hello, default);
 
@@ -51,7 +52,7 @@ public class WebProxyHttpSessionTests
     public async Task ProcessUp_RepeatsAcceptedBatchByIdentity()
     {
         var session = CreateSession();
-        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { AppConstants.WebProxy.HelloProtocolVersion });
 
         await session.ProcessUpAsync(1, hello, default);
         var replay = await session.ProcessUpAsync(1, hello, default);
@@ -65,7 +66,7 @@ public class WebProxyHttpSessionTests
     public async Task ProcessUp_RejectsSameSeqWithDifferentBody()
     {
         var session = CreateSession();
-        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { AppConstants.WebProxy.HelloProtocolVersion });
         var other = Frame(RelayFrameType.Ping, 0, ReadOnlyMemory<byte>.Empty);
 
         await session.ProcessUpAsync(1, hello, default);
@@ -91,7 +92,7 @@ public class WebProxyHttpSessionTests
     public async Task Poll_DeliversWelcomeAfterHello()
     {
         var session = CreateSession();
-        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { AppConstants.WebProxy.HelloProtocolVersion });
 
         await session.ProcessUpAsync(1, hello, default);
         var down = await session.PollAsync(0, default);
@@ -108,7 +109,7 @@ public class WebProxyHttpSessionTests
     public async Task Poll_ReplaysLastBatchOnUnconfirmedCursor()
     {
         var session = CreateSession();
-        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { AppConstants.WebProxy.HelloProtocolVersion });
 
         await session.ProcessUpAsync(1, hello, default);
         var first = await session.PollAsync(0, default);
@@ -175,7 +176,7 @@ public class WebProxyHttpSessionTests
     {
         // WELCOME-кадр занимает 8 байт заголовка — лимит 4 байта гарантированно превышен.
         var session = new WebProxyHttpSession((_, _) => Task.CompletedTask, maxPendingBytes: 4);
-        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { AppConstants.WebProxy.HelloProtocolVersion });
 
         await session.ProcessUpAsync(1, hello, default);
 
@@ -190,7 +191,7 @@ public class WebProxyHttpSessionTests
     public async Task Append_OverPendingItemsLimit_ClosesSession()
     {
         var session = new WebProxyHttpSession((_, _) => Task.CompletedTask, maxPendingItems: 1);
-        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { AppConstants.WebProxy.HelloProtocolVersion });
 
         await session.ProcessUpAsync(1, hello, default);
         Assert.False(session.IsClosed);
@@ -209,7 +210,7 @@ public class WebProxyHttpSessionTests
             (_, _) => Task.CompletedTask,
             maxPendingBytes: 64 * 1024,
             maxPendingItems: 16);
-        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion });
+        var hello = Frame(RelayFrameType.Hello, 0, new byte[] { AppConstants.WebProxy.HelloProtocolVersion });
 
         await session.ProcessUpAsync(1, hello, default);
 

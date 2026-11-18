@@ -1,17 +1,15 @@
 #nullable disable
-using System;
 using System.Buffers.Binary;
-using System.IO;
+using System.Collections.Concurrent;
 using System.IO.Compression;
-using System.Net;
 using System.Numerics;
 using System.Security.Cryptography;
-using System.Threading;
-using System.Threading.Tasks;
 using TgWsProxy.Domain.Exceptions;
 using TgWsProxy.Infrastructure.MtProto.TL;
 using TgWsProxy.Infrastructure.MtProto.TL.Abstractions;
 using TgWsProxy.Infrastructure.MtProto.TL.MtProtos;
+using static TgWsProxy.Domain.AppConstants.MtProto;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Infrastructure.MtProto;
 
@@ -33,6 +31,37 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     private int _dcId;
     private bool _testMode;
     private long _serverTimeOffset;
+
+    // Транспорт однопоточный: если два RPC читают из него параллельно, каждый может получить ответ
+    // другого вызова и поток ответов рассинхронизируется («Unexpected rpc_result req_msg_id …» каскадом).
+    // Поэтому все RPC идут строго по одному.
+    private readonly SemaphoreSlim _rpcGate = new(1, 1);
+
+    // Апдейты, которые сервер прислал вместо ответа на запрос. Так доходят callback_query/inline_query:
+    // у них нет pts, поэтому в updates.difference они не попадают — сервер отдаёт контейнер updates.
+    private readonly ConcurrentQueue<IObject> _pushedUpdates = new();
+
+    // Серверные ping, собранные при разборе payload: (ping_id, msg_id принятого сообщения).
+    // Отвечаем pong сразу после разбора — независимо от того, что ещё лежало в том же контейнере.
+    private readonly ConcurrentQueue<(long PingId, long MsgId)> _pendingPings = new();
+
+    // msg_id последнего принятого от сервера сообщения: нужен для pong (msg_id принятого ping).
+    private long _lastRecvMsgId;
+
+    // msg_id принятых от сервера content-related сообщений (нечётный seq_no), которые надо подтвердить.
+    // MTProto требует ack'ать всё, что сервер прислал с content-related seq_no: без msgs_ack сервер
+    // считает сообщения недоставленными, копит их и примерно через 10 минут рвёт соединение —
+    // отсюда был периодический 502 «Bot transport error». Эталон (WTelegramClient) делает то же самое:
+    // собирает msg_id с нечётным seqno и шлёт их в msgs_ack.
+    private readonly ConcurrentQueue<long> _msgsToAck = new();
+
+
+    // Момент последней отправки (UTC ticks) и keep-alive по ping_delay_disconnect.
+    // Без keep-alive сервер закрывает простаивающее соединение примерно через 10 минут,
+    // из-за чего getUpdates периодически падал с 502 «Bot transport error».
+    private long _lastSendTicks = Environment.TickCount64;
+
+
 
     // Состояние ленты обновлений (pts/qts/date/seq) — заполняется после updates.getState/getDifference,
     // переносится в BotSession и обратно для инкрементальных getUpdates без потери истории.
@@ -56,14 +85,14 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
         ("149.154.167.40", 443),   // Test DC2 (default)
     ];
 
-    public async Task ConnectAsync(bool testMode = false, CancellationToken ct = default)
+    public async Task ConnectAsync(bool testMode, CancellationToken ct)
         => await ConnectAsync(null, testMode, ct);
 
     /// <summary>
     /// Подключается и, если передан валидный <paramref name="session"/>, восстанавливает его состояние —
     /// обмен auth key пропускается. Иначе выполняет полный обмен auth key.
     /// </summary>
-    public async Task ConnectAsync(BotSession session, bool testMode = false, CancellationToken ct = default)
+    public async Task ConnectAsync(BotSession session, bool testMode, CancellationToken ct)
     {
         _testMode = testMode;
         _dcId = 2; // оба дефолтных адреса (ProductionDcs[1] и TestDcs[0]) — это DC2
@@ -383,8 +412,6 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
 
         // encrypted_data = everything after the 32-byte auth_key part:
         //   salt(8) session_id(8) msg_id(8) seq_no(4) message_data_length(4) message_data padding
-        const int AuthKeyPartSize = 32;
-        const int EnvelopeHeaderSize = 32; // salt..message_data_length
         var clearLength = (int)clearStream.Length - AuthKeyPartSize;
         var messageDataLength = clearLength - EnvelopeHeaderSize;
 
@@ -406,79 +433,234 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
 
     private async Task<T> SendEncryptedAsync<T>(IObject msg, CancellationToken ct) where T : IObject
     {
-        // bad_server_salt triggers a transparent resend with the freshly-set salt (bounded attempts).
-        for (var attempt = 0; attempt < 4; attempt++)
+        await _rpcGate.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            using var sha256 = SHA256.Create();
-
-            // New msg id and seqno
-            var msgId = GenerateMsgId();
-            // Content-related messages (RPC queries) MUST use ODD seq_no: 1, 3, 5, ...
-            // (irrelevant/ack messages use even). The server rejects an even seqno on a query
-            // with bad_msg_notification error_code=35 (odd msg_seqno expected).
-            var seqno = _seqnoCounter++ * 2 + 1;
-
-            // Build clear text
-            var frame = BuildClearTextFrame(_authKey, _salt, _sessionId, msgId, seqno, msg);
-            var clearBuffer = frame.Buffer;
-            var clearLength = frame.ClearLength;
-            var padding = frame.Padding;
-
-            // Compute msg_key
-            var msgKeyLarge = sha256.ComputeHash(clearBuffer, 0, 32 + clearLength + padding);
-            var msgKey = new byte[16];
-            Array.Copy(msgKeyLarge, 8, msgKey, 0, 16);
-
-            // Derive AES key/iv
-            var (aesKey, aesIv) = MtProtoCrypto.DeriveAesKeyIv(msgKey, 0, _authKey, 0, sha256);
-
-            // Encrypt
-            var encryptedData = MtProtoCrypto.AesIgeEncryptDecrypt(
-                clearBuffer.AsSpan(32, clearLength + padding).ToArray(), aesKey, aesIv, true);
-
-            // Build payload
-            using var memStream = new MemoryStream(1024);
-            using var writer = new BinaryWriter(memStream);
-            writer.Write(0); // payload_len placeholder
-            writer.Write(_authKeyId);
-            writer.Write(msgKey);
-            writer.Write(encryptedData);
-            var payload = memStream.ToArray();
-            BinaryPrimitives.WriteInt32LittleEndian(payload.AsSpan(0), payload.Length - 4);
-
-            await _transport.SendAsync(payload, ct);
-
-            try
+            // bad_server_salt triggers a transparent resend with the freshly-set salt (bounded attempts).
+            for (var attempt = 0; attempt < 4; attempt++)
             {
-                // The first response to a brand-new session typically carries only
-                // new_session_created (+msgs_ack) and no rpc_result; the RPC result follows
-                // in a subsequent payload. Keep reading until the matching rpc_result turns up
-                // or a terminal error (bad_server_salt / bad_msg_notification / RPC error)
-                // throws out of ReadEncryptedResponse / ProcessServerObject.
-                for (var read = 0; ; read++)
-                {
-                    var response = await _transport.ReceiveAsync(ct);
-                    var decrypted = DecryptInboundPayload(response, sha256);
+                using var sha256 = SHA256.Create();
 
-                    var result = ReadEncryptedResponse(decrypted, msgId);
-                    if (result != null)
+                // New msg id and seqno
+                var msgId = GenerateMsgId();
+                // Content-related messages (RPC queries) MUST use ODD seq_no: 1, 3, 5, ...
+                // (irrelevant/ack messages use even). The server rejects an even seqno on a query
+                // with bad_msg_notification error_code=35 (odd msg_seqno expected).
+                var seqno = _seqnoCounter++ * 2 + 1;
+
+                // Keep-alive перед запросом: сервер закрывает соединение, по которому давно
+                // ничего не отправлялось, и тогда текущий вызов падал бы с 502 «Bot transport error».
+                await EnsureKeepAliveAsync(ct).ConfigureAwait(false);
+                await SendEncryptedFrameAsync(msg, msgId, seqno, sha256, ct).ConfigureAwait(false);
+
+                try
+                {
+                    // The first response to a brand-new session typically carries only
+                    // new_session_created (+msgs_ack) and no rpc_result; the RPC result follows
+                    // in a subsequent payload. Keep reading until the matching rpc_result turns up
+                    // or a terminal error (bad_server_salt / bad_msg_notification / RPC error)
+                    // throws out of ReadEncryptedResponse / ProcessServerObject.
+                    var resend = false;
+                    for (var read = 0; ; read++)
                     {
-                        return (T)result;
+                        var response = await _transport.ReceiveAsync(ct);
+                        var decrypted = DecryptInboundPayload(response, sha256);
+
+                        var result = ReadEncryptedResponse(decrypted, msgId);
+
+                        // Сервисные сообщения сервера. На каждый ping обязательно отвечаем pong: без ответа
+                        // Telegram считает соединение мёртвым и закрывает его (отсюда 502 «Bot transport error»
+                        // примерно раз в 10 минут). pong не расходует лимит ожиданий и не влияет на поток ответов.
+                        await AnswerPendingPingsAsync(sha256, ct).ConfigureAwait(false);
+
+                        // И подтверждаем всё, что сервер прислал с content-related seq_no: без msgs_ack
+                        // сервер копит недоставленные сообщения и через ~10 минут рвёт соединение.
+                        await SendPendingAcksAsync(sha256, ct).ConfigureAwait(false);
+
+                        if (result is T typed)
+                        {
+                            return typed;
+                        }
+
+                        if (result is null)
+                        {
+                            if (read >= 32)
+                            {
+                                throw new InvalidOperationException($"No RPC result for msg_id {msgId} after {read + 1} responses");
+                            }
+
+                            continue;
+                        }
+
+                        // Сервер вправе ответить на запрос контейнером updates (так приходят callback_query
+                        // и inline_query — у них нет pts, в updates.difference они не попадают). Забираем
+                        // апдейты в очередь и повторяем запрос: тип ответа не тот, что ожидает вызывающий.
+                        if (result is UpdatesBase pushed)
+                        {
+                            _pushedUpdates.Enqueue(pushed);
+                            resend = true;
+                            break;
+                        }
+
+                        throw new InvalidOperationException(
+                            $"Unexpected RPC result type {result.GetType().Name} for msg_id {msgId}, expected {typeof(T).Name}");
                     }
 
-                    if (read >= 32)
+                    if (resend)
                     {
-                        throw new InvalidOperationException($"No RPC result for msg_id {msgId} after {read + 1} responses");
+                        continue; // апдейты уже сохранены, запрос отправляем заново
                     }
                 }
+                catch (ServerSaltChangedException) when (attempt < 3)
+                {
+                    // _salt has been refreshed inside ReadEncryptedResponse; resend with the new salt.
+                }
             }
-            catch (ServerSaltChangedException) when (attempt < 3)
-            {
-                // _salt has been refreshed inside ReadEncryptedResponse; resend with the new salt.
-            }
+
+            throw new InvalidOperationException(
+                $"RPC {msg.GetType().Name} did not complete after 4 attempts (bad_server_salt or repeated updates push)");
+        }
+        finally
+        {
+            _rpcGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Шифрует и отправляет одно сообщение, не ожидая ответа (используется RPC-запросом,
+    /// keep-alive ping и pong на серверный ping).
+    /// </summary>
+    private async Task SendEncryptedFrameAsync(IObject msg, long msgId, int seqno, SHA256 sha256, CancellationToken ct)
+    {
+        var frame = BuildClearTextFrame(_authKey, _salt, _sessionId, msgId, seqno, msg);
+
+        // Compute msg_key
+        var msgKeyLarge = sha256.ComputeHash(frame.Buffer, 0, 32 + frame.ClearLength + frame.Padding);
+        var msgKey = new byte[16];
+        Array.Copy(msgKeyLarge, 8, msgKey, 0, 16);
+
+        // Derive AES key/iv
+        var (aesKey, aesIv) = MtProtoCrypto.DeriveAesKeyIv(msgKey, 0, _authKey, 0, sha256);
+
+        // Encrypt
+        var encryptedData = MtProtoCrypto.AesIgeEncryptDecrypt(
+            frame.Buffer.AsSpan(32, frame.ClearLength + frame.Padding).ToArray(), aesKey, aesIv, true);
+
+        // Build payload
+        using var memStream = new MemoryStream(1024);
+        using var writer = new BinaryWriter(memStream);
+        writer.Write(0); // payload_len placeholder
+        writer.Write(_authKeyId);
+        writer.Write(msgKey);
+        writer.Write(encryptedData);
+        var payload = memStream.ToArray();
+        BinaryPrimitives.WriteInt32LittleEndian(payload.AsSpan(0), payload.Length - 4);
+
+        await _transport.SendAsync(payload, ct).ConfigureAwait(false);
+        _lastSendTicks = Environment.TickCount64;
+    }
+
+    /// <summary>
+    /// Ответ на серверный ping. seq_no чётный: pong — сервисное сообщение, а не RPC-запрос
+    /// (нечётный seq_no на запрос сервер отвергает с bad_msg_notification 35).
+    /// </summary>
+    private async Task SendPongAsync(long pingId, long pingMsgId, SHA256 sha256, CancellationToken ct)
+    {
+        var msgId = GenerateMsgId();
+        // Как в эталоне: нечётный seq_no получают только content-related сообщения и он инкрементит
+        // счётчик, а сервисные (pong, msgs_ack) берут текущее значение *2 без инкремента.
+        var seqno = _seqnoCounter * 2;
+        var pong = new Pong { msg_id = pingMsgId, ping_id = pingId };
+        await SendEncryptedFrameAsync(pong, msgId, seqno, sha256, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Ставит msg_id принятого content-related сообщения в очередь подтверждений.
+    /// qts/ack нужны для всех сообщений с нечётным seq_no (см. <see cref="_msgsToAck"/>).
+    /// </summary>
+    private void EnqueueAck(long msgId)
+    {
+        if (_msgsToAck.Count < MaxPendingAcks)
+        {
+            _msgsToAck.Enqueue(msgId);
+        }
+    }
+
+    /// <summary>
+    /// Отправляет msgs_ack для всех накопленных подтверждений одним сервисным сообщением
+    /// (seq_no чётный, счётчик не инкрементится). Без этого сервер считает сообщения
+    /// недоставленными и через ~10 минут закрывает соединение.
+    /// </summary>
+    private async Task SendPendingAcksAsync(SHA256 sha256, CancellationToken ct)
+    {
+        if (_msgsToAck.IsEmpty)
+        {
+            return;
         }
 
-        throw new InvalidOperationException("Persistent bad_server_salt across retries");
+        var ids = new List<long>();
+        while (ids.Count < MaxPendingAcks && _msgsToAck.TryDequeue(out var id))
+        {
+            ids.Add(id);
+        }
+
+        if (ids.Count == 0)
+        {
+            return;
+        }
+
+        var msgId = GenerateMsgId();
+        var seqno = _seqnoCounter * 2;
+        var ack = new MsgsAck { msg_ids = [.. ids] };
+        await SendEncryptedFrameAsync(ack, msgId, seqno, sha256, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Отвечает pong на все серверные ping, собранные при разборе последнего payload
+    /// (очередь заполняет <see cref="ProcessServerObject"/>, в том числе для ping внутри msg_container).
+    /// </summary>
+    private async Task AnswerPendingPingsAsync(SHA256 sha256, CancellationToken ct)
+    {
+        while (_pendingPings.TryDequeue(out var ping))
+        {
+            await SendPongAsync(ping.PingId, ping.MsgId, sha256, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Keep-alive: если по соединению давно ничего не отправлялось, посылаем ping_delay_disconnect,
+    /// чтобы сервер не закрыл простаивающее соединение (иначе getUpdates получал 502 «Bot transport error»
+    /// примерно раз в 10 минут). seq_no нечётный: ping_delay_disconnect — запрос, сервер отвечает на него
+    /// pong (ответ нам не нужен, но чётный seq_no сервер отверг бы с bad_msg_notification 35).
+    /// </summary>
+    private async Task EnsureKeepAliveAsync(CancellationToken ct)
+    {
+        if (Environment.TickCount64 - _lastSendTicks < KeepAliveIdleMs)
+        {
+            return;
+        }
+
+        using var sha256 = SHA256.Create();
+        var msgId = GenerateMsgId();
+        var seqno = _seqnoCounter++ * 2 + 1;
+        var ping = new PingDelayDisconnect { ping_id = msgId, disconnect_delay = KeepAliveDisconnectDelaySeconds };
+        await SendEncryptedFrameAsync(ping, msgId, seqno, sha256, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Забирает апдейты, которые сервер прислал вместо ответа на RPC (контейнеры
+    /// <c>updates</c>/<c>updatesCombined</c>/<c>updateShort</c>). Вызывающий должен разобрать их так же,
+    /// как результаты <c>updates.getDifference</c>: иначе callback_query теряется навсегда.
+    /// </summary>
+    public List<IObject> TakePushedUpdates()
+    {
+        var result = new List<IObject>();
+        while (_pushedUpdates.TryDequeue(out var update))
+        {
+            result.Add(update);
+        }
+
+        return result;
     }
 
     private byte[] DecryptInboundPayload(byte[] response, SHA256 sha256)
@@ -509,9 +691,15 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
         // in the msg_key hash and is NOT part of the encrypted/decrypted payload.
         _ = reader.ReadInt64(); // server_salt (transport copy; authoritative one may arrive via new_session_created)
         _ = reader.ReadInt64(); // session_id
-        _ = reader.ReadInt64(); // msg_id
-        _ = reader.ReadInt32(); // seq_no
+        _lastRecvMsgId = reader.ReadInt64(); // msg_id: попадает в msg_id ответного pong
+        var recvSeqNo = reader.ReadInt32();
         _ = reader.ReadInt32(); // message_data_length
+
+        // Content-related сообщения сервера (нечётный seq_no) подлежат подтверждению через msgs_ack.
+        if ((recvSeqNo & 1) != 0)
+        {
+            EnqueueAck(_lastRecvMsgId);
+        }
         var tl = reader.ReadTLObject();
         return ProcessServerObject(tl, expectedMsgId);
     }
@@ -523,6 +711,13 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
             IObject result = null;
             foreach (var message in container.messages)
             {
+                // Вложенные сообщения подтверждаем по их собственному msg_id (нечётный seq_no —
+                // content-related); без msgs_ack сервер копит недоставленные и рвёт соединение.
+                if ((message.seqno & 1) != 0)
+                {
+                    EnqueueAck(message.msg_id);
+                }
+
                 switch (message.body)
                 {
                     case NewSessionCreated nsc:
@@ -530,6 +725,12 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
                         break;
                     case MsgsAck:
                         break; // server ack for messages it received — not an RPC result, keep scanning
+                    // ping внутри контейнера складываем в очередь: сервер вправе прислать ping в одном
+                    // контейнере с rpc_result, и раньше такой ping терялся (перезаписывался результатом
+                    // либо отбрасывался), соединение оставалось без pong и сервер закрывал его.
+                    case Ping ping:
+                        _pendingPings.Enqueue((ping.ping_id, message.msg_id));
+                        break;
                     case BadServerSalt badSalt:
                         _salt = badSalt.new_server_salt;
                         throw new ServerSaltChangedException(badSalt.new_server_salt);
@@ -548,9 +749,12 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
 
         if (obj is RpcResult rpcResult)
         {
+            // Ответ на уже брошенный запрос (например, HTTP-клиент отвалился по таймауту и вызов
+            // отменился): не роняем текущий RPC, а просто продолжаем ждать свой rpc_result.
+            // Иначе поток ответов рассинхронизируется каскадом «Unexpected rpc_result req_msg_id …».
             if (rpcResult.req_msg_id != expectedMsgId)
             {
-                throw new InvalidOperationException($"Unexpected rpc_result req_msg_id {rpcResult.req_msg_id}, expected {expectedMsgId}");
+                return null;
             }
 
             return UnwrapResult(rpcResult.result);
@@ -576,6 +780,19 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
         if (obj is MsgsAck)
         {
             return null; // ack payload — no RPC result here
+        }
+
+        if (obj is Ping barePing)
+        {
+            // Серверный ping вне контейнера: msg_id берём из заголовка только что прочитанного
+            // payload (его записал ReadEncryptedResponse) — он идёт в msg_id ответного pong.
+            _pendingPings.Enqueue((barePing.ping_id, _lastRecvMsgId));
+            return null;
+        }
+
+        if (obj is Pong)
+        {
+            return null; // ответ на наш ping_delay_disconnect — он нам не нужен
         }
 
         // Some responses arrive unwrapped (bare object).
@@ -618,7 +835,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     private int _apiId;
     private bool _initConnectionSent;
 
-    public async Task<T> InvokeAsync<T>(IObject method, CancellationToken ct = default) where T : IObject
+    public async Task<T> InvokeAsync<T>(IObject method, CancellationToken ct) where T : IObject
     {
         if (_authKey == null)
         {
@@ -637,7 +854,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     {
         var wrapped = (IObject)new TgWsProxy.Infrastructure.MtProto.TL.InvokeWithLayer
         {
-            layer = Layer.Version,
+            layer = AppConstants.Tl.Version,
             query = method,
         };
 
@@ -665,23 +882,19 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     /// Вызывает метод с результатом bool (boolTrue#997275b5 / boolFalse#bc799737),
     /// например upload.saveFilePart, messages.setTyping, bots.setBotCommands.
     /// </summary>
-    public async Task<bool> InvokeBoolAsync(IObject method, CancellationToken ct = default)
+    public async Task<bool> InvokeBoolAsync(IObject method, CancellationToken ct)
     {
         var result = await SendEncryptedAsync<BoolValue>(WrapQuery(method), ct).ConfigureAwait(false);
         return result?.Value ?? false;
     }
 
-    /// <summary>Максимальный размер части upload.saveFilePart — 512 КиБ (ограничение Telegram).</summary>
-    public const int MaxFilePartSize = 512 * 1024;
 
-    /// <summary>Файлы крупнее 10 МиБ загружаются через upload.saveBigFilePart (InputFileBig).</summary>
-    public const long BigFileThreshold = 10L * 1024 * 1024;
 
     /// <summary>
     /// Загружает файл в Telegram по частям (upload.saveFilePart / upload.saveBigFilePart).
     /// Возвращает общее число частей; вызывающий сам выбирает InputFile vs InputFileBig.
     /// </summary>
-    public async Task<int> UploadFileAsync(long fileId, Stream source, CancellationToken ct = default)
+    public async Task<int> UploadFileAsync(long fileId, Stream source, CancellationToken ct)
     {
         if (!source.CanSeek)
         {
@@ -729,7 +942,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     /// (маршрут /file/bot&lt;token&gt;/&lt;file_path&gt; строится в Web-слое).
     /// </summary>
     public Task<TgWsProxy.Infrastructure.MtProto.TL.Upload_FileBase> GetFileAsync(
-        TgWsProxy.Infrastructure.MtProto.TL.InputFileLocationBase location, long offset, int limit, CancellationToken ct = default)
+        TgWsProxy.Infrastructure.MtProto.TL.InputFileLocationBase location, long offset, int limit, CancellationToken ct)
         => InvokeAsync<TgWsProxy.Infrastructure.MtProto.TL.Upload_FileBase>(
             new TgWsProxy.Infrastructure.MtProto.TL.Upload_GetFile
             {
@@ -763,7 +976,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     /// Требует предварительный <see cref="ConnectAsync(bool, CancellationToken)"/> (обмен auth key).
     /// </summary>
     public Task<TgWsProxy.Infrastructure.MtProto.TL.Auth_AuthorizationBase> ImportBotAuthorizationAsync(
-        int apiId, string apiHash, string botToken, CancellationToken ct = default)
+        int apiId, string apiHash, string botToken, CancellationToken ct)
     {
         _apiId = apiId;
         return InvokeAsync<TgWsProxy.Infrastructure.MtProto.TL.Auth_AuthorizationBase>(
@@ -778,13 +991,13 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
 
     /// <summary>users.getUsers#d91a548 → Vector&lt;User&gt;. Возвращает пользователей (self-id через InputUserSelf).</summary>
     public Task<TgWsProxy.Infrastructure.MtProto.TL.UserBase[]> GetUsersAsync(
-        TgWsProxy.Infrastructure.MtProto.TL.InputUserBase[] id, CancellationToken ct = default)
+        TgWsProxy.Infrastructure.MtProto.TL.InputUserBase[] id, CancellationToken ct)
         => InvokeVectorAsync<TgWsProxy.Infrastructure.MtProto.TL.UserBase>(
             new TgWsProxy.Infrastructure.MtProto.TL.Users_GetUsers { id = id }, ct);
 
     /// <summary>messages.sendMessage#fef48f62 → updates.Updates. Отправляет текст в чат через InputPeer.</summary>
     public Task<TgWsProxy.Infrastructure.MtProto.TL.UpdatesBase> SendMessageAsync(
-        TgWsProxy.Infrastructure.MtProto.TL.InputPeer peer, string message, CancellationToken ct = default)
+        TgWsProxy.Infrastructure.MtProto.TL.InputPeer peer, string message, CancellationToken ct)
         => InvokeAsync<TgWsProxy.Infrastructure.MtProto.TL.UpdatesBase>(
             new TgWsProxy.Infrastructure.MtProto.TL.Messages_SendMessage
             {
@@ -795,13 +1008,13 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
             }, ct);
 
     /// <summary>updates.getState#edd4882a → updates.State (pts/qts/date/seq — начальное состояние ленты обновлений).</summary>
-    public Task<TgWsProxy.Infrastructure.MtProto.TL.Updates_State> GetStateAsync(CancellationToken ct = default)
+    public Task<TgWsProxy.Infrastructure.MtProto.TL.Updates_State> GetStateAsync(CancellationToken ct)
         => InvokeAsync<TgWsProxy.Infrastructure.MtProto.TL.Updates_State>(
             new TgWsProxy.Infrastructure.MtProto.TL.Updates_GetState(), ct);
 
     /// <summary>updates.getDifference#19c2f763 → updates.Difference. Получает накопившиеся обновления после pts.</summary>
     public Task<TgWsProxy.Infrastructure.MtProto.TL.Updates_DifferenceBase> GetDifferenceAsync(
-        int pts, DateTime date, int qts, CancellationToken ct = default)
+        int pts, DateTime date, int qts, CancellationToken ct)
         => InvokeAsync<TgWsProxy.Infrastructure.MtProto.TL.Updates_DifferenceBase>(
             new TgWsProxy.Infrastructure.MtProto.TL.Updates_GetDifference
             {
@@ -813,7 +1026,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
             }, ct);
 
     /// <summary>Invoke метода с результатом TL vector#1cb5c415 (например users.getUsers).</summary>
-    public async Task<TElement[]> InvokeVectorAsync<TElement>(IObject method, CancellationToken ct = default)
+    public async Task<TElement[]> InvokeVectorAsync<TElement>(IObject method, CancellationToken ct)
         where TElement : IObject
     {
         var vector = await SendEncryptedAsync<TLVector>(WrapQuery(method), ct);
@@ -846,7 +1059,7 @@ public class MtProtoClient(string host, int port, byte[] secret = null) : IDispo
     }
 
     /// <summary>updates.getState + запоминание состояния (первый синхрон перед getUpdates).</summary>
-    public async Task<TgWsProxy.Infrastructure.MtProto.TL.Updates_State> SyncUpdateStateAsync(CancellationToken ct = default)
+    public async Task<TgWsProxy.Infrastructure.MtProto.TL.Updates_State> SyncUpdateStateAsync(CancellationToken ct)
     {
         var state = await GetStateAsync(ct).ConfigureAwait(false);
         ApplyUpdatesState(state);

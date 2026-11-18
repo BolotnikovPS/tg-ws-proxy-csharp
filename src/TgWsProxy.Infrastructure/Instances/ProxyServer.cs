@@ -9,6 +9,7 @@ using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.Session;
 using TgWsProxy.Infrastructure.WebProxy;
+using static TgWsProxy.Domain.AppConstants.Server;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -25,11 +26,7 @@ internal sealed class ProxyServer(
     ILogger<ProxyServer> logger
     ) : IProxyServer
 {
-    /// <summary>Период проверки живости слушающего сокета (порт upstream <c>LISTENER_CHECK_INTERVAL</c>).</summary>
-    private const double ListenerCheckIntervalSeconds = 5.0;
 
-    /// <summary>Пауза перед пересозданием слушателя (порт upstream <c>LISTENER_RESTART_DELAY</c>).</summary>
-    private const int ListenerRestartDelayMs = 1000;
 
     /// <summary>Синхронизация запросов перепривязки (F-7.6: одновременно не более одного).</summary>
     private readonly Lock _rebindSync = new();

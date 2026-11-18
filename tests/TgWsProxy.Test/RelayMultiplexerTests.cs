@@ -1,4 +1,5 @@
 using TgWsProxy.Infrastructure.WebProxy;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Test;
 
@@ -58,7 +59,7 @@ public class RelayMultiplexerTests
         await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Data, 9, "\t\t\t"u8.ToArray()), default);
 
         var buffer = new byte[3];
-        var n = await bridged!.ReadAsync(buffer);
+        var n = await bridged!.ReadAsync(buffer, CancellationToken.None);
 
         Assert.Equal(3, n);
         Assert.Equal("\t\t\t"u8.ToArray(), buffer);
@@ -90,11 +91,11 @@ public class RelayMultiplexerTests
 
         await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Open, 3, ReadOnlyMemory<byte>.Empty), default);
 
-        var writeTask = bridged!.WriteAsync(new byte[8]).AsTask();
+        var writeTask = bridged!.WriteAsync(new byte[8], CancellationToken.None).AsTask();
         await Task.Delay(100);
         Assert.False(writeTask.IsCompleted);
 
-        var win = new byte[RelayFrameCodec.WindowCreditSize];
+        var win = new byte[AppConstants.WebProxy.WindowCreditSize];
         RelayFrameCodec.WriteWindowCredit(win, 4);
         await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Window, 3, win), default);
 
@@ -119,7 +120,7 @@ public class RelayMultiplexerTests
         await mux.HandleInboundFrameAsync(MakeFrame(RelayFrameType.Close, 3, ReadOnlyMemory<byte>.Empty), default);
 
         Assert.Equal(0, mux.ActiveStreamCount);
-        Assert.Equal(0, await bridged!.ReadAsync(new byte[1]));
+        Assert.Equal(0, await bridged!.ReadAsync(new byte[1], CancellationToken.None));
         await mux.DisposeAsync();
     }
 
@@ -142,7 +143,7 @@ public class RelayMultiplexerTests
         var mux = new RelayMultiplexer(sink);
 
         await mux.HandleInboundFrameAsync(
-            MakeFrame(RelayFrameType.Hello, 0, new byte[] { RelayFrameCodec.HelloProtocolVersion }),
+            MakeFrame(RelayFrameType.Hello, 0, new byte[] { AppConstants.WebProxy.HelloProtocolVersion }),
             default);
 
         Assert.Contains(sink.Frames, f => f.Type == RelayFrameType.Welcome);
@@ -169,7 +170,7 @@ public class RelayMultiplexerTests
         var mux = new RelayMultiplexer(sink);
 
         await mux.HandleInboundFrameAsync(
-            MakeFrame(RelayFrameType.Hello, 7, new byte[] { RelayFrameCodec.HelloProtocolVersion }),
+            MakeFrame(RelayFrameType.Hello, 7, new byte[] { AppConstants.WebProxy.HelloProtocolVersion }),
             default);
 
         Assert.DoesNotContain(sink.Frames, f => f.Type == RelayFrameType.Welcome);
@@ -191,7 +192,7 @@ public class RelayMultiplexerTests
         await mux.DisposeAsync();
 
         Assert.Equal(0, mux.ActiveStreamCount);
-        Assert.Equal(0, await bridged!.ReadAsync(new byte[1]));
+        Assert.Equal(0, await bridged!.ReadAsync(new byte[1], CancellationToken.None));
     }
 
     [Fact]

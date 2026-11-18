@@ -7,6 +7,7 @@ using TgWsProxy.Application.Logic;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
+using TgWsProxy.Infrastructure.FakeTls;
 using TgWsProxy.Infrastructure.Instances;
 using TgWsProxy.Infrastructure.Metrics;
 using TgWsProxy.Infrastructure.Session;
@@ -291,6 +292,7 @@ public sealed class ProxyHostedService(
     {
         try
         {
+            await ProfileFakeTlsAsync(token).ConfigureAwait(false);
             await server.Run(token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -307,6 +309,44 @@ public sealed class ProxyHostedService(
             // после аварии прокси.
             lifetime.StopApplication();
         }
+    }
+
+    /// <summary>
+    /// Снимает профиль Fake TLS с сайта маскировки до начала прослушивания (upstream
+    /// <c>_run</c>): размер первой зашифрованной записи ответа. Порядок важен — домен
+    /// маскировки может указывать на этот же хост, и тогда мы ответили бы сами себе.
+    /// </summary>
+    private async Task ProfileFakeTlsAsync(CancellationToken token)
+    {
+        var domain = config.FakeTlsDomain;
+        if (string.IsNullOrWhiteSpace(domain))
+        {
+            FakeTlsCodec.SetProfiledAppDataLength(null);
+            return;
+        }
+
+        var length = await FakeTlsCodec
+            .ProbeAppDataLengthAsync(
+                domain,
+                AppConstants.FakeTls.MaskingPort,
+                TimeSpan.FromSeconds(AppConstants.FakeTls.ProfileProbeTimeoutSeconds),
+                token)
+            .ConfigureAwait(false);
+
+        if (length is null)
+        {
+            FakeTlsCodec.SetProfiledAppDataLength(null);
+            logger.LogWarning(
+                "Fake TLS profile unavailable, ServerHello uses random record sizes (domain={Domain})",
+                domain);
+            return;
+        }
+
+        FakeTlsCodec.SetProfiledAppDataLength(length);
+        logger.LogInformation(
+            "Fake TLS profile: first encrypted record {Length} bytes (domain={Domain})",
+            length,
+            domain);
     }
 
     private async Task RunPeriodicAsync(

@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Http;
 using Serilog;
 using Serilog.Events;
-using TgWsProxy.Infrastructure.Logging;
 using TgWsProxy.Web;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Test;
 
@@ -20,22 +20,22 @@ public class CorrelationIdMiddlewareTests
 
         await middleware.InvokeAsync(context);
 
-        var id = context.Response.Headers[LoggingConstants.CorrelationIdHeader].ToString();
+        var id = context.Response.Headers[AppConstants.Logging.CorrelationIdHeader].ToString();
         Assert.False(string.IsNullOrWhiteSpace(id));
-        Assert.Equal(id, context.Items[LoggingConstants.CorrelationIdItemKey]);
+        Assert.Equal(id, context.Items[AppConstants.Logging.CorrelationIdItemKey]);
     }
 
     [Fact]
     public async Task Echoes_Incoming_Id()
     {
         var context = new DefaultHttpContext();
-        context.Request.Headers[LoggingConstants.CorrelationIdHeader] = "cid-42";
+        context.Request.Headers[AppConstants.Logging.CorrelationIdHeader] = "cid-42";
         var middleware = new CorrelationIdMiddleware(_ => Task.CompletedTask);
 
         await middleware.InvokeAsync(context);
 
-        Assert.Equal("cid-42", context.Response.Headers[LoggingConstants.CorrelationIdHeader]);
-        Assert.Equal("cid-42", context.Items[LoggingConstants.CorrelationIdItemKey]);
+        Assert.Equal("cid-42", context.Response.Headers[AppConstants.Logging.CorrelationIdHeader]);
+        Assert.Equal("cid-42", context.Items[AppConstants.Logging.CorrelationIdItemKey]);
     }
 
     [Fact]
@@ -48,7 +48,7 @@ public class CorrelationIdMiddlewareTests
             .CreateLogger();
 
         var context = new DefaultHttpContext();
-        context.Request.Headers[LoggingConstants.CorrelationIdHeader] = "cid-42";
+        context.Request.Headers[AppConstants.Logging.CorrelationIdHeader] = "cid-42";
         var middleware = new CorrelationIdMiddleware(_ =>
         {
             logger.Information("inside");
@@ -58,7 +58,7 @@ public class CorrelationIdMiddlewareTests
         await middleware.InvokeAsync(context);
 
         var evt = sink.Events.Single();
-        var correlationId = Assert.IsType<ScalarValue>(evt.Properties[LoggingConstants.CorrelationIdProperty]);
+        var correlationId = Assert.IsType<ScalarValue>(evt.Properties[AppConstants.Logging.CorrelationIdProperty]);
         Assert.Equal("cid-42", correlationId.Value);
     }
 }

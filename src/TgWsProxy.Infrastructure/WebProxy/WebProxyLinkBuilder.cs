@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using TgWsProxy.Domain;
+using static TgWsProxy.Domain.AppConstants.WebProxy;
 
 namespace TgWsProxy.Infrastructure.WebProxy;
 
@@ -18,14 +19,8 @@ namespace TgWsProxy.Infrastructure.WebProxy;
 /// </summary>
 public static class WebProxyLinkBuilder
 {
-    /// <summary>Схема ссылки-приглашения, которую понимает Telegram (SPEC §6).</summary>
-    public const string ShareLinkPrefix = "https://t.me/webproxy";
 
-    /// <summary>Эквивалентная схема deep-link для клиента (не зарегистрирована в t.me).</summary>
-    public const string DeepLinkPrefix = "tg://webproxy";
 
-    /// <summary>Максимальная длина имени хоста (как в <c>NormalizeWebProxyHost</c> клиента).</summary>
-    public const int MaxHostLength = 253;
 
     /// <summary>
     /// Внешний домен для ссылок Telegram: <see cref="WebProxyConfig.PublicHost"/>.
@@ -132,7 +127,7 @@ public static class WebProxyLinkBuilder
 
         var secret = Convert.FromHexString(secretHex);
         Span<byte> marked = stackalloc byte[secret.Length + 1];
-        marked[0] = RelayFrameCodec.WebProxyLinkSecretMarker;
+        marked[0] = AppConstants.WebProxy.WebProxyLinkSecretMarker;
         secret.CopyTo(marked[1..]);
         return BridgeCapabilityVerifier.Base64Url.Encode(marked);
     }

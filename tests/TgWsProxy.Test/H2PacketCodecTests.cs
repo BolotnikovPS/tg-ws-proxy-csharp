@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Test;
 
@@ -102,7 +103,7 @@ public class H2PacketCodecTests
     public async Task ReadPacketAsync_Intermediate_LengthAboveLimit_Throws()
     {
         // Проверка лимита выполняется до чтения тела, поэтому достаточно заголовка.
-        var frame = BitConverter.GetBytes(Protocol.H2MaxPacket + 4);
+        var frame = BitConverter.GetBytes(AppConstants.Protocol.H2MaxPacket + 4);
 
         await Assert.ThrowsAsync<InvalidDataException>(
             () => ReadAsync(frame, Protocol.ProtoTagIntermediate));
@@ -222,7 +223,7 @@ public class H2PacketCodecTests
     [Fact]
     public void EncodeReply_OversizedBody_Throws()
     {
-        var body = new byte[Protocol.H2MaxPacket + 4];
+        var body = new byte[AppConstants.Protocol.H2MaxPacket + 4];
 
         Assert.Throws<InvalidDataException>(
             () => H2PacketCodec.EncodeReply(body, Protocol.ProtoTagIntermediate));

@@ -141,8 +141,9 @@ public sealed class BotSessionStoreTests : IDisposable
         using var ms = new MemoryStream();
         s.WriteTo(ms);
 
-        // Собираем файл прежней версии: version = 1 и нет поля ApiId (4 байта перед длиной ключа).
-        const int apiIdOffset =
+        // Собираем файл прежней версии: version = 1, нет полей ApiId (4 байта) и
+        // UpdateId (8 байт) — оба были добавлены позже и пишутся перед длиной ключа.
+        const int legacyOffset =
             sizeof(uint) + sizeof(int)   // magic + version
             + sizeof(long)               // auth_key_id
             + sizeof(long)               // salt
@@ -157,9 +158,11 @@ public sealed class BotSessionStoreTests : IDisposable
             + sizeof(long)               // date
             + sizeof(long);              // seq
 
+        const int droppedFields = sizeof(int) + sizeof(long); // ApiId + UpdateId
+
         var bytes = ms.ToArray();
         BitConverter.GetBytes(1).CopyTo(bytes, sizeof(uint));
-        var legacy = bytes[..apiIdOffset].Concat(bytes[(apiIdOffset + sizeof(int))..]).ToArray();
+        var legacy = bytes[..legacyOffset].Concat(bytes[(legacyOffset + droppedFields)..]).ToArray();
 
         using var read = new MemoryStream(legacy);
         var restored = BotSession.ReadFrom(read);
@@ -167,6 +170,33 @@ public sealed class BotSessionStoreTests : IDisposable
         Assert.NotNull(restored);
         Assert.True(restored.IsValid);
         Assert.Equal(0, restored.ApiId);
+        Assert.Equal(0, restored.UpdateId);
+        Assert.Equal(s.SeqNo, restored.SeqNo);
+    }
+
+    [Fact]
+    public void BotSession_ReadFrom_AcceptsVersion2WithoutUpdateId()
+    {
+        var s = NewSession();
+        s.UpdateId = 777;
+        using var ms = new MemoryStream();
+        s.WriteTo(ms);
+
+        // Версия 2 уже содержала ApiId, но ещё не знала про UpdateId: файл короче на 8 байт.
+        var bytes = ms.ToArray();
+        var apiIdEnd = bytes.Length - (sizeof(int)   // длина ключа
+                                       + s.AuthKey!.Length
+                                       + sizeof(long)); // UpdateId
+        BitConverter.GetBytes(2).CopyTo(bytes, sizeof(uint));
+        var v2 = bytes[..apiIdEnd].Concat(
+            bytes[(apiIdEnd + sizeof(long))..]).ToArray();
+
+        using var read = new MemoryStream(v2);
+        var restored = BotSession.ReadFrom(read);
+
+        Assert.NotNull(restored);
+        Assert.Equal(s.ApiId, restored.ApiId);
+        Assert.Equal(0, restored.UpdateId);
         Assert.Equal(s.SeqNo, restored.SeqNo);
     }
 }

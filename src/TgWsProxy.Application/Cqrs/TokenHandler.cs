@@ -55,10 +55,10 @@ public static class TokenHandler
         ArgumentNullException.ThrowIfNull(configService);
 
         var name = command.Name?.Trim() ?? "";
-        if (name.Length is < 1 or > ConfigValidator.MaxTokenNameLength)
+        if (name.Length is < 1 or > AppConstants.Config.MaxTokenNameLength)
         {
             throw new ArgumentException(
-                $"Token name must be 1..{ConfigValidator.MaxTokenNameLength} characters.",
+                $"Token name must be 1..{AppConstants.Config.MaxTokenNameLength} characters.",
                 nameof(command));
         }
 
@@ -70,9 +70,9 @@ public static class TokenHandler
             };
         }
 
-        if (cfg.Tokens.Count >= ConfigValidator.MaxTokens)
+        if (cfg.Tokens.Count >= AppConstants.Config.MaxTokens)
         {
-            throw new TokenConflictException($"At most {ConfigValidator.MaxTokens} tokens are supported.");
+            throw new TokenConflictException($"At most {AppConstants.Config.MaxTokens} tokens are supported.");
         }
 
         var token = new ProxyToken

@@ -5,6 +5,7 @@ using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.Transport;
+using static TgWsProxy.Domain.AppConstants.Ws;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -32,14 +33,8 @@ internal sealed class WsPool(
     /// <summary>Максимальная задержка backoff наполнения (REFILL_BACKOFF_MAX).</summary>
     private static readonly TimeSpan RefillBackoffMax = TimeSpan.FromSeconds(3600);
 
-    /// <summary>SNI для domain fronting (upstream использует этот домен вместо реального).</summary>
-    private const string FrontingSni = "sprinthost.ru";
 
-    /// <summary>Таймаут подключения в режиме fronting (секунды).</summary>
-    private const int FrontedTimeoutSeconds = 7;
 
-    /// <summary>Таймаут обычного подключения (секунды).</summary>
-    private const int PlainTimeoutSeconds = 8;
 
     private readonly Dictionary<PoolKey, List<PooledWs>> idle = [];
     private readonly HashSet<PoolKey> known = [];
@@ -232,7 +227,7 @@ internal sealed class WsPool(
             }
 
             var domains = WsDomains(key.Dc, key.IsMedia);
-            var path = key.IsTestDc ? Protocol.WsPathTest : Protocol.WsPath;
+            var path = key.IsTestDc ? AppConstants.Protocol.WsPathTest : AppConstants.Protocol.WsPath;
             var scope = $"pool DC{key.Dc}{(key.IsTestDc ? "t" : "")}{(key.IsMedia ? "m" : "")}";
 
             var tasks = new Task<IRawWebSocket?>[needed];

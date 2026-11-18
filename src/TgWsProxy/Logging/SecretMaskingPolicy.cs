@@ -1,6 +1,6 @@
 using Serilog.Core;
 using Serilog.Events;
-using TgWsProxy.Infrastructure.Logging;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Logging;
 
@@ -10,7 +10,7 @@ namespace TgWsProxy.Logging;
 /// если в лог когда-нибудь попадёт <c>{@Config}</c>, <c>{@ConfigDto}</c>, <c>{@ProxyToken}</c>
 /// или <c>{@ProxyTokenEntry}</c> — пароли/секреты до файла/консоли не дойдут. Остальные объекты
 /// деструктурируются как обычно. Имена чувствительных типов и значение-заглушка — в
-/// <see cref="LoggingConstants"/>.
+/// <see cref="AppConstants.Logging"/>.
 /// </summary>
 internal sealed class SecretMaskingPolicy : IDestructuringPolicy
 {
@@ -29,10 +29,10 @@ internal sealed class SecretMaskingPolicy : IDestructuringPolicy
             return false;
         }
 
-        result = new ScalarValue(LoggingConstants.MaskedSecret);
+        result = new ScalarValue(AppConstants.Logging.MaskedSecret);
         return true;
     }
 
     private static bool IsSensitive(object value)
-        => value is not null && LoggingConstants.SensitiveTypeNames.Contains(value.GetType().Name);
+        => value is not null && AppConstants.Logging.SensitiveTypeNames.Contains(value.GetType().Name);
 }

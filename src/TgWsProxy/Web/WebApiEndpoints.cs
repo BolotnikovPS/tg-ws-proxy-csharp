@@ -17,6 +17,7 @@ using TgWsProxy.Application.ReadModels;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using Wolverine;
+using static TgWsProxy.Domain.AppConstants.Http;
 
 namespace TgWsProxy.Web;
 
@@ -31,16 +32,8 @@ namespace TgWsProxy.Web;
 /// </summary>
 internal static class WebApiEndpoints
 {
-    /// <summary>Content-Type для <c>ProblemDetails</c>-ответов.</summary>
-    private const string ProblemContentType = "application/problem+json";
 
-    /// <summary>Content-Type для обычных JSON-ответов с ручными заголовками.</summary>
-    private const string JsonContentType = "application/json; charset=utf-8";
 
-    /// <summary>
-    /// Запрет кэширования ответов, содержащих секрет токена в открытом виде (F-8.8).
-    /// </summary>
-    private const string NoStoreHeader = "no-store";
 
     /// <summary>Единые настройки сериализации JSON для всех <c>/api/*</c> ответов.</summary>
     private static readonly System.Text.Json.JsonSerializerOptions JsonOptions = new()
@@ -463,7 +456,7 @@ internal static class WebApiEndpoints
         // целиком принадлежат библиотеке (счётчики получают суффикс _total).
         app.MapGet("/metrics", async (ProxyMetrics metrics, HttpContext context) =>
         {
-            context.Response.ContentType = ProxyMetrics.ContentType;
+            context.Response.ContentType = AppConstants.Metrics.ContentType;
             await metrics.CollectAsync(context.Response.Body, context.RequestAborted);
         });
     }
@@ -481,13 +474,12 @@ internal static class WebApiEndpoints
             return false;
         }
 
-        const string scheme = "Bearer ";
-        if (!header.StartsWith(scheme, StringComparison.OrdinalIgnoreCase))
+        if (!header.StartsWith(BearerScheme, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        var provided = header.AsSpan(scheme.Length).Trim();
+        var provided = header.AsSpan(BearerScheme.Length).Trim();
         var expectedBytes = Encoding.UTF8.GetBytes(expected);
         var providedBytes = Encoding.UTF8.GetBytes(provided.ToString());
 

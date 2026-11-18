@@ -13,5 +13,5 @@ public interface IDcReachabilityChecker
     /// Выполняет проверку всех DC по всем маршрутам и возвращает сводку.
     /// </summary>
     /// <param name="ct">Токен отмены запроса.</param>
-    Task<DcCheckReport> CheckAsync(CancellationToken ct = default);
+    Task<DcCheckReport> CheckAsync(CancellationToken ct);
 }

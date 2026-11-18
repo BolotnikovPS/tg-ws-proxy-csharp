@@ -227,7 +227,7 @@ public class UnitTest
     public void ConfigValidator_Rejects_More_Than_Max_Tokens()
         => Assert.Throws<ArgumentException>(() => ConfigValidator.Validate(TestConfig.Create(c =>
         {
-            for (var i = 0; i <= ConfigValidator.MaxTokens; i++)
+            for (var i = 0; i <= AppConstants.Config.MaxTokens; i++)
             {
                 c.Tokens.Add(new ProxyToken
                 {
@@ -302,16 +302,16 @@ public class UnitTest
     }
 
     [Theory]
-    [InlineData(Protocol.ProtoAbridgedInt)]
-    [InlineData(Protocol.ProtoIntermediateInt)]
-    [InlineData(Protocol.ProtoPaddedIntermediateInt)]
+    [InlineData(AppConstants.Protocol.ProtoAbridgedInt)]
+    [InlineData(AppConstants.Protocol.ProtoIntermediateInt)]
+    [InlineData(AppConstants.Protocol.ProtoPaddedIntermediateInt)]
     public void MtProtoInspector_TryHandshake_RoundTrips_ProtoTag(int protoInt)
     {
         var secret = Enumerable.Range(0, 16).Select(i => (byte)i).ToArray();
         var protoTag = protoInt switch
         {
-            Protocol.ProtoAbridgedInt => new byte[] { 0xEF, 0xEF, 0xEF, 0xEF },
-            Protocol.ProtoIntermediateInt => [0xEE, 0xEE, 0xEE, 0xEE],
+            AppConstants.Protocol.ProtoAbridgedInt => new byte[] { 0xEF, 0xEF, 0xEF, 0xEF },
+            AppConstants.Protocol.ProtoIntermediateInt => [0xEE, 0xEE, 0xEE, 0xEE],
             _ => [0xDD, 0xDD, 0xDD, 0xDD],
         };
         var init = BuildClientInit(secret, protoTag, dcIdx: -2);
@@ -332,7 +332,7 @@ public class UnitTest
         var inspector = new MtProtoInspector(NullLogger<MtProtoInspector>.Instance);
         var relayInit = inspector.GenerateRelayInit([0xEF, 0xEF, 0xEF, 0xEF], 2);
 
-        Assert.Equal(Protocol.HandshakeLen, relayInit.Length);
+        Assert.Equal(AppConstants.Protocol.HandshakeLen, relayInit.Length);
         Assert.DoesNotContain(relayInit[0], (IReadOnlySet<byte>)Protocol.ReservedFirstBytes);
         Assert.NotEqual(new byte[] { 0, 0, 0, 0 }, relayInit[4..8]);
     }
@@ -394,7 +394,7 @@ public class UnitTest
     /// </summary>
     private static byte[] BuildClientInit(byte[] secret, byte[] protoTag, short dcIdx)
     {
-        var init = new byte[Protocol.HandshakeLen];
+        var init = new byte[AppConstants.Protocol.HandshakeLen];
         for (var i = 0; i < 56; i++)
         {
             init[i] = (byte)(i + 1);
@@ -408,7 +408,7 @@ public class UnitTest
         System.Buffers.Binary.BinaryPrimitives.WriteInt16LittleEndian(tailPlain.AsSpan(4), dcIdx);
 
         using var cipher = new IncrementalCipher(decKey, iv);
-        Span<byte> keystream = stackalloc byte[Protocol.HandshakeLen];
+        Span<byte> keystream = stackalloc byte[AppConstants.Protocol.HandshakeLen];
         cipher.UpdateInto(Protocol.Zero64, keystream);
         for (var i = 0; i < 8; i++)
         {

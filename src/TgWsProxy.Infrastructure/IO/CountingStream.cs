@@ -62,7 +62,7 @@ internal sealed class CountingStream(Stream inner) : Stream
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => CountReadAsync(_inner.ReadAsync(buffer, offset, count, cancellationToken));
 
-    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         => CountReadAsync(_inner.ReadAsync(buffer, cancellationToken));
 
     public override void Write(byte[] buffer, int offset, int count)
@@ -86,7 +86,7 @@ internal sealed class CountingStream(Stream inner) : Stream
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => CountWriteAsync(_inner.WriteAsync(buffer, offset, count, cancellationToken), count);
 
-    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
         => CountWriteAsync(_inner.WriteAsync(buffer, cancellationToken), buffer.Length);
 
     /// <summary>Не освобождаем внутренний поток — обёртка им не владеет.</summary>

@@ -4,6 +4,7 @@ using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.Transport;
+using static TgWsProxy.Domain.AppConstants.CfH2Pool;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -18,8 +19,6 @@ internal sealed class CfH2Pool(
     IProxyStats stats,
     ILogger<CfH2Pool> logger) : ICfH2Pool
 {
-    private const double DomainCooldownSeconds = 30.0;
-    private const double SetupTimeoutSeconds = 8.0;
 
     private readonly Lock _sync = new();
     private readonly Dictionary<string, CfH2Lane> _lanes = [];

@@ -60,18 +60,6 @@ public class BotApiArgsValidationTests
         BotGateway.ValidateArgsBeforeNetwork("unknownMethod", Args());
     }
 
-    [Theory]
-    [InlineData("Markdown")]
-    [InlineData("MarkdownV2")]
-    public void UnsupportedParseMode_Throws400(string parseMode)
-    {
-        var exception = Assert.Throws<BotGatewayException>(
-            () => BotGateway.ValidateArgsBeforeNetwork("sendMessage", Args(("parse_mode", parseMode))));
-
-        Assert.Equal(400, exception.ErrorCode);
-        Assert.Equal($"parse_mode '{parseMode}' is not implemented; pass 'entities' instead", exception.Message);
-    }
-
     [Fact]
     public void UnknownParseMode_Throws400()
     {
@@ -84,6 +72,8 @@ public class BotApiArgsValidationTests
 
     [Theory]
     [InlineData("HTML")]
+    [InlineData("Markdown")]
+    [InlineData("MarkdownV2")]
     [InlineData("")]
     public void SupportedParseMode_Passes(string parseMode) => BotGateway.ValidateArgsBeforeNetwork("sendMessage", Args(("chat_id", "42"), ("parse_mode", parseMode)));
 

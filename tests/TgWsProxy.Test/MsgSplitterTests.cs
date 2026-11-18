@@ -1,6 +1,7 @@
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Test;
 
@@ -13,7 +14,7 @@ public class MsgSplitterTests
     [Fact]
     public void Split_Abridged_SingleMessage_ReturnsOnePart()
     {
-        var splitter = new MsgSplitter(Protocol.ProtoAbridgedInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoAbridgedInt);
         var frame = BuildAbridgedMessage(16);
 
         var parts = splitter.Split(frame, frame);
@@ -25,7 +26,7 @@ public class MsgSplitterTests
     [Fact]
     public void Split_Abridged_TwoMessages_ReturnsTwoParts()
     {
-        var splitter = new MsgSplitter(Protocol.ProtoAbridgedInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoAbridgedInt);
         var first = BuildAbridgedMessage(8);
         var second = BuildAbridgedMessage(12);
         var buffer = first.Concat(second).ToArray();
@@ -40,7 +41,7 @@ public class MsgSplitterTests
     [Fact]
     public void Split_Abridged_PartialMessage_ReturnsNothing_ThenCompletes()
     {
-        var splitter = new MsgSplitter(Protocol.ProtoAbridgedInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoAbridgedInt);
         var frame = BuildAbridgedMessage(32);
 
         var head = frame.AsSpan(0, 10).ToArray();
@@ -57,7 +58,7 @@ public class MsgSplitterTests
     [Fact]
     public void Split_Abridged_ExtendedLength_IsParsed()
     {
-        var splitter = new MsgSplitter(Protocol.ProtoAbridgedInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoAbridgedInt);
         // 0x7F + LE24(len/4): 300 байт payload требуют расширенного заголовка.
         var frame = BuildAbridgedExtendedMessage(300);
 
@@ -70,7 +71,7 @@ public class MsgSplitterTests
     [Fact]
     public void Split_Intermediate_SingleMessage_ReturnsOnePart()
     {
-        var splitter = new MsgSplitter(Protocol.ProtoIntermediateInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoIntermediateInt);
         var frame = BuildIntermediateMessage(24);
 
         var parts = splitter.Split(frame, frame);
@@ -82,7 +83,7 @@ public class MsgSplitterTests
     [Fact]
     public void Split_Intermediate_TwoMessages_ReturnsTwoParts()
     {
-        var splitter = new MsgSplitter(Protocol.ProtoIntermediateInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoIntermediateInt);
         var first = BuildIntermediateMessage(4);
         var second = BuildIntermediateMessage(64);
         var buffer = first.Concat(second).ToArray();
@@ -97,7 +98,7 @@ public class MsgSplitterTests
     [Fact]
     public void Split_Intermediate_PartialMessage_ReturnsNothing_ThenCompletes()
     {
-        var splitter = new MsgSplitter(Protocol.ProtoIntermediateInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoIntermediateInt);
         var frame = BuildIntermediateMessage(48);
 
         Assert.Empty(splitter.Split(frame.AsSpan(0, 6).ToArray(), frame.AsSpan(0, 6).ToArray()));
@@ -111,7 +112,7 @@ public class MsgSplitterTests
     [Fact]
     public void Split_PaddedIntermediate_UsesSameFraming_AsIntermediate()
     {
-        var splitter = new MsgSplitter(Protocol.ProtoPaddedIntermediateInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoPaddedIntermediateInt);
         var frame = BuildIntermediateMessage(20);
 
         var parts = splitter.Split(frame, frame);
@@ -123,7 +124,7 @@ public class MsgSplitterTests
     [Fact]
     public void Split_ZeroLength_DisablesSplitting_AndReturnsRemainder()
     {
-        var splitter = new MsgSplitter(Protocol.ProtoIntermediateInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoIntermediateInt);
         // Нулевая длина — некорректный поток: остаток отдаётся целиком, разбор отключается.
         var buffer = new byte[] { 0, 0, 0, 0, 1, 2, 3 };
 
@@ -137,7 +138,7 @@ public class MsgSplitterTests
     [Fact]
     public void Split_WhenDisabled_PassesChunksThrough()
     {
-        var splitter = new MsgSplitter(Protocol.ProtoIntermediateInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoIntermediateInt);
         splitter.Split([0, 0, 0, 0], [0, 0, 0, 0]);
 
         var chunk = "\t\t\t"u8.ToArray();
@@ -150,7 +151,7 @@ public class MsgSplitterTests
     [Fact]
     public void Flush_ReturnsUnparsedRemainder_AndResets()
     {
-        var splitter = new MsgSplitter(Protocol.ProtoAbridgedInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoAbridgedInt);
         var frame = BuildAbridgedMessage(16);
         var head = frame.AsSpan(0, 5).ToArray();
 
@@ -167,7 +168,7 @@ public class MsgSplitterTests
     [Fact]
     public void Split_UsesCiphertextForOutput_AndPlainForBoundaries()
     {
-        var splitter = new MsgSplitter(Protocol.ProtoIntermediateInt);
+        var splitter = new MsgSplitter(AppConstants.Protocol.ProtoIntermediateInt);
         var plain = BuildIntermediateMessage(8);
         var cipher = plain.Select(b => (byte)(b ^ 0xFF)).ToArray();
 

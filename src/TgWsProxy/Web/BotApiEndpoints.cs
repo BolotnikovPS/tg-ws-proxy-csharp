@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -41,7 +42,11 @@ internal static class BotApiEndpoints
             && !rateLimiter.TryAcquire(botId, config.BotApi.RequestsPerSecondPerToken))
         {
             metrics.IncBotApiRequestError();
-            await WriteErrorAsync(ctx, StatusCodes.Status429TooManyRequests, "Too Many Requests: rate limit exceeded")
+            await WriteErrorAsync(
+                    ctx,
+                    StatusCodes.Status429TooManyRequests,
+                    "Too Many Requests: rate limit exceeded",
+                    rateLimiter.GetRetryAfterSeconds())
                 .ConfigureAwait(false);
             return;
         }
@@ -61,7 +66,7 @@ internal static class BotApiEndpoints
         }
 
         var apiId = ReadApiId(ctx);
-        var apiHash = ctx.Request.Headers[BotGateway.ApiHashHeader].ToString();
+        var apiHash = ctx.Request.Headers[AppConstants.BotApi.ApiHashHeader].ToString();
 
         var result = await gateway.HandleAsync(token, method, args, apiId, apiHash, ctx.RequestAborted)
             .ConfigureAwait(false);
@@ -74,7 +79,8 @@ internal static class BotApiEndpoints
         else
         {
             metrics.IncBotApiRequestError();
-            await WriteErrorAsync(ctx, result.ErrorCode ?? 500, result.Description).ConfigureAwait(false);
+            await WriteErrorAsync(ctx, result.ErrorCode ?? 500, result.Description, result.RetryAfter)
+                .ConfigureAwait(false);
         }
     }
 
@@ -84,19 +90,36 @@ internal static class BotApiEndpoints
     /// проверяющие статус ответа (<c>raise_for_status()</c> и аналоги), принимают ошибку
     /// за успех. Некорректный как HTTP-статус код (например <c>0</c>) подменяется на 500.
     /// </summary>
-    private static Task WriteErrorAsync(HttpContext ctx, int errorCode, string? description)
+    /// <param name="ctx">Текущий HTTP-контекст запроса.</param>
+    /// <param name="errorCode">Код ошибки Bot API; он же HTTP-статус ответа.</param>
+    /// <param name="description">Текст ошибки для поля <c>description</c>.</param>
+    /// <param name="retryAfter">
+    /// Пауза для 429: попадает в <c>parameters.retry_after</c> и в заголовок <c>Retry-After</c>.
+    /// Без неё клиенты официального Bot API не знают, сколько ждать перед повтором.
+    /// </param>
+    private static Task WriteErrorAsync(HttpContext ctx, int errorCode, string? description, int? retryAfter = null)
     {
         ctx.Response.StatusCode = errorCode is >= 100 and <= 599
             ? errorCode
             : StatusCodes.Status500InternalServerError;
-        return ctx.Response.WriteAsJsonAsync(
-            new { ok = false, error_code = errorCode, description },
-            ctx.RequestAborted);
+
+        if (retryAfter is { } seconds)
+        {
+            ctx.Response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
+        }
+
+        // Два разных анонимных типа в одной ветке невозможны, поэтому полезная нагрузка
+        // собирается как object: с полем parameters только там, где есть retry_after.
+        object payload = retryAfter is { } value
+            ? new { ok = false, error_code = errorCode, description, parameters = new { retry_after = value } }
+            : new { ok = false, error_code = errorCode, description };
+
+        return ctx.Response.WriteAsJsonAsync(payload, ctx.RequestAborted);
     }
 
     private static int? ReadApiId(HttpContext ctx)
     {
-        var raw = ctx.Request.Headers[BotGateway.ApiIdHeader].ToString();
+        var raw = ctx.Request.Headers[AppConstants.BotApi.ApiIdHeader].ToString();
         return int.TryParse(raw, out var id) ? id : null;
     }
 

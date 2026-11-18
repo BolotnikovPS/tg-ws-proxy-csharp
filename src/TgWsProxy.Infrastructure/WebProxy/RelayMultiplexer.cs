@@ -1,4 +1,5 @@
 using System.Buffers;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Infrastructure.WebProxy;
 
@@ -23,7 +24,7 @@ namespace TgWsProxy.Infrastructure.WebProxy;
 internal sealed class RelayMultiplexer(
     IRelayFrameSink sink,
     Func<RelayStream, CancellationToken, Task>? startBridge = null,
-    long initialSendWindow = RelayFrameCodec.InitialStreamWindow,
+    long initialSendWindow = AppConstants.WebProxy.InitialStreamWindow,
     int maxStreams = 0,
     Func<bool>? tryAcquireGlobalStream = null,
     Action? releaseGlobalStream = null) : IAsyncDisposable
@@ -57,7 +58,7 @@ internal sealed class RelayMultiplexer(
     /// Обрабатывает один разобранный входящий кадр. Вызывается inbound-циклом по одному кадру
     /// за раз. <c>Open</c> создаёт поток и запускает мост; <c>Data</c>/<c>Window</c>/<c>Close</c>
     /// маршрутизируются в поток; входящий <c>Ping</c> игнорируется (PING — r→c); <c>Hello</c>
-    /// валидируется (stream0 + payload=<see cref="RelayFrameCodec.HelloProtocolVersion"/>) и получает
+    /// валидируется (stream0 + payload=<see cref="AppConstants.WebProxy.HelloProtocolVersion"/>) и получает
     /// <c>Welcome</c> либо <c>Bye</c>.
     /// </summary>
     public async ValueTask HandleInboundFrameAsync(RelayFrame frame, CancellationToken ct)
@@ -82,7 +83,7 @@ internal sealed class RelayMultiplexer(
             case RelayFrameType.Hello:
                 if (frame.StreamId != 0 ||
                     frame.Payload.Length != 1 ||
-                    frame.Payload.Span[0] != RelayFrameCodec.HelloProtocolVersion)
+                    frame.Payload.Span[0] != AppConstants.WebProxy.HelloProtocolVersion)
                 {
                     // Неверное приветствие: завершаем соединение без Welcome.
                     await SendFrameAsync(RelayFrameType.Bye, 0, ReadOnlyMemory<byte>.Empty, ct).ConfigureAwait(false);

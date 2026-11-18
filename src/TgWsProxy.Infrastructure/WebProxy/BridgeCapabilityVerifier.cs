@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using static TgWsProxy.Domain.AppConstants.WebProxy;
 
 namespace TgWsProxy.Infrastructure.WebProxy;
 
@@ -15,17 +16,9 @@ namespace TgWsProxy.Infrastructure.WebProxy;
 /// </summary>
 public static class BridgeCapabilityVerifier
 {
-    /// <summary>Префикс контекста v1 (без <c>basePath</c>).</summary>
-    public const string ContextV1Prefix = "tdesktop-web-proxy-bridge-v1\n";
 
-    /// <summary>Префикс контекста v2 (с <c>basePath</c>).</summary>
-    public const string ContextV2Prefix = "tdesktop-web-proxy-bridge-v2\n";
 
-    /// <summary>Максимальная длина <c>basePath</c> после нормализации.</summary>
-    public const int MaxBasePathLength = 128;
 
-    /// <summary>Длина capability в байтах (HMAC-SHA256).</summary>
-    public const int CapabilityByteLength = 32;
 
     /// <summary>
     /// Нормализует basePath к голому слагу без ведущего/хвостового <c>/</c>: <c>""</c> для корня,

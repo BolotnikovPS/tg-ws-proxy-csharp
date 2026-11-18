@@ -18,43 +18,43 @@ internal sealed class MtProtoInspector(ILogger<MtProtoInspector> logger) : IMtPr
     /// <inheritdoc />
     public MtProtoHandshake? TryHandshake(ReadOnlySpan<byte> init, byte[] secret)
     {
-        if (init.Length < Protocol.HandshakeLen)
+        if (init.Length < AppConstants.Protocol.HandshakeLen)
         {
             logger.LogDebug("MTProto init too short: {Len} bytes", init.Length);
             return null;
         }
 
         // dec_prekey_and_iv = handshake[8:56]; dec_key = SHA256(dec_prekey + secret)
-        var decPrekey = init.Slice(Protocol.SkipLen, Protocol.PreKeyLen);
-        var decIv = init.Slice(Protocol.SkipLen + Protocol.PreKeyLen, Protocol.IvLen).ToArray();
+        var decPrekey = init.Slice(AppConstants.Protocol.SkipLen, AppConstants.Protocol.PreKeyLen);
+        var decIv = init.Slice(AppConstants.Protocol.SkipLen + AppConstants.Protocol.PreKeyLen, AppConstants.Protocol.IvLen).ToArray();
 
         var decKey = SHA256.HashData([.. decPrekey, .. secret]);
 
         // AES-CTR симметричен: тот же поток используется как keystream.
-        Span<byte> plain = stackalloc byte[Protocol.HandshakeLen];
+        Span<byte> plain = stackalloc byte[AppConstants.Protocol.HandshakeLen];
         using (var cipher = new IncrementalCipher(decKey, decIv))
         {
-            Span<byte> keystream = stackalloc byte[Protocol.HandshakeLen];
+            Span<byte> keystream = stackalloc byte[AppConstants.Protocol.HandshakeLen];
             cipher.UpdateInto(Protocol.Zero64, keystream);
-            for (var i = 0; i < Protocol.HandshakeLen; i++)
+            for (var i = 0; i < AppConstants.Protocol.HandshakeLen; i++)
             {
                 plain[i] = (byte)(init[i] ^ keystream[i]);
             }
         }
 
-        var protoTag = plain.Slice(Protocol.ProtoTagPos, 4);
+        var protoTag = plain.Slice(AppConstants.Protocol.ProtoTagPos, 4);
         int protoInt;
         if (protoTag.SequenceEqual(Protocol.ProtoTagAbridged))
         {
-            protoInt = Protocol.ProtoAbridgedInt;
+            protoInt = AppConstants.Protocol.ProtoAbridgedInt;
         }
         else if (protoTag.SequenceEqual(Protocol.ProtoTagIntermediate))
         {
-            protoInt = Protocol.ProtoIntermediateInt;
+            protoInt = AppConstants.Protocol.ProtoIntermediateInt;
         }
         else if (protoTag.SequenceEqual(Protocol.ProtoTagSecure))
         {
-            protoInt = Protocol.ProtoPaddedIntermediateInt;
+            protoInt = AppConstants.Protocol.ProtoPaddedIntermediateInt;
         }
         else
         {
@@ -62,7 +62,7 @@ internal sealed class MtProtoInspector(ILogger<MtProtoInspector> logger) : IMtPr
             return null;
         }
 
-        var dcIdx = BinaryPrimitives.ReadInt16LittleEndian(plain.Slice(Protocol.DcIdxPos, 2));
+        var dcIdx = BinaryPrimitives.ReadInt16LittleEndian(plain.Slice(AppConstants.Protocol.DcIdxPos, 2));
         var dc = Math.Abs((int)dcIdx);
         var isMedia = dcIdx < 0;
 
@@ -79,7 +79,7 @@ internal sealed class MtProtoInspector(ILogger<MtProtoInspector> logger) : IMtPr
     /// <inheritdoc />
     public byte[] GenerateRelayInit(byte[] protoTag, short dcIdx)
     {
-        var rnd = new byte[Protocol.HandshakeLen];
+        var rnd = new byte[AppConstants.Protocol.HandshakeLen];
         var rng = RandomNumberGenerator.Create();
         do
         {
@@ -87,10 +87,10 @@ internal sealed class MtProtoInspector(ILogger<MtProtoInspector> logger) : IMtPr
         }
         while (IsReservedHandshake(rnd));
 
-        var encKey = rnd.AsSpan(Protocol.SkipLen, Protocol.PreKeyLen).ToArray();
-        var encIv = rnd.AsSpan(Protocol.SkipLen + Protocol.PreKeyLen, Protocol.IvLen).ToArray();
+        var encKey = rnd.AsSpan(AppConstants.Protocol.SkipLen, AppConstants.Protocol.PreKeyLen).ToArray();
+        var encIv = rnd.AsSpan(AppConstants.Protocol.SkipLen + AppConstants.Protocol.PreKeyLen, AppConstants.Protocol.IvLen).ToArray();
 
-        Span<byte> keystream = stackalloc byte[Protocol.HandshakeLen];
+        Span<byte> keystream = stackalloc byte[AppConstants.Protocol.HandshakeLen];
         using (var cipher = new IncrementalCipher(encKey, encIv))
         {
             cipher.UpdateInto(Protocol.Zero64, keystream);
@@ -107,7 +107,7 @@ internal sealed class MtProtoInspector(ILogger<MtProtoInspector> logger) : IMtPr
         var result = (byte[])rnd.Clone();
         for (var i = 0; i < 8; i++)
         {
-            result[Protocol.ProtoTagPos + i] = (byte)(tailPlain[i] ^ keystream[Protocol.ProtoTagPos + i]);
+            result[AppConstants.Protocol.ProtoTagPos + i] = (byte)(tailPlain[i] ^ keystream[AppConstants.Protocol.ProtoTagPos + i]);
         }
 
         return result;

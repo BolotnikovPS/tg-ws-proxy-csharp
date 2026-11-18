@@ -2,6 +2,8 @@
 using System;
 using System.IO;
 using System.Text;
+using TgWsProxy.Domain;
+using static TgWsProxy.Domain.AppConstants.BotSession;
 
 namespace TgWsProxy.Infrastructure.MtProto;
 
@@ -11,12 +13,13 @@ namespace TgWsProxy.Infrastructure.MtProto;
 /// </summary>
 public sealed class BotSession
 {
-    private const uint Magic = 0x53544F42; // "BOTS" в little-endian
+    // Имя константы совпадает с типом System.Version, поэтому локальный алиас восстанавливает
+    // теневание (как было до централизации констант в AppConstants.BotSession).
+    private const int Version = AppConstants.BotSession.Version;
 
     // Версия 2 добавила ApiId: без него нельзя отправить initConnection при первом сообщении
-    // в новой сессии. Файлы версии 1 читаются, но считаются устаревшими (ApiId = 0).
-    private const int Version = 2;
-    private const int VersionWithoutApiId = 1;
+    // в новой сессии. Версия 3 добавила UpdateId — сквозной счётчик Bot API update_id.
+    // Файлы прежних версий читаются (отсутствующие поля = 0), ре-логин не требуется.
 
     /// <summary>auth_key (256 байт). <c>null</c> или неверной длины — сессия невалидна.</summary>
     public byte[] AuthKey { get; set; }
@@ -35,6 +38,13 @@ public sealed class BotSession
     /// сообщением каждой новой сессии, поэтому api_id переживает перезапуск процесса.
     /// </summary>
     public int ApiId { get; set; }
+
+    /// <summary>
+    /// Последний выданный Bot API <c>update_id</c>. Счётчик обязан быть сквозным и монотонным,
+    /// поэтому он хранится в сессии, а не выводится из <c>Message.id</c> (тот локален для чата
+    /// и после перезапуска процесса начинается заново).
+    /// </summary>
+    public long UpdateId { get; set; }
 
     // Состояние обновлений (заполняется после getUpdates/getState; сейчас резерв = 0).
     public long Pts { get; set; }
@@ -62,6 +72,7 @@ public sealed class BotSession
         w.Write(Date);
         w.Write(Seq);
         w.Write(ApiId);
+        w.Write(UpdateId);
         // Ключ — последним, с префиксом длины.
         var key = AuthKey ?? [];
         w.Write(key.Length);
@@ -77,7 +88,7 @@ public sealed class BotSession
         }
 
         var version = r.ReadInt32();
-        if (version is not (Version or VersionWithoutApiId))
+        if (version is not (Version or VersionWithoutUpdateId or VersionWithoutApiId))
         {
             return null;
         }
@@ -100,9 +111,15 @@ public sealed class BotSession
 
         // Файлы версии 1 писались до появления ApiId: он остаётся 0, и такая сессия
         // требует повторного логина (см. BotGateway.LoginAsync).
-        if (version >= Version)
+        if (version >= VersionWithoutUpdateId)
         {
             s.ApiId = r.ReadInt32();
+        }
+
+        // Счётчик update_id появился в версии 3; в файлах версий 1–2 его нет — начинаем с 0.
+        if (version >= Version)
+        {
+            s.UpdateId = r.ReadInt64();
         }
 
         var keyLen = r.ReadInt32();

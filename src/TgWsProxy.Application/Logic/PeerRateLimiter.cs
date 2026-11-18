@@ -97,7 +97,7 @@ public sealed class PeerRateLimiter
 
         lock (_sync)
         {
-            if (now - _lastSweep >= Constants.SweepIntervalSeconds || _counters.Count > Constants.MaxTrackedPeers)
+            if (now - _lastSweep >= AppConstants.Peers.SweepIntervalSeconds || _counters.Count > AppConstants.Peers.MaxTrackedPeers)
             {
                 Sweep(now);
             }

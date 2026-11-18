@@ -139,35 +139,35 @@ internal sealed class MtProtoBridgeEngine(
     private static CryptoCtx BuildCryptoContext(byte[] init, byte[] relayInit, byte[] secret)
     {
         // dec_prekey_iv = init[8:56]; dec_key = SHA256(dec_prekey + secret)
-        var clientDecPrekeyIv = init.AsSpan(Protocol.SkipLen, Protocol.PreKeyLen + Protocol.IvLen).ToArray();
-        var clientDecKey = DeriveKey(clientDecPrekeyIv.AsSpan(0, Protocol.PreKeyLen), secret);
-        var clientDecIv = clientDecPrekeyIv.AsSpan(Protocol.PreKeyLen, Protocol.IvLen).ToArray();
+        var clientDecPrekeyIv = init.AsSpan(AppConstants.Protocol.SkipLen, AppConstants.Protocol.PreKeyLen + AppConstants.Protocol.IvLen).ToArray();
+        var clientDecKey = DeriveKey(clientDecPrekeyIv.AsSpan(0, AppConstants.Protocol.PreKeyLen), secret);
+        var clientDecIv = clientDecPrekeyIv.AsSpan(AppConstants.Protocol.PreKeyLen, AppConstants.Protocol.IvLen).ToArray();
 
         // enc_prekey_iv = dec_prekey_iv[::-1]
         var clientEncPrekeyIv = clientDecPrekeyIv.ToArray();
         Array.Reverse(clientEncPrekeyIv);
-        var clientEncKey = DeriveKey(clientEncPrekeyIv.AsSpan(0, Protocol.PreKeyLen), secret);
-        var clientEncIv = clientEncPrekeyIv.AsSpan(Protocol.PreKeyLen, Protocol.IvLen).ToArray();
+        var clientEncKey = DeriveKey(clientEncPrekeyIv.AsSpan(0, AppConstants.Protocol.PreKeyLen), secret);
+        var clientEncIv = clientEncPrekeyIv.AsSpan(AppConstants.Protocol.PreKeyLen, AppConstants.Protocol.IvLen).ToArray();
 
         var cltDecryptor = new IncrementalCipher(clientDecKey, clientDecIv);
         var cltEncryptor = new IncrementalCipher(clientEncKey, clientEncIv);
 
         // Пропускаем 64 байта init без выделения памяти.
-        cltDecryptor.Skip(Protocol.HandshakeLen);
+        cltDecryptor.Skip(AppConstants.Protocol.HandshakeLen);
 
         // Relay: enc — как есть, dec — реверс prekey_iv.
-        var relayEncKey = relayInit.AsSpan(Protocol.SkipLen, Protocol.KeyLen).ToArray();
-        var relayEncIv = relayInit.AsSpan(Protocol.SkipLen + Protocol.KeyLen, Protocol.IvLen).ToArray();
+        var relayEncKey = relayInit.AsSpan(AppConstants.Protocol.SkipLen, AppConstants.Protocol.KeyLen).ToArray();
+        var relayEncIv = relayInit.AsSpan(AppConstants.Protocol.SkipLen + AppConstants.Protocol.KeyLen, AppConstants.Protocol.IvLen).ToArray();
 
-        var relayDecPrekeyIv = relayInit.AsSpan(Protocol.SkipLen, Protocol.PreKeyLen + Protocol.IvLen).ToArray();
+        var relayDecPrekeyIv = relayInit.AsSpan(AppConstants.Protocol.SkipLen, AppConstants.Protocol.PreKeyLen + AppConstants.Protocol.IvLen).ToArray();
         Array.Reverse(relayDecPrekeyIv);
-        var relayDecKey = relayDecPrekeyIv.AsSpan(0, Protocol.PreKeyLen).ToArray();
-        var relayDecIv = relayDecPrekeyIv.AsSpan(Protocol.PreKeyLen, Protocol.IvLen).ToArray();
+        var relayDecKey = relayDecPrekeyIv.AsSpan(0, AppConstants.Protocol.PreKeyLen).ToArray();
+        var relayDecIv = relayDecPrekeyIv.AsSpan(AppConstants.Protocol.PreKeyLen, AppConstants.Protocol.IvLen).ToArray();
 
         var tgEncryptor = new IncrementalCipher(relayEncKey, relayEncIv);
         var tgDecryptor = new IncrementalCipher(relayDecKey, relayDecIv);
 
-        tgEncryptor.Skip(Protocol.HandshakeLen);
+        tgEncryptor.Skip(AppConstants.Protocol.HandshakeLen);
 
         return new CryptoCtx(cltDecryptor, cltEncryptor, tgEncryptor, tgDecryptor);
     }

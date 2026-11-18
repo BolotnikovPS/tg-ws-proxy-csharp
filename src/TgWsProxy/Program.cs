@@ -11,7 +11,6 @@ using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure;
 using TgWsProxy.Infrastructure.Hosting;
-using TgWsProxy.Infrastructure.Logging;
 using TgWsProxy.Logging;
 using TgWsProxy.Web;
 
@@ -168,13 +167,13 @@ app.UseSerilogRequestLogging(options =>
     options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms";
     options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
     {
-        diagnosticContext.Set(LoggingConstants.RequestHost, httpContext.Request.Host.Value);
-        diagnosticContext.Set(LoggingConstants.UserAgent, httpContext.Request.Headers.UserAgent.ToString());
-        diagnosticContext.Set(LoggingConstants.TraceId, Activity.Current?.TraceId.ToString() ?? string.Empty);
-        diagnosticContext.Set(LoggingConstants.SpanId, Activity.Current?.SpanId.ToString() ?? string.Empty);
-        if (httpContext.Items.TryGetValue(LoggingConstants.CorrelationIdItemKey, out var correlationId))
+        diagnosticContext.Set(AppConstants.Logging.RequestHost, httpContext.Request.Host.Value);
+        diagnosticContext.Set(AppConstants.Logging.UserAgent, httpContext.Request.Headers.UserAgent.ToString());
+        diagnosticContext.Set(AppConstants.Logging.TraceId, Activity.Current?.TraceId.ToString() ?? string.Empty);
+        diagnosticContext.Set(AppConstants.Logging.SpanId, Activity.Current?.SpanId.ToString() ?? string.Empty);
+        if (httpContext.Items.TryGetValue(AppConstants.Logging.CorrelationIdItemKey, out var correlationId))
         {
-            diagnosticContext.Set(LoggingConstants.CorrelationIdProperty, correlationId);
+            diagnosticContext.Set(AppConstants.Logging.CorrelationIdProperty, correlationId);
         }
     };
     options.GetLevel = (httpContext, _, ex) =>
@@ -300,8 +299,8 @@ static void ConfigureSerilog(
         .Enrich.FromLogContext()
         .Enrich.WithMachineName()
         .Enrich.WithEnvironmentName()
-        .Enrich.WithProperty(LoggingConstants.Application, LoggingConstants.ApplicationName)
-        .Enrich.WithProperty(LoggingConstants.Version, appVersion)
+        .Enrich.WithProperty(AppConstants.Logging.Application, AppConstants.Logging.ApplicationName)
+        .Enrich.WithProperty(AppConstants.Logging.Version, appVersion)
         .Enrich.WithSpan()
         .Destructure.With(new SecretMaskingPolicy())
         .WriteTo.Console(new CompactJsonFormatter());
@@ -357,10 +356,10 @@ static void ConfigureSerilog(
 static bool IsRequestLoggingNoise(HttpRequest request)
 {
     var path = request.Path.Value ?? string.Empty;
-    return path.StartsWith(LoggingConstants.HealthzPathPrefix, StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith(LoggingConstants.MetricsPathPrefix, StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith(LoggingConstants.SwaggerPathPrefix, StringComparison.OrdinalIgnoreCase)
-        || path.Contains(LoggingConstants.ApiV1PathSegment, StringComparison.OrdinalIgnoreCase);
+    return path.StartsWith(AppConstants.Logging.HealthzPathPrefix, StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith(AppConstants.Logging.MetricsPathPrefix, StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith(AppConstants.Logging.SwaggerPathPrefix, StringComparison.OrdinalIgnoreCase)
+        || path.Contains(AppConstants.Logging.ApiV1PathSegment, StringComparison.OrdinalIgnoreCase);
 }
 
 // Гарантирует создание W3C Activity на каждый HTTP-запрос (TraceId/SpanId) без подключения

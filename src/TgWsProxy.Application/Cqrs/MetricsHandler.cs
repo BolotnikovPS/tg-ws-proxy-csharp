@@ -3,6 +3,7 @@ using TgWsProxy.Application.Logic;
 using TgWsProxy.Application.ReadModels;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
+using static TgWsProxy.Domain.AppConstants.Metrics;
 
 namespace TgWsProxy.Application.Cqrs;
 
@@ -12,11 +13,7 @@ namespace TgWsProxy.Application.Cqrs;
 /// </summary>
 public static class MetricsHandler
 {
-    /// <summary>Размер страницы <c>/api/per-ip</c> по умолчанию (F-4.7).</summary>
-    public const int DefaultPerIpLimit = 50;
 
-    /// <summary>Верхняя граница размера страницы <c>/api/per-ip</c> (F-4.7).</summary>
-    public const int MaxPerIpLimit = 500;
 
     /// <summary>Собирает сводку о процессе, слушателе и действующих лимитах (F-3.6, F-7.8).</summary>
     /// <param name="query">Запрос сводки.</param>
@@ -173,7 +170,7 @@ public static class MetricsHandler
         ArgumentNullException.ThrowIfNull(tokens);
 
         var aggregated = PeerStatsAggregator
-            .Aggregate(snapshotCache.Get(), PeerStatsAggregator.GroupToken)
+            .Aggregate(snapshotCache.Get(), AppConstants.Peers.GroupToken)
             .ToDictionary(peer => peer.TokenId ?? "", StringComparer.Ordinal);
 
         return [.. tokens.All

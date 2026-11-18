@@ -16,7 +16,7 @@ internal sealed class SelfHealthCheck : IHealthCheck
 {
     /// <inheritdoc />
     public Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context, CancellationToken cancellationToken = default)
+        HealthCheckContext context, CancellationToken cancellationToken)
         => Task.FromResult(HealthCheckResult.Healthy("process is alive"));
 }
 
@@ -29,7 +29,7 @@ internal sealed class ListenerHealthCheck(IListenerController listener) : IHealt
 {
     /// <inheritdoc />
     public Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context, CancellationToken cancellationToken = default)
+        HealthCheckContext context, CancellationToken cancellationToken)
     {
         var state = listener.State;
 
@@ -52,7 +52,7 @@ internal sealed class ConfigHealthCheck(Config config, ConfigRuntime runtime) : 
 {
     /// <inheritdoc />
     public Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context, CancellationToken cancellationToken = default)
+        HealthCheckContext context, CancellationToken cancellationToken)
     {
         try
         {
@@ -116,7 +116,7 @@ internal sealed class PeerStatsHealthCheck(IPeerStatsRegistry peerStats) : IHeal
 {
     /// <inheritdoc />
     public Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context, CancellationToken cancellationToken = default)
+        HealthCheckContext context, CancellationToken cancellationToken)
     {
         var overflow = peerStats.OverflowCount;
 
@@ -137,7 +137,7 @@ internal sealed class WebProxyHealthCheck(Config config) : IHealthCheck
 {
     /// <inheritdoc />
     public Task<HealthCheckResult> CheckHealthAsync(
-        HealthCheckContext context, CancellationToken cancellationToken = default)
+        HealthCheckContext context, CancellationToken cancellationToken)
     {
         if (!config.WebProxy.Enabled)
         {

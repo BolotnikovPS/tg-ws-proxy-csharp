@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Infrastructure.FakeTls;
 
@@ -39,7 +40,7 @@ internal sealed class FakeTlsStream(Stream inner) : Stream
         => ReadAsync(buffer.AsMemory(offset, count), CancellationToken.None).AsTask().GetAwaiter().GetResult();
 
     /// <inheritdoc />
-    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
         if (buffer.Length == 0)
         {
@@ -58,7 +59,7 @@ internal sealed class FakeTlsStream(Stream inner) : Stream
         => WriteCoreAsync(buffer.AsMemory(offset, count), CancellationToken.None).GetAwaiter().GetResult();
 
     /// <inheritdoc />
-    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
         => new(WriteCoreAsync(buffer, cancellationToken));
 
     /// <inheritdoc />
@@ -134,7 +135,7 @@ internal sealed class FakeTlsStream(Stream inner) : Stream
             var recordType = header[0];
             var recordLength = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(3, 2));
 
-            if (recordType == FakeTlsCodec.RecordChangeCipherSpec)
+            if (recordType == AppConstants.FakeTls.RecordChangeCipherSpec)
             {
                 if (recordLength > 0)
                 {
@@ -145,7 +146,7 @@ internal sealed class FakeTlsStream(Stream inner) : Stream
             }
 
             // Всё, что не application data (например, alert или close_notify), завершает поток.
-            if (recordType != FakeTlsCodec.RecordApplicationData)
+            if (recordType != AppConstants.FakeTls.RecordApplicationData)
             {
                 return 0;
             }

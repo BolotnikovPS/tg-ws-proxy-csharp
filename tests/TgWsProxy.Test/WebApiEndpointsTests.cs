@@ -635,7 +635,7 @@ public sealed class WebApiEndpointsTests
     /// </summary>
     private sealed class StubDcChecker : IDcReachabilityChecker
     {
-        public Task<DcCheckReport> CheckAsync(CancellationToken ct = default)
+        public Task<DcCheckReport> CheckAsync(CancellationToken ct)
         {
             var dcs = new[] { 1, 2, 3, 4, 5, 203 };
             var ok = new DcResult(1, true, 42, null, "ok: 149.154.175.50", null);

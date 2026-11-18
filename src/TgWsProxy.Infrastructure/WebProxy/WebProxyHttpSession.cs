@@ -1,3 +1,4 @@
+using TgWsProxy.Domain;
 namespace TgWsProxy.Infrastructure.WebProxy;
 
 /// <summary>Результат обработки восходящего батча <c>POST /api/v1/up</c>.</summary>
@@ -75,7 +76,7 @@ public sealed class WebProxyHttpSession : IAsyncDisposable
         _multiplexer = new RelayMultiplexer(
             new Sink(this),
             startBridge,
-            RelayFrameCodec.InitialStreamWindow,
+            AppConstants.WebProxy.InitialStreamWindow,
             maxStreamsPerSession,
             tryAcquireGlobalStream,
             releaseGlobalStream);
@@ -301,7 +302,7 @@ public sealed class WebProxyHttpSession : IAsyncDisposable
         var count = 0;
         while (!remaining.IsEmpty)
         {
-            if (count >= RelayFrameCodec.MaxBatchFrames)
+            if (count >= AppConstants.WebProxy.MaxBatchFrames)
             {
                 frames = null!;
                 return false;

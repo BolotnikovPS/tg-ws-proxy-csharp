@@ -2,6 +2,7 @@
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.ReadModels;
 using TgWsProxy.Domain;
+using static TgWsProxy.Domain.AppConstants.Metrics;
 
 namespace TgWsProxy.Infrastructure.Metrics;
 
@@ -12,17 +13,9 @@ namespace TgWsProxy.Infrastructure.Metrics;
 /// </summary>
 public sealed class MetricsHistory : ITimeseriesBufferConfigurator, ITimeseriesReader
 {
-    /// <summary>Шаг сэмплирования по умолчанию (совпадает с шагом по умолчанию для API).</summary>
-    public const int DefaultStepSeconds = 5;
 
-    /// <summary>Окно по умолчанию для запроса временного ряда — 15 минут.</summary>
-    public const int DefaultWindowSeconds = 900;
 
-    /// <summary>Глубина истории в секундах: один час независимо от шага.</summary>
-    public const int CapacitySeconds = 3600;
 
-    /// <summary>Максимальная глубина истории — один час при шаге по умолчанию.</summary>
-    public const int Capacity = CapacitySeconds / DefaultStepSeconds;
 
     private readonly Lock sync = new();
     private Sample[] samples;

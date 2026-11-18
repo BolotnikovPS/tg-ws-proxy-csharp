@@ -5,6 +5,7 @@ using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Domain.Exceptions;
 using TgWsProxy.Infrastructure.Wire;
+using static TgWsProxy.Domain.AppConstants.CfH2Channel;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -15,21 +16,6 @@ namespace TgWsProxy.Infrastructure.Instances;
 /// </summary>
 internal sealed class CfH2Channel : ICfH2Channel
 {
-    private const int MaxChannelRequests = 8;
-    private const long MaxChannelBytes = 8L * 1024 * 1024;
-    private const int QueueCapacity = 16;
-    private const int RequestTimeoutSeconds = 65;
-    private const double ReplayIdleSeconds = 1.0;
-    private const double ReplayRequestSeconds = 3.0;
-    private const double ReplayCheckSeconds = 0.25;
-    private const double ReplayMaxAge = 30.0;
-    private const int ReplayHistoryBytes = 64 * 1024;
-    private const int ReplayHistoryPackets = 16;
-    private const int MaxChannelReplays = 2;
-    private const double ReplaySlotSeconds = 30.0;
-    private const double ReplayRetrySeconds = 2.0;
-    private const int ReplayMaxAttempts = 3;
-    private const double DiagnosticIntervalSeconds = 5.0;
 
     private readonly CfH2Lane _lane;
     private readonly IProxyStats _stats;

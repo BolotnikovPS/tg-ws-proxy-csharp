@@ -11,6 +11,8 @@ using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Domain.Exceptions;
 using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
+using static TgWsProxy.Domain.AppConstants.CfH2Lane;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Infrastructure.Instances;
 
@@ -21,17 +23,7 @@ namespace TgWsProxy.Infrastructure.Instances;
 /// </summary>
 internal sealed class CfH2Lane : IAsyncDisposable
 {
-    private const int MaxLaneRequests = 64;
-    private const long MaxLaneBytes = 32L * 1024 * 1024;
-    private const long MaxLaneReplyBytes = 32L * 1024 * 1024;
-    private const double DomainCooldownSeconds = 30.0;
-    private const int RequestTimeoutSeconds = 65;
-    private const int ConnectTimeoutSeconds = 8;
-    private const int PreflightTimeoutSeconds = 10;
-    private const double SlowResponseSeconds = 3.0;
 
-    /// <summary>Размер буфера чтения тела H2-ответа (арендуется в пуле на запрос).</summary>
-    private const int ReadChunkBytes = 64 * 1024;
 
     private readonly AsyncCapacityGate _capacity = new(MaxLaneRequests, MaxLaneBytes);
     private readonly Lock _sync = new();
@@ -188,7 +180,7 @@ internal sealed class CfH2Lane : IAsyncDisposable
         timeout.CancelAfter(TimeSpan.FromSeconds(PreflightTimeoutSeconds));
         var started = DateTimeOffset.UtcNow;
 
-        using var request = new HttpRequestMessage(HttpMethod.Head, $"https://{Host}{Protocol.H2ApiPath}")
+        using var request = new HttpRequestMessage(HttpMethod.Head, $"https://{Host}{AppConstants.Protocol.H2ApiPath}")
         {
             Version = HttpVersion.Version20,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
@@ -260,7 +252,7 @@ internal sealed class CfH2Lane : IAsyncDisposable
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, $"https://{Host}{Protocol.H2ApiPath}")
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"https://{Host}{AppConstants.Protocol.H2ApiPath}")
             {
                 Version = HttpVersion.Version20,
                 VersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
@@ -306,7 +298,7 @@ internal sealed class CfH2Lane : IAsyncDisposable
             channel.MarkHttpReceiving(true);
 
             var declared = response.Content.Headers.ContentLength;
-            if (declared is > Protocol.H2MaxPacket)
+            if (declared is > AppConstants.Protocol.H2MaxPacket)
             {
                 throw new InvalidDataException("H2 response Content-Length exceeds native packet bound");
             }
@@ -442,7 +434,7 @@ internal sealed class CfH2Lane : IAsyncDisposable
                     break;
                 }
 
-                if (buffer.Length + read > Protocol.H2MaxPacket)
+                if (buffer.Length + read > AppConstants.Protocol.H2MaxPacket)
                 {
                     throw new InvalidDataException("H2 response exceeds native packet bound");
                 }

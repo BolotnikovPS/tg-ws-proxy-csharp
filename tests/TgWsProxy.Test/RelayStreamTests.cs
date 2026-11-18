@@ -1,4 +1,5 @@
 using TgWsProxy.Infrastructure.WebProxy;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Test;
 
@@ -16,7 +17,7 @@ public class RelayStreamTests
         stream.EnqueueData(new byte[] { 1, 2, 3, 4, 5 });
 
         var buffer = new byte[5];
-        var n = await stream.ReadAsync(buffer);
+        var n = await stream.ReadAsync(buffer, CancellationToken.None);
 
         Assert.Equal(5, n);
         Assert.Equal(new byte[] { 1, 2, 3, 4, 5 }, buffer);
@@ -34,9 +35,9 @@ public class RelayStreamTests
         stream.EnqueueData(new byte[] { 1, 2, 3, 4, 5 });
 
         var b1 = new byte[2];
-        var n1 = await stream.ReadAsync(b1);
+        var n1 = await stream.ReadAsync(b1, CancellationToken.None);
         var b2 = new byte[10];
-        var n2 = await stream.ReadAsync(b2);
+        var n2 = await stream.ReadAsync(b2, CancellationToken.None);
 
         Assert.Equal(2, n1);
         Assert.Equal(new byte[] { 1, 2 }, b1);
@@ -56,7 +57,7 @@ public class RelayStreamTests
         var stream = NewStream(1, []);
         stream.CompleteInbound();
 
-        var n = await stream.ReadAsync(new byte[10]);
+        var n = await stream.ReadAsync(new byte[10], CancellationToken.None);
 
         Assert.Equal(0, n);
     }
@@ -67,7 +68,7 @@ public class RelayStreamTests
         var frames = new List<RelayFrame>();
         var stream = NewStream(1, frames);
 
-        await stream.WriteAsync(new byte[] { 1, 2, 3 });
+        await stream.WriteAsync(new byte[] { 1, 2, 3 }, CancellationToken.None);
 
         var data = Assert.Single(frames, f => f.Type == RelayFrameType.Data);
         Assert.Equal(1, data.StreamId);
@@ -80,7 +81,7 @@ public class RelayStreamTests
         var frames = new List<RelayFrame>();
         var stream = new RelayStream(1, CapturingSender(frames), initialSendWindow: 8);
 
-        var writeTask = stream.WriteAsync(new byte[16]).AsTask();
+        var writeTask = stream.WriteAsync(new byte[16], CancellationToken.None).AsTask();
         await Task.Delay(100);
         Assert.False(writeTask.IsCompleted);
 
@@ -98,13 +99,13 @@ public class RelayStreamTests
     {
         var frames = new List<RelayFrame>();
         var stream = NewStream(1, frames);
-        var size = RelayFrameCodec.MaxFramePayload + 100;
+        var size = AppConstants.WebProxy.MaxFramePayload + 100;
 
-        await stream.WriteAsync(new byte[size]);
+        await stream.WriteAsync(new byte[size], CancellationToken.None);
 
         var dataFrames = frames.Where(f => f.Type == RelayFrameType.Data).ToArray();
         Assert.Equal(2, dataFrames.Length);
-        Assert.Equal(RelayFrameCodec.MaxFramePayload, dataFrames[0].Payload.Length);
+        Assert.Equal(AppConstants.WebProxy.MaxFramePayload, dataFrames[0].Payload.Length);
         Assert.Equal(100, dataFrames[1].Payload.Length);
     }
 

@@ -6,6 +6,7 @@ using TgWsProxy.Domain.Abstractions;
 using TgWsProxy.Infrastructure.FakeTls;
 using TgWsProxy.Infrastructure.IO;
 using TgWsProxy.Infrastructure.Transport;
+using static TgWsProxy.Domain.AppConstants.MtProto;
 
 namespace TgWsProxy.Infrastructure.MtProto;
 
@@ -21,8 +22,6 @@ internal sealed class ClientInitReader(
     /// <summary>Таймаут ожидания каждого шага чтения (секунды).</summary>
     private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(10);
 
-    /// <summary>Максимальная длина строки PROXY protocol v1 (спецификация: 107 байт).</summary>
-    private const int MaxProxyHeaderLength = 108;
 
     /// <summary>
     /// Читает init-пакет клиента, при необходимости поднимая Fake TLS.
@@ -62,7 +61,7 @@ internal sealed class ClientInitReader(
             return Closed(label);
         }
 
-        if (firstByte == FakeTlsCodec.RecordHandshake && !string.IsNullOrEmpty(masking))
+        if (firstByte == AppConstants.FakeTls.RecordHandshake && !string.IsNullOrEmpty(masking))
         {
             return await ReadFakeTlsAsync(stream, (byte)firstByte, label, cancellationToken)
                 .ConfigureAwait(false);
@@ -77,9 +76,9 @@ internal sealed class ClientInitReader(
         try
         {
             var rest = await stream
-                .ReadExact(Protocol.HandshakeLen - 1, StepTimeout, cancellationToken)
+                .ReadExact(AppConstants.Protocol.HandshakeLen - 1, StepTimeout, cancellationToken)
                 .ConfigureAwait(false);
-            var init = new byte[Protocol.HandshakeLen];
+            var init = new byte[AppConstants.Protocol.HandshakeLen];
             init[0] = (byte)firstByte;
             rest.CopyTo(init, 1);
             return new ClientInitResult(ClientInitStatus.Ok, init, stream, label, null);
@@ -145,14 +144,25 @@ internal sealed class ClientInitReader(
             "[{Scope}] Fake TLS handshake ok (ts={Timestamp} token={TokenName})",
             label, info.Timestamp, token.Name);
 
-        var serverHello = FakeTlsCodec.BuildServerHello(token.Secret, info.ClientRandom, info.SessionId);
+        // Ответ в том же такте, что и ClientHello, — сам по себе признак прокси:
+        // настоящий сервер тратит время на обработку. Задержка идёт после проверки
+        // подписи, поэтому мусорные ClientHello её не оплачивают (upstream SERVER_HELLO_DELAY).
+        await Task.Delay(
+            Random.Shared.Next(
+                AppConstants.FakeTls.ServerHelloDelayMinMs,
+                AppConstants.FakeTls.ServerHelloDelayMaxMs + 1),
+            cancellationToken).ConfigureAwait(false);
+
+        // Форма ответа подгоняется под конкретный ClientHello: набор шифров и key share.
+        var offers = FakeTlsCodec.ParseClientHello(clientHello);
+        var serverHello = FakeTlsCodec.BuildServerHello(token.Secret, info.ClientRandom, info.SessionId, offers);
         await stream.WriteAsync(serverHello, cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
 
         var tlsStream = new FakeTlsStream(stream);
         try
         {
-            var init = await tlsStream.ReadExact(Protocol.HandshakeLen, StepTimeout, cancellationToken)
+            var init = await tlsStream.ReadExact(AppConstants.Protocol.HandshakeLen, StepTimeout, cancellationToken)
                 .ConfigureAwait(false);
             return new ClientInitResult(ClientInitStatus.Ok, init, tlsStream, label, null, token.Id);
         }

@@ -9,6 +9,7 @@ using TgWsProxy.Application.Logic;
 using TgWsProxy.Application.StartConfig;
 using TgWsProxy.Domain;
 using TgWsProxy.Infrastructure.Transport;
+using static TgWsProxy.Domain.AppConstants.Diagnostics;
 
 namespace TgWsProxy.Infrastructure.Diagnostics;
 
@@ -29,10 +30,8 @@ internal sealed class DcReachabilityChecker(Config cfg) : IDcReachabilityChecker
     /// <summary>Таймаут одной попытки соединения (TCP+TLS+WS-апгрейд).</summary>
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(3);
 
-    /// <summary>Сколько доменов встроенного пула пробовать, когда cfProxy.domains пуст.</summary>
-    private const int BuiltinCfProxySample = 3;
 
-    public async Task<DcCheckReport> CheckAsync(CancellationToken ct = default)
+    public async Task<DcCheckReport> CheckAsync(CancellationToken ct)
     {
         var cfProxyDomains = cfg.CfProxy.Domains.Count > 0
             ? cfg.CfProxy.Domains
@@ -88,7 +87,7 @@ internal sealed class DcReachabilityChecker(Config cfg) : IDcReachabilityChecker
     {
         var wsDc = dc == 203 ? 2 : dc;
         var host = $"kws{wsDc}.web.telegram.org";
-        var outcome = await ProbeWsAsync(host, host, Protocol.WsPath, ct).ConfigureAwait(false);
+        var outcome = await ProbeWsAsync(host, host, AppConstants.Protocol.WsPath, ct).ConfigureAwait(false);
         return new DcResult(dc, outcome.Ok, outcome.Ms, outcome.Err, null, null);
     }
 
@@ -97,7 +96,7 @@ internal sealed class DcReachabilityChecker(Config cfg) : IDcReachabilityChecker
         var ip = configured.TryGetValue(dc, out var custom) && !string.IsNullOrEmpty(custom)
             ? custom
             : Protocol.DcDefaultIps[dc];
-        var outcome = await ProbeTcpAsync(ip, Protocol.WsPort, ct).ConfigureAwait(false);
+        var outcome = await ProbeTcpAsync(ip, AppConstants.Protocol.WsPort, ct).ConfigureAwait(false);
         return new DcResult(dc, outcome.Ok, outcome.Ms, outcome.Err, null, ip);
     }
 
@@ -109,7 +108,7 @@ internal sealed class DcReachabilityChecker(Config cfg) : IDcReachabilityChecker
         }
 
         var dst = Protocol.DcDefaultIps[dc];
-        var path = $"{Protocol.WsPath}?dst={Uri.EscapeDataString(dst)}&dc={dc}";
+        var path = $"{AppConstants.Protocol.WsPath}?dst={Uri.EscapeDataString(dst)}&dc={dc}";
         var targets = domains.Select(d => (Host: d, Sni: d, Path: path)).ToList();
         return await ProbeManyAsync(dc, targets, ct).ConfigureAwait(false);
     }
@@ -121,7 +120,7 @@ internal sealed class DcReachabilityChecker(Config cfg) : IDcReachabilityChecker
             return new DcResult(dc, false, null, "не настроено", null, null);
         }
 
-        var targets = hosts.Select(h => (Host: h, Sni: h, Path: Protocol.WsPath)).ToList();
+        var targets = hosts.Select(h => (Host: h, Sni: h, Path: AppConstants.Protocol.WsPath)).ToList();
         return await ProbeManyAsync(dc, targets, ct).ConfigureAwait(false);
     }
 
@@ -151,7 +150,7 @@ internal sealed class DcReachabilityChecker(Config cfg) : IDcReachabilityChecker
             tcp = new TcpClient();
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(ProbeTimeout);
-            await tcp.ConnectAsync(host, Protocol.WsPort, cts.Token).ConfigureAwait(false);
+            await tcp.ConnectAsync(host, AppConstants.Protocol.WsPort, cts.Token).ConfigureAwait(false);
 
             ssl = new SslStream(
                 tcp.GetStream(),

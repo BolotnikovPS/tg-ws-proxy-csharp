@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TgWsProxy.Domain;
+using static TgWsProxy.Domain.AppConstants.Config;
 
 namespace TgWsProxy.Application.StartConfig;
 
@@ -21,22 +22,8 @@ namespace TgWsProxy.Application.StartConfig;
 /// </summary>
 public static class ConfigFileLoader
 {
-    /// <summary>Имя файла конфигурации, если путь не задан явно.</summary>
-    public const string DefaultFileName = "config.json";
 
-    /// <summary>
-    /// Ключ прежних версий с единственным секретом (F-8.3). Принимается при чтении и
-    /// переносится в <c>tokens</c>; при записи больше не создаётся.
-    /// </summary>
-    public const string LegacySecretKey = "secret";
 
-    /// <summary>
-    /// Плоские ключи логов прежних версий, перенесённые во вложенный блок <c>logs</c>.
-    /// Принимаются при чтении и переносятся в <c>logs</c>; при записи больше не создаются.
-    /// </summary>
-    private const string LegacyLogPathKey = "logPath";
-    private const string LegacyLogMaxMegabytesKey = "logMaxMegabytes";
-    private const string LegacyLogRetainedFileCountKey = "logRetainedFileCount";
 
     /// <summary>
     /// Разрешает путь к файлу конфигурации.

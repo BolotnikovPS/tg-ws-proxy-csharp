@@ -4,19 +4,12 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Reflection;
 using TgWsProxy.Infrastructure.MtProto.TL.Abstractions;
+using static TgWsProxy.Domain.AppConstants.Tl;
 
 namespace TgWsProxy.Infrastructure.MtProto.TL;
 
 public static partial class Layer
 {
-    public const int Version = 229;                 // fetched 08/26/2026 00:30:42
-    internal const uint VectorCtor = 0x1CB5C415;
-    internal const uint NullCtor = 0x56730BCC;
-    internal const uint RpcResultCtor = 0xF35C6D01;
-    internal const uint RpcErrorCtor = 0x2144CA19;
-    internal const uint MsgContainerCtor = 0x73F1F8DC;
-    internal const uint BadMsgCtor = 0xA7EFF811;
-    internal const uint GZipedCtor = 0x3072CFA1;
 
     // type -> ctor of its "empty"/"notModified"/"default" variant, used by Serialization.WriteTLNull
     // when a null value is written for a field of a polymorphic base type.

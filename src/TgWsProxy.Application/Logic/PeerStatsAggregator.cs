@@ -1,4 +1,5 @@
 using TgWsProxy.Domain;
+using static TgWsProxy.Domain.AppConstants.Peers;
 
 namespace TgWsProxy.Application.Logic;
 
@@ -8,14 +9,8 @@ namespace TgWsProxy.Application.Logic;
 /// </summary>
 internal static class PeerStatsAggregator
 {
-    /// <summary>Разрез по паре «адрес, токен» (по умолчанию).</summary>
-    public const string GroupPair = "pair";
 
-    /// <summary>Разрез по адресу: токен не учитывается.</summary>
-    public const string GroupIp = "ip";
 
-    /// <summary>Разрез по токену: адрес не учитывается.</summary>
-    public const string GroupToken = "token";
 
     /// <summary>Нормализует параметр <c>group</c>; неизвестное значение трактуется как <c>pair</c>.</summary>
     public static string NormalizeGroup(string? group) => group?.Trim().ToLowerInvariant() switch

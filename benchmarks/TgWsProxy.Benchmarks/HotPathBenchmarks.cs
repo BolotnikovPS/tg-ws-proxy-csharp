@@ -7,6 +7,7 @@ using TgWsProxy.Application.Logic;
 using TgWsProxy.Infrastructure.Instances;
 using TgWsProxy.Infrastructure.Transport;
 using TgWsProxy.Infrastructure.Wire;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Benchmarks;
 
@@ -61,7 +62,7 @@ public class MsgSplitterBenchmarks
     [GlobalSetup]
     public void Setup()
     {
-        _splitter = new MsgSplitter(Protocol.ProtoAbridgedInt);
+        _splitter = new MsgSplitter(AppConstants.Protocol.ProtoAbridgedInt);
 
         // Каждый байт 0x20 = 32 слова → payload 128 байт, заголовок 1 байт → пакет 129 байт.
         // 1290 = 10 пакетов, 12900 = 100 пакетов.

@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using static TgWsProxy.Domain.AppConstants.WebProxy;
+using TgWsProxy.Domain;
 
 namespace TgWsProxy.Infrastructure.WebProxy;
 
@@ -50,7 +52,7 @@ internal enum RelayFrameError
     /// <summary>Буфер короче 8-байтного заголовка или объявленного payload.</summary>
     HeaderTooShort,
 
-    /// <summary>Объявленная длина payload превышает <see cref="RelayFrameCodec.MaxFramePayload"/>.</summary>
+    /// <summary>Объявленная длина payload превышает <see cref="AppConstants.WebProxy.MaxFramePayload"/>.</summary>
     PayloadTooLarge,
 
     /// <summary>Неизвестный тип кадра.</summary>
@@ -67,26 +69,12 @@ public readonly record struct RelayFrame(RelayFrameType Type, int StreamId, Read
 /// </summary>
 internal static class RelayFrameCodec
 {
-    /// <summary>Размер заголовка кадра в байтах (<c>kFrameHeaderSize</c>).</summary>
-    public const int FrameHeaderSize = 8;
 
-    /// <summary>Максимальный размер payload кадра (<c>kMaxFramePayload</c> = 1 МиБ).</summary>
-    public const int MaxFramePayload = 1024 * 1024;
 
-    /// <summary>Максимум кадров в одном пакете (<c>kMaxBatchFrames</c>).</summary>
-    public const int MaxBatchFrames = 4096;
 
-    /// <summary>Начальное приёмное окно потока (<c>kInitialStreamWindow</c> = 4 МиБ).</summary>
-    public const int InitialStreamWindow = 4 * 1024 * 1024;
 
-    /// <summary>Максимальное значение <c>streamId</c> (24-битное поле).</summary>
-    public const int MaxStreamId = 0x00FF_FFFF;
 
-    /// <summary>Маркер секрета ссылки WEB proxy (<c>kWebProxyLinkSecretMarker</c>).</summary>
-    public const byte WebProxyLinkSecretMarker = 0x70;
 
-    /// <summary>Единственный допустимый payload кадра <see cref="RelayFrameType.Hello"/> — версия протокола 1.</summary>
-    public const byte HelloProtocolVersion = 0x01;
 
     /// <summary>Полный размер кадра с payload указанной длины.</summary>
     public static int FrameSize(int payloadLength) => FrameHeaderSize + payloadLength;
@@ -148,8 +136,6 @@ internal static class RelayFrameCodec
         payload.CopyTo(destination[FrameHeaderSize..]);
     }
 
-    /// <summary>Размер payload кадра <see cref="RelayFrameType.Window"/> (BE uint32).</summary>
-    public const int WindowCreditSize = 4;
 
     /// <summary>
     /// Читает кредит приёмного окна из payload кадра <c>Window</c> (4 байта BE). Пустой или
