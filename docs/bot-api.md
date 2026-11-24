@@ -200,10 +200,27 @@ curl -X POST http://localhost/bot123456:ABC-DEF/sendPhoto \
 rich-сообщения нет текстового тела, в ответе `text` пустой — читать контент нужно из
 `rich_message` в самом сообщении.
 
-`getMe` отдаёт базовые поля пользователя плюс ботовые флаги из `User.flags`/`flags2`:
-`can_join_groups` (`!bot_nochats`), `can_read_all_group_messages` (`bot_chat_history`),
-`supports_inline_queries` (`bot_inline_placeholder`), `can_connect_to_business`
-(`bot_business`), `has_main_web_app` (`bot_has_main_app`).
+`getMe` возвращает объект `BotFullInfo` (Bot API 10.5): базовые поля пользователя
+(`id`, `is_bot`, `first_name`, `last_name`, `username`, `language_code`; `is_bot`
+всегда `true`) плюс **12 обязательных boolean**. Десять из них читаются из
+`User.flags`/`flags2` layer 229: `can_join_groups` (`!bot_nochats`),
+`can_read_all_group_messages` (`bot_chat_history`), `supports_inline_queries`
+(`has_bot_inline_placeholder`), `can_connect_to_business` (`bot_business`),
+`has_main_web_app` (`bot_has_main_app`), `has_topics_enabled` (`bot_forum_view`),
+`allows_users_to_create_topics` (`bot_forum_can_manage_topics`), `can_manage_bots`
+(`bot_can_manage_bots`), `supports_guest_queries` (`bot_guestchat`),
+`needs_inline_query_location` (`bot_inline_geo`). Оставшиеся два —
+`supports_join_request_queries` и `has_topic_sidebar` — источника в layer 229 не
+имеют и всегда отдаются `false` (в `BotFullInfo` они обязательные, поэтому не
+опускаются).
+
+Опциональные поля `active_usernames` (из `User.usernames`, только активные —
+фильтр `Username.Flags.active`) и `inline_query_placeholder` (из
+`bot_inline_placeholder`) эмитятся только при наличии данных; иначе этих ключей
+в ответе нет.
+
+Объект `User` без бот-полей по-прежнему используется в апдейтах (`from`/`chat` и
+т.п.); бот-поля добавляет только ответ `getMe`.
 
 **Тир 1 — медиа и файлы:** `sendPhoto`, `sendDocument`, `sendAudio`, `sendVideo`,
 `sendAnimation`, `sendVoice`, `sendVideoNote`, `sendSticker`, `sendMediaGroup`,
@@ -317,23 +334,34 @@ Telegram не запрашивается:
 
 Шлюз реализует **подмножество** Bot API, а не транслирует его целиком, и не объявляет
 клиенту версию API (поля `api_version` нет ни в ответах, ни в `getMe`).
-Сверка с апстримом проведена для **Bot API 10.4** (09.11.2026).
+Сверка с апстримом проведена для **Bot API 10.5** (22.11.2026).
 
 Практические следствия:
 
 - **Метод вне тиров 1–4** → `501` (см. выше), а не тихая ошибка.
 - **Новые опциональные поля** апстрима в ответах не появляются: `BuildMessage`/`BuildUser`/
-  `BuildChatDto` собирают фиксированный набор полей. Клиент обязан трактовать отсутствующее
-  поле как отсутствующее, а не как ошибку.
-- **Bot API 10.4 не потребовал изменений**: все новинки аддитивны (новые методы + новые
-  опциональные поля). Единственное ломающее изменение апстрима — переименование
-  `StoryAreaPosition` → `AreaPosition` — проект не затрагивает, так как stories не поддерживаются.
+  `BuildChatDto` собирают фиксированный набор полей (исключение — опциональные поля
+  `BotFullInfo` в ответе `getMe`, которые эмитятся при наличии данных). Клиент обязан
+  трактовать отсутствующее поле как отсутствующее, а не как ошибку.
+- **Bot API 10.5 в основном аддитивна**: новый метод `setMySettings` (вне тиров 1–4 → `501`,
+  реализация — отдельная задача, см. [PLAN-BOT-API-10.5.md](prompts/PLAN-BOT-API-10.5.md)),
+  новые поля (`WriteAccessAllowed.inviter`; в `BotFullInfo` — обязательные boolean и
+  опциональные `active_usernames`/`inline_query_placeholder`); замена
+  `text` → `blocks` в expandable blockquote шлюз не затрагивает (такие блоки не поддерживаются),
+  deprecations не объявлены. Существенное изменение — `getMe` теперь возвращает `BotFullInfo`
+  вместо `User` (из `User` удалены 10 бот-полей): **реализовано**, см. описание `getMe` выше;
+  поля без источника в layer 229 (`supports_join_request_queries`, `has_topic_sidebar`)
+  отдаются `false`.
+- **Из 10.4 (в 10.5 не менялось)**: единственное ломающее изменение того релиза —
+  переименование `StoryAreaPosition` → `AreaPosition` — проект не затрагивает, так как
+  stories не поддерживаются.
 - **Фичи 10.4, требующие нового MTProto-слоя** (widgets, TON wallet, chat share themes),
   в layer 229 отсутствуют как конструкторы, поэтому их поддержка — это перегенерация схемы
-  на более свежий layer плюс реализация методов, а не вопрос совместимости.
-- **Типы `MessageEntity` из 10.4**: `bank_card_number` поддержан в обе стороны (MTProto
-  `messageEntityBankCard`); `ton_address` в layer 229 отсутствует — такие сущности
-  отбрасываются при приёме и не отдаются в ответах.
+  на более свежий layer плюс реализация методов, а не вопрос совместимости. В 10.5 таких
+  фич не добавлялось.
+- **Типы `MessageEntity` из 10.4** (новых типов в 10.5 нет): `bank_card_number` поддержан
+  в обе стороны (MTProto `messageEntityBankCard`); `ton_address` в layer 229 отсутствует —
+  такие сущности отбрасываются при приёме и не отдаются в ответах.
 - **Форматирование сущностями** поддержано в обе стороны: входящий `entities`
   (в `sendMessage`/`sendRichMessage`/`editMessageText`…) транслируется в `MessageEntity[]`,
   а ответы несут `entities` (для медиа — `caption_entities`) при наличии `has_entities`.
