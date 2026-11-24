@@ -52,6 +52,8 @@ services:
       # "logs": { "path": "/app/log/tgwsproxy.jsonl" } и подготовьте каталог на хосте:
       #   mkdir -p log && sudo chown -R 1654:1654 log
       # - ./log:/app/log
+      # Хранение сессий ботов.
+      # - ./bot-sessions:/app/bot-sessions
     # HEALTHCHECK образа сам обращается к /healthz/ready на порту 80 (F-6.5),
     # поэтому дополнительных переменных не требуется.
 
