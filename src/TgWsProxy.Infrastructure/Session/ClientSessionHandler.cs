@@ -135,8 +135,12 @@ internal sealed class ClientSessionHandler(
 
             // Фаза «после handshake» (relay init → криптоконтекст → WS-пул/fallback) общая для
             // TCP-режима и web-proxy — вынесена в MtProtoBridgeEngine поверх произвольного Stream.
+            // Наблюдатель за клиентом (порт upstream client_setup) отменяет дозвон в fallback,
+            // если клиент ушёл, пока соединение с Telegram ещё устанавливалось.
+            using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            await using var clientWatch = ClientDisconnectWatch.Start(client, sessionCts, context.Scope, logger);
             sessionRoute = await engine
-                .BridgeAsync(countingStream, handshakeBytes, hs, token, label, context.Address, cancellationToken)
+                .BridgeAsync(countingStream, handshakeBytes, hs, token, label, context.Address, sessionCts.Token)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException)

@@ -41,6 +41,8 @@ public class ProxyHostedServiceTests
         Assert.Contains("bridge.ResetTcpBackoff", calls);
         Assert.Contains("wsPool.Reset", calls);
         Assert.Contains("cfWorkerPool.Reset", calls);
+        // Cooldown CF-доменов и статистика TLS/plain не должны переживать рестарт листенера.
+        Assert.Contains("cfStrategy.Reset", calls);
         Assert.Contains("cfDomainRefresher.Start", calls);
         Assert.Contains("session.Warmup", calls);
         Assert.Contains("cfWorkerPool.Warmup", calls);
@@ -156,6 +158,7 @@ public class ProxyHostedServiceTests
             new ProxyStats(),
             new StubWsPool(log),
             new StubCfWorkerPool(log),
+            new StubCfConnectionStrategy(log),
             new StubCfDomainRefresher(log),
             new StubCfH2Pool(log),
             new StubBridgeService(log),
@@ -302,6 +305,12 @@ public class ProxyHostedServiceTests
 
         public IReadOnlyList<string> AvailableDomains(IReadOnlyList<string> workerDomains) => [];
 
+        public Task<(IRawWebSocket Ws, string Domain)?> ConnectOneAsync(
+            IReadOnlyList<string> workerDomains,
+            string fallbackDst,
+            int dc,
+            CancellationToken cancellationToken) => Task.FromResult<(IRawWebSocket Ws, string Domain)?>(null);
+
         public void ReportFailure(string workerDomain, Exception exception)
         {
         }
@@ -311,8 +320,26 @@ public class ProxyHostedServiceTests
         public void Reset() => log.Add("cfWorkerPool.Reset");
     }
 
-    private sealed class StubCfDomainRefresher(CallLog log) : ICfDomainRefresher
+    private sealed class StubCfConnectionStrategy(CallLog log) : ICfConnectionStrategy
     {
+        public void Reset() => log.Add("cfStrategy.Reset");
+
+        public bool PrefersTls() => true;
+
+        public bool TlsInCooldown(string name) => false;
+
+        public Task<(IRawWebSocket Ws, string Name)?> ConnectAsync(
+            IReadOnlyList<string> candidates,
+            Func<string, string> hostFor,
+            string label,
+            bool secure,
+            string path,
+            TimeSpan timeout,
+            CancellationToken cancellationToken)
+            => Task.FromResult<(IRawWebSocket Ws, string Name)?>(null);
+    }
+
+    private sealed class StubCfDomainRefresher(CallLog log) : ICfDomainRefresher    {
         public void Start(CancellationToken cancellationToken) => log.Add("cfDomainRefresher.Start");
 
         public void StopRefresh() => log.Add("cfDomainRefresher.Stop");

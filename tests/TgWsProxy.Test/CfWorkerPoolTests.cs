@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
+using TgWsProxy.Domain.Exceptions;
 using TgWsProxy.Infrastructure.Instances;
 
 namespace TgWsProxy.Test;
@@ -74,7 +75,81 @@ public sealed class CfWorkerPoolTests
         pool.Dispose();
     }
 
-    private static CfWorkerPool CreatePool(RecordingWsFactory factory)
+    [Fact]
+    public void ReportFailure_OnDailyLimit_DisablesDomainForRestOfUtcDay()
+    {
+        var factory = new RecordingWsFactory();
+        using var pool = CreatePool(factory);
+
+        // free-план Workers отдаёт 429 при исчерпании дневной квоты; до v1.12.0 такой
+        // домен продолжал выбираться, пока квота не кончится насовсем.
+        pool.ReportFailure(Domains[0], new WsHandshakeException(429, "Too Many Requests"));
+
+        Assert.Empty(pool.AvailableDomains(Domains));
+    }
+
+    [Fact]
+    public void ReportFailure_OnServerError_DisablesDomainTemporarily()
+    {
+        var factory = new RecordingWsFactory();
+        using var pool = CreatePool(factory);
+
+        pool.ReportFailure(Domains[0], new WsHandshakeException(502, "Bad Gateway"));
+
+        Assert.Empty(pool.AvailableDomains(Domains));
+    }
+
+    [Fact]
+    public void ReportFailure_OnNetworkError_DisablesDomainTemporarily()
+    {
+        var factory = new RecordingWsFactory();
+        using var pool = CreatePool(factory);
+
+        pool.ReportFailure(Domains[0], new TimeoutException("connect timed out"));
+
+        Assert.Empty(pool.AvailableDomains(Domains));
+    }
+
+    [Fact]
+    public void ReportFailure_OnChallengeOrWrongRoute_KeepsDomainAvailable()
+    {
+        var factory = new RecordingWsFactory();
+        using var pool = CreatePool(factory);
+
+        // 403/404 — антибомбардировочный challenge или неверный маршрут: домен жив,
+        // отключать весь воркер из-за этого нельзя (upstream report_failure).
+        pool.ReportFailure(Domains[0], new WsHandshakeException(403, "Forbidden"));
+        pool.ReportFailure(Domains[0], new InvalidOperationException("unexpected"));
+
+        Assert.Single(pool.AvailableDomains(Domains));
+    }
+
+    [Fact]
+    public async Task ConnectOneAsync_OnTimeout_RetriesSameDomainInOppositeTlsMode()
+    {
+        // TLS блокируется таймаутом — вторая попытка идёт уже без TLS на том же домене.
+        var factory = new ScriptedWsFactory([new TimeoutException("tls handshake timed out")]);
+        using var pool = CreatePool(factory);
+
+        var connected = await pool.ConnectOneAsync(Domains, FallbackDst, 2, CancellationToken.None);
+
+        Assert.NotNull(connected);
+        Assert.Equal(Domains[0], connected.Value.Domain);
+        Assert.Equal(new[] { true, false }, factory.SecureModes);
+    }
+
+    [Fact]
+    public async Task ConnectOneAsync_OnHardFailure_DoesNotRetryOtherTlsMode()
+    {
+        // Не таймаут — значит TLS тут не виноват: второй режим не пробуем.
+        var factory = new ScriptedWsFactory([new IOException("connection reset")]);
+        using var pool = CreatePool(factory);
+
+        Assert.Null(await pool.ConnectOneAsync(Domains, FallbackDst, 2, CancellationToken.None));
+        Assert.Equal(new[] { true }, factory.SecureModes);
+    }
+
+    private static CfWorkerPool CreatePool(IRawWebSocketFactory factory)
         => new(
             TestConfig.Create(config => config.MtProto.WsPoolSize = 1),
             [],
@@ -144,6 +219,50 @@ public sealed class CfWorkerPoolTests
         }
     }
 
+    /// <summary>
+    /// Фабрика с заданным сценарием: очередная попытка бросает указанное исключение,
+    /// после исчерпания сценария подключение удаётся. Режимы TLS записываются.
+    /// </summary>
+    private sealed class ScriptedWsFactory(IReadOnlyList<Exception> failures) : IRawWebSocketFactory
+    {
+        private readonly List<bool> secureModes = [];
+
+        public IReadOnlyList<bool> SecureModes
+        {
+            get
+            {
+                lock (secureModes)
+                {
+                    return [.. secureModes];
+                }
+            }
+        }
+
+        public Task<IRawWebSocket> Connect(
+            string ip,
+            string domain,
+            string path,
+            string scope,
+            TimeSpan? timeout = null,
+            bool secure = true,
+            string? sni = null)
+        {
+            int attempt;
+            lock (secureModes)
+            {
+                attempt = secureModes.Count;
+                secureModes.Add(secure);
+            }
+
+            if (attempt < failures.Count)
+            {
+                throw failures[attempt];
+            }
+
+            return Task.FromResult<IRawWebSocket>(new FakeRawWebSocket());
+        }
+    }
+
     /// <summary>Соединение воркера без сети.</summary>
     private sealed class FakeRawWebSocket : IRawWebSocket
     {
@@ -154,6 +273,8 @@ public sealed class CfWorkerPoolTests
         public bool CloseCalled { get; private set; }
 
         public Task Send(ReadOnlyMemory<byte> data, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task SendInit(ReadOnlyMemory<byte> data) => Task.CompletedTask;
 
         public Task SendBatch(IReadOnlyList<ReadOnlyMemory<byte>> frames, CancellationToken cancellationToken) => Task.CompletedTask;
 

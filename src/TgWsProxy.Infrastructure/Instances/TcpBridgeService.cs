@@ -22,8 +22,8 @@ internal sealed class TcpBridgeService(
     ILogger<TcpBridgeService> logger,
     IProxyStats stats,
     IPeerStatsRegistry peerStats,
-    IRawWebSocketFactory wsFactory,
     ICfWorkerPool cfWorkerPool,
+    ICfConnectionStrategy cfStrategy,
     ICfDomainBalancer balancer,
     ICfH2Pool cfH2Pool,
     H2Bridge h2Bridge) : ITcpBridgeService
@@ -221,7 +221,9 @@ internal sealed class TcpBridgeService(
     /// </summary>
     private async Task<bool> CfFallbackAsync(FallbackRequest request, CancellationToken cancellationToken)
     {
-        if (request is { IsMedia: true, ProtoTag: not null } && config.H2Enabled)
+        // H2 всегда идёт по TLS: если статистика показывает, что plain-режим
+        // срабатывает чаще (upstream cf_prefers_tls), смысла в H2 нет — сразу WS.
+        if (request is { IsMedia: true, ProtoTag: not null } && config.H2Enabled && cfStrategy.PrefersTls())
         {
             ICfH2Channel? channel = null;
             try
@@ -299,44 +301,26 @@ internal sealed class TcpBridgeService(
         }
         else
         {
-            var path = $"{AppConstants.Protocol.WsPath}?dst={Uri.EscapeDataString(fallbackDst)}&dc={request.Dc}";
-            foreach (var workerDomain in cfWorkerPool.AvailableDomains(workerDomains))
-            {
-                logger.LogInformation(
-                    "[{Scope}] DC{Dc}{MediaTag} -> trying CF worker {Domain} for {Dst}",
-                    request.Scope, request.Dc, mediaTag, workerDomain, fallbackDst);
-                try
-                {
-                    ws = await wsFactory
-                        .Connect(
-                            workerDomain,
-                            workerDomain,
-                            path,
-                            request.Scope,
-                            CfConnectTimeout,
-                            secure: !config.DisableSecure)
-                        .ConfigureAwait(false);
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    cfWorkerPool.ReportFailure(workerDomain, ex);
-                    logger.LogWarning(
-                        "[{Scope}] DC{Dc}{MediaTag} CF worker {Domain} failed: {Error}",
-                        request.Scope, request.Dc, mediaTag, workerDomain, ex.Message);
-                }
-            }
-
-            if (ws is null)
+            // upstream: cf_worker_pool.connect_one — чередование TLS/plain и cooldown
+            // доменов живут в пуле, мост только просит соединение.
+            var fresh = await cfWorkerPool
+                .ConnectOneAsync(workerDomains, fallbackDst, request.Dc, cancellationToken)
+                .ConfigureAwait(false);
+            if (fresh is not { } connected)
             {
                 return false;
             }
+
+            ws = connected.Ws;
+            logger.LogInformation(
+                "[{Scope}] DC{Dc}{MediaTag} -> CF worker {Domain} connected for {Dst}",
+                request.Scope, request.Dc, mediaTag, connected.Domain, fallbackDst);
         }
 
         stats.IncConnectionsCfProxy();
         try
         {
-            await ws.Send(request.RelayInit, cancellationToken).ConfigureAwait(false);
+            await ws.SendInit(request.RelayInit).ConfigureAwait(false);
             // upstream передаёт splitter=None для worker-маршрута.
             await BridgeWsReencrypt(
                 request.Client, ws, request.Scope, request.Crypto,
@@ -357,36 +341,32 @@ internal sealed class TcpBridgeService(
         var mediaTag = request.IsMedia ? " media" : "";
         logger.LogInformation("[{Scope}] DC{Dc}{MediaTag} -> trying CF proxy", request.Scope, request.Dc, mediaTag);
 
-        IRawWebSocket? ws = null;
-        string? chosenDomain = null;
+        IRawWebSocket? ws;
+        string? chosenDomain;
 
-        foreach (var baseDomain in balancer.DomainsForDc(request.Dc))
+        // upstream: connect_cf_domains — единая политика охлаждения доменов и
+        // переключения TLS после таймаута (cf_websocket.py, v1.12.0).
+        var connected = await cfStrategy
+            .ConnectAsync(
+                balancer.DomainsForDc(request.Dc),
+                baseDomain => $"kws{request.Dc}.{baseDomain}",
+                request.Scope,
+                secure: !config.DisableSecure,
+                AppConstants.Protocol.WsPath,
+                CfConnectTimeout,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (connected is { } hit)
         {
-            var domain = $"kws{request.Dc}.{baseDomain}";
-            try
-            {
-                ws = await wsFactory
-                    .Connect(
-                        domain,
-                        domain,
-                        AppConstants.Protocol.WsPath,
-                        request.Scope,
-                        CfConnectTimeout,
-                        secure: !config.DisableSecure)
-                    .ConfigureAwait(false);
-                chosenDomain = baseDomain;
-                break;
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(
-                    "[{Scope}] DC{Dc}{MediaTag} CF proxy failed: {Error}",
-                    request.Scope, request.Dc, mediaTag, ex.Message);
-            }
+            ws = hit.Ws;
+            chosenDomain = hit.Name;
         }
-
-        if (ws is null)
+        else
         {
+            logger.LogWarning(
+                "[{Scope}] DC{Dc}{MediaTag} CF proxy: no reachable domain",
+                request.Scope, request.Dc, mediaTag);
             return false;
         }
 
@@ -398,7 +378,7 @@ internal sealed class TcpBridgeService(
         stats.IncConnectionsCfProxy();
         try
         {
-            await ws.Send(request.RelayInit, cancellationToken).ConfigureAwait(false);
+            await ws.SendInit(request.RelayInit).ConfigureAwait(false);
             await BridgeWsReencrypt(
                 request.Client, ws, request.Scope, request.Crypto,
                 request.Dc, request.IsMedia, request.Splitter, request.Peer, request.TokenId,

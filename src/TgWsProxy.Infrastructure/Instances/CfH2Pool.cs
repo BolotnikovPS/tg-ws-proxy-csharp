@@ -16,6 +16,7 @@ namespace TgWsProxy.Infrastructure.Instances;
 internal sealed class CfH2Pool(
     Config config,
     ICfDomainBalancer balancer,
+    ICfConnectionStrategy cfStrategy,
     IProxyStats stats,
     ILogger<CfH2Pool> logger) : ICfH2Pool
 {
@@ -110,6 +111,16 @@ internal sealed class CfH2Pool(
         foreach (var baseDomain in balancer.DomainsForDc(dc))
         {
             var host = $"kws{dc}.{baseDomain}";
+
+            // upstream cf_h2.py: домен, чей TLS только что таймаутил по WS,
+            // не открываем и здесь — иначе H2 повторит тот же неудачный дозвон.
+            if (cfStrategy.TlsInCooldown(baseDomain))
+            {
+                logger.LogDebug(
+                    "[{Label}] H2 DC{Dc} skip {Domain}: TLS in cooldown", label, dc, baseDomain);
+                continue;
+            }
+
             var hostLock = GetHostLock(host);
             await hostLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try

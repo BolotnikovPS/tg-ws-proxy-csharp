@@ -37,6 +37,7 @@ public sealed class ProxyHostedService(
     IProxyStats stats,
     IWsPool wsPool,
     ICfWorkerPool cfWorkerPool,
+    ICfConnectionStrategy cfStrategy,
     ICfDomainRefresher cfDomainRefresher,
     ICfH2Pool cfH2Pool,
     ITcpBridgeService bridgeService,
@@ -247,6 +248,9 @@ public sealed class ProxyHostedService(
     {
         bridgeService.ResetTcpBackoff();
         wsPool.Reset();
+        // upstream: reset_cf_timeouts() при старте — охлаждения доменов и статистика
+        // TLS/plain не должны переживать перезапуск листенера.
+        cfStrategy.Reset();
         cfWorkerPool.Reset();
         cfDomainRefresher.Start(token);
 

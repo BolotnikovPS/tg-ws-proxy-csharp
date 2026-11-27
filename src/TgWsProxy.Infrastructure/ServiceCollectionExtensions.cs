@@ -24,6 +24,9 @@ public static class ServiceCollectionExtensions
             .AddSingleton<IProxyServer, ProxyServer>()
             .AddSingleton<IWsPool, WsPool>()
             .AddSingleton<ICfWorkerPool, CfWorkerPool>()
+            // Единая политика подключения к CF (cooldown доменов, чередование TLS) —
+            // общая для моста, пула воркеров и H2-полос (upstream cf_websocket.py).
+            .AddSingleton<ICfConnectionStrategy, CfConnectionStrategy>()
             .AddSingleton<ICfDomainBalancer, CfDomainBalancer>()
             .AddSingleton<ICfDomainRefresher, CfDomainRefresher>()
             .AddSingleton<ICfH2Pool, CfH2Pool>()

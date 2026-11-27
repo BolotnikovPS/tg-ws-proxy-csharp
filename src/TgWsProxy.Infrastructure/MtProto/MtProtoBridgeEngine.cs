@@ -98,7 +98,9 @@ internal sealed class MtProtoBridgeEngine(
         logger.LogDebug("[{Scope}] DC{Dc}{MediaTag} -> WS bridge", scope, dc, mediaTag);
         try
         {
-            await ws.Send(relayInit, ct).ConfigureAwait(false);
+            // Init-кадр уходит с жёстким таймаутом (upstream send_init): зависший
+            // первый кадр не должен держать сессию клиента до общего таймаута.
+            await ws.SendInit(relayInit).ConfigureAwait(false);
             await bridgeService
                 .BridgeWsReencrypt(clientStream, ws, scope, ctx, dc, isMedia, splitter, peer, tokenId, ct)
                 .ConfigureAwait(false);

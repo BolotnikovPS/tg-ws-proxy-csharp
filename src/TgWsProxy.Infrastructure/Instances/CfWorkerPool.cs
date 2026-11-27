@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
+using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
 using TgWsProxy.Application;
 using TgWsProxy.Application.Abstractions;
 using TgWsProxy.Application.Logic;
 using TgWsProxy.Domain;
 using TgWsProxy.Domain.Abstractions;
+using TgWsProxy.Domain.Exceptions;
 using TgWsProxy.Infrastructure.Transport;
 using static TgWsProxy.Domain.AppConstants.CfWorkerPool;
 
@@ -54,6 +56,13 @@ internal sealed class CfWorkerPool(
 
     /// <summary>Флаг однократного запуска фоновой ротации (0 — не запущена, 1 — запущена).</summary>
     private int rotationStarted;
+
+    /// <summary>
+    /// Режим TLS первой попытки при подключении к воркеру (upstream
+    /// <c>try_secure_first</c>). Переключается на удачном режиме, чтобы следующее
+    /// соединение не тратило попытку на заведомо неудачный вариант.
+    /// </summary>
+    private bool trySecureFirst = true;
 
     /// <inheritdoc />
     public (IRawWebSocket Ws, string Domain)? TryGet(int dc, string fallbackDst, IReadOnlyList<string> workerDomains)
@@ -120,9 +129,65 @@ internal sealed class CfWorkerPool(
 
     /// <inheritdoc />
     /// <remarks>
-    /// Соответствует upstream, где обработка лимита воркера (HTTP 429) закомментирована как TODO.
+    /// Порт upstream <c>report_failure</c> (v1.12.0). До v1.12.0 обработка лимита
+    /// воркера была заглушкой, поэтому исчерпавший дневную квоту домен продолжал
+    /// выбираться до бесконечности:
+    /// <list type="bullet">
+    /// <item><description>HTTP 429 — исчерпан дневной лимит free-плана Workers, домен
+    /// отключается до следующих суток UTC (квота сбрасывается по UTC);</description></item>
+    /// <item><description>HTTP 5xx — временный сбой: cooldown <see cref="FailureCooldownSeconds"/>;</description></item>
+    /// <item><description>сетевая ошибка или таймаут — то же cooldown;</description></item>
+    /// <item><description>любой другой ответ (challenge, неверный маршрут) — не повод
+    /// отключать весь домен.</description></item>
+    /// </list>
     /// </remarks>
-    public void ReportFailure(string workerDomain, Exception exception) => logger.LogDebug(exception, "CF worker {Domain} connect failed", workerDomain);
+    public void ReportFailure(string workerDomain, Exception exception)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (exhaustedUntil.TryGetValue(workerDomain, out var current) && current > now)
+        {
+            return;
+        }
+
+        DateTimeOffset disabledUntil;
+        string reason;
+
+        if (exception is WsHandshakeException handshake)
+        {
+            if (handshake.StatusCode == 429)
+            {
+                // Дневная квота free-плана Workers сбрасывается в полночь UTC.
+                var midnight = new DateTimeOffset(now.UtcDateTime.Date.AddDays(1), TimeSpan.Zero);
+                disabledUntil = midnight;
+                reason = "daily request limit";
+            }
+            else if (handshake.StatusCode >= 500)
+            {
+                disabledUntil = now.AddSeconds(FailureCooldownSeconds);
+                reason = $"HTTP {handshake.StatusCode}";
+            }
+            else
+            {
+                return;
+            }
+        }
+        else if (exception is SocketException or IOException or TimeoutException)
+        {
+            disabledUntil = now.AddSeconds(FailureCooldownSeconds);
+            reason = exception.Message;
+        }
+        else
+        {
+            return;
+        }
+
+        exhaustedUntil[workerDomain] = disabledUntil;
+        logger.LogWarning(
+            "CF worker {Domain} disabled for {Seconds}s: {Reason}",
+            workerDomain,
+            Math.Max(1, (int)(disabledUntil - now).TotalSeconds),
+            reason);
+    }
 
     /// <inheritdoc />
     public void Warmup()
@@ -167,6 +232,7 @@ internal sealed class CfWorkerPool(
         targets.Clear();
         refillFailures.Clear();
         refillAfter.Clear();
+        trySecureFirst = true;
     }
 
     /// <summary>Останавливает фоновое наполнение пула и освобождает ресурсы.</summary>
@@ -178,6 +244,35 @@ internal sealed class CfWorkerPool(
 
     /// <summary>Целевой размер бакета одного DC.</summary>
     private int TargetSize => Math.Min(config.MtProto.WsPoolSize, PerDcLimit);
+
+    /// <summary>
+    /// Откладывает наполнение DC, если все домены воркеров сейчас в cooldown
+    /// (upstream <c>_defer_if_all_workers_paused</c>). Тогда backoff не тратится
+    /// впустую: наполнение повторится ровно к моменту, когда первый домен оживёт.
+    /// </summary>
+    /// <returns><see langword="true"/>, если наполнение отложено.</returns>
+    private bool DeferIfAllWorkersPaused(int dc, IReadOnlyList<string> workerDomains, DateTimeOffset now)
+    {
+        var firstAvailable = now;
+        foreach (var domain in workerDomains)
+        {
+            if (!exhaustedUntil.TryGetValue(domain, out var until) || until <= firstAvailable)
+            {
+                continue;
+            }
+
+            firstAvailable = until;
+        }
+
+        // Ни один домен не отложен (или список пуст) — наполнение имеет смысл.
+        if (firstAvailable <= now)
+        {
+            return false;
+        }
+
+        refillAfter[dc] = firstAvailable;
+        return true;
+    }
 
     /// <summary>
     /// Планирует фоновое наполнение пула для DC: запоминает параметры подключения,
@@ -192,6 +287,13 @@ internal sealed class CfWorkerPool(
 
         targets[dc] = new RefillTarget(fallbackDst, workerDomains.ToArray());
         EnsureRotationStarted();
+
+        // Если все домены в cooldown, незачем пытаться наполнить бакет сейчас:
+        // наполнение всё равно упрётся в пустой AvailableDomains и сожжёт backoff.
+        if (refilling.ContainsKey(dc) || DeferIfAllWorkersPaused(dc, workerDomains, DateTimeOffset.UtcNow))
+        {
+            return;
+        }
 
         if (refillAfter.TryGetValue(dc, out var after) && after > DateTimeOffset.UtcNow)
         {
@@ -317,6 +419,12 @@ internal sealed class CfWorkerPool(
                 return;
             }
 
+            // Все домены в cooldown — не накручиваем backoff, а ждём первого ожившего.
+            if (DeferIfAllWorkersPaused(dc, workerDomains, DateTimeOffset.UtcNow))
+            {
+                return;
+            }
+
             var failures = refillFailures.AddOrUpdate(dc, 1, (_, value) => value + 1);
             var delay = Math.Min(
                 RefillBackoffInitialSeconds * Math.Pow(2, Math.Min(failures - 1, 12)),
@@ -330,42 +438,67 @@ internal sealed class CfWorkerPool(
         }
     }
 
-    /// <summary>
-    /// Пытается открыть одно соединение воркера, перебирая доступные домены.
-    /// </summary>
-    private async Task<(IRawWebSocket Ws, string Domain)?> ConnectOneAsync(
-        string[] workerDomains,
+    /// <inheritdoc />
+    /// <remarks>
+    /// Порт upstream <c>connect_one</c> (v1.12.0). До него мост сам перебирал домены
+    /// фиксированным режимом TLS, поэтому при блокировке TLS домен «висел» до
+    /// таймаута на каждой попытке. Здесь режим чередуется от последнего удачного
+    /// (upstream <c>try_secure_first</c>), а таймаут сразу переключает на другой режим.
+    /// </remarks>
+    public async Task<(IRawWebSocket Ws, string Domain)?> ConnectOneAsync(
+        IReadOnlyList<string> workerDomains,
         string fallbackDst,
         int dc,
         CancellationToken cancellationToken)
     {
         var path = $"{AppConstants.Protocol.WsPath}?dst={Uri.EscapeDataString(fallbackDst)}&dc={dc}";
 
+        // Режим первой попытки — тот, что сработал в прошлый раз; при запрещённом
+        // secure остаётся единственный вариант (upstream: modes = (False,)).
+        bool[] modes = config.DisableSecure
+            ? [false]
+            : [trySecureFirst, !trySecureFirst];
+
         foreach (var workerDomain in AvailableDomains(workerDomains))
         {
-            try
+            for (var attempt = 0; attempt < modes.Length; attempt++)
             {
-                var ws = await wsFactory
-                    .Connect(
-                        workerDomain,
-                        workerDomain,
-                        path,
-                        $"cf-worker DC{dc}",
-                        TimeSpan.FromSeconds(ConnectTimeoutSeconds),
-                        secure: !config.DisableSecure)
-                    .ConfigureAwait(false);
-                return (ws, workerDomain);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                return null;
-            }
-            catch (Exception ex)
-            {
-                logger.LogDebug(
-                    "CF worker pool connect DC{Dc} via {Domain} for {Dst} failed: {Error}",
-                    dc, workerDomain, fallbackDst, ex.Message);
-                ReportFailure(workerDomain, ex);
+                var secure = modes[attempt];
+                try
+                {
+                    var ws = await wsFactory
+                        .Connect(
+                            workerDomain,
+                            workerDomain,
+                            path,
+                            $"cf-worker DC{dc}",
+                            TimeSpan.FromSeconds(ConnectTimeoutSeconds),
+                            secure: secure)
+                        .ConfigureAwait(false);
+
+                    trySecureFirst = secure;
+                    return (ws, workerDomain);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return null;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(
+                        "CF worker connect DC{Dc} via {Domain} for {Dst} failed (tls={Secure}): {Error}",
+                        dc, workerDomain, fallbackDst, secure, ex.Message);
+
+                    // Таймаут — единственная ошибка, после которой имеет смысл
+                    // повторить тот же домен в другом режиме TLS (upstream).
+                    if (modes.Length > 1 && attempt == 0 && ex is TimeoutException)
+                    {
+                        continue;
+                    }
+
+                    ReportFailure(workerDomain, ex);
+                    break;
+                }
             }
         }
 

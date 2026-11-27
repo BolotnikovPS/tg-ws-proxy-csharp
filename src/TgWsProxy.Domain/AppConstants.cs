@@ -399,6 +399,19 @@ public static class AppConstants
         /// <summary>Таймаут обычного подключения (секунды).</summary>
         public const int PlainTimeoutSeconds = 8;
 
+        /// <summary>
+        /// Таймаут ожидания закрытия соединения при <c>Close</c> (CLOSE_TIMEOUT, 2 с).
+        /// Дренаж close-кадра и ожидание <c>wait_closed</c> не должны висеть вечно.
+        /// </summary>
+        public const double CloseTimeoutSeconds = 2.0;
+
+        /// <summary>
+        /// Таймаут отправки relay-init при старте сессии (upstream <c>send_init</c>, 10 с).
+        /// Отличие от обычного <c>send</c>: по истечении соединение аварийно закрывается,
+        /// иначе подвисшая отправка держала бы сессию и сокет.
+        /// </summary>
+        public const double SendInitTimeoutSeconds = 10.0;
+
     }
 
     /// <summary>
@@ -498,6 +511,36 @@ public static class AppConstants
         /// <summary>Максимальная задержка backoff наполнения, с (REFILL_BACKOFF_MAX).</summary>
         public const double RefillBackoffMaxSeconds = 3600.0;
 
+        /// <summary>
+        /// Охлаждение воркера после транспортной ошибки, с (FAILURE_COOLDOWN).
+        /// Покрывает HTTP 5xx и сетевые ошибки; HTTP 429 — отдельный случай (лимит free-плана).
+        /// </summary>
+        public const double FailureCooldownSeconds = 60.0;
+
+    }
+
+    /// <summary>
+    /// Стратегия подключения к Cloudflare по WebSocket (порт upstream <c>proxy/cf_websocket.py</c>).
+    /// Охлаждение пары «домен, TLS» после таймаута и лестница таймаутов попыток.
+    /// </summary>
+    public static class CfWebSocket
+    {
+        /// <summary>
+        /// Охлаждение пары (домен, use_tls) после таймаута, с (CF_TIMEOUT_COOLDOWN).
+        /// Пока пара в охлаждении, к ней не возвращаются — вместо этого чередуется режим TLS.
+        /// </summary>
+        public const double TimeoutCooldownSeconds = 30.0;
+
+        /// <summary>
+        /// Лестница таймаутов попыток (CF_CONNECT_TIMEOUTS). Каждый таймаут переключает
+        /// режим TLS и выдаёт следующей попытке больший лимит; длина массива — предел числа
+        /// последовательных таймаутов.
+        /// </summary>
+        public static readonly double[] ConnectTimeoutSeconds = [3.0, 3.0, 5.0, 5.0, 10.0];
+
+        /// <summary>Таймаут подключения по умолчанию для CF-доменов (секунды).</summary>
+        public const double DefaultConnectTimeoutSeconds = 10.0;
+
     }
 
     /// <summary>
@@ -527,6 +570,12 @@ public static class AppConstants
 
         /// <summary>Размер буфера чтения от клиента (как 65536 в upstream <c>bridge.py</c>).</summary>
         public const int ClientReadBufferSize = 65536;
+
+        /// <summary>
+        /// Период опроса сокета клиента, пока идёт дозвон в fallback: если клиент ушёл,
+        /// дозвон отменяется (порт upstream <c>client_setup</c> в <c>event_loop.py</c>).
+        /// </summary>
+        public const int ClientDisconnectPollMs = 200;
 
     }
 

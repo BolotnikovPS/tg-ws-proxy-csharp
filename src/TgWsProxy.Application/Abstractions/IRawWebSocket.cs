@@ -28,6 +28,14 @@ public interface IRawWebSocket
     Task SendBatch(IReadOnlyList<ReadOnlyMemory<byte>> parts, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Отправляет кадр инициализации relay-сессии с жёстким таймаутом (upstream
+    /// <c>send_init</c>, 10 с). В отличие от <see cref="Send"/>, по истечении таймаута
+    /// соединение аварийно обрывается: подвисшая отправка держала бы сессию и сокет.
+    /// </summary>
+    /// <param name="data">Кадр инициализации (relay-init с заголовком протокола).</param>
+    Task SendInit(ReadOnlyMemory<byte> data);
+
+    /// <summary>
     /// Получает следующий бинарный фрейм из WebSocket-соединения.
     /// </summary>
     /// <returns>Полученные данные либо <see langword="null"/>, если соединение закрыто.</returns>

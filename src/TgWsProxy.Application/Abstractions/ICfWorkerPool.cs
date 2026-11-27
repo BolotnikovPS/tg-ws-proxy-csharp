@@ -21,6 +21,23 @@ public interface ICfWorkerPool
     IReadOnlyList<string> AvailableDomains(IReadOnlyList<string> workerDomains);
 
     /// <summary>
+    /// Открывает одно соединение воркера вне пула (upstream <c>connect_one</c>).
+    /// Используется, когда пул пуст, но соединение нужно прямо сейчас: в отличие от
+    /// простого перебора доменов, чередует TLS и plain по последней удачной попытке
+    /// и применяет cooldown домена при ошибке.
+    /// </summary>
+    /// <param name="workerDomains">Настроенные домены воркеров.</param>
+    /// <param name="fallbackDst">Целевой IP Telegram, который воркер должен проксировать.</param>
+    /// <param name="dc">Номер дата-центра.</param>
+    /// <param name="cancellationToken">Токен отмены.</param>
+    /// <returns>Соединение и домен, через который оно открыто, либо <see langword="null"/>.</returns>
+    Task<(IRawWebSocket Ws, string Domain)?> ConnectOneAsync(
+        IReadOnlyList<string> workerDomains,
+        string fallbackDst,
+        int dc,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Регистрирует неудачную попытку подключения к домену воркера.
     /// </summary>
     /// <param name="workerDomain">Домен воркера.</param>

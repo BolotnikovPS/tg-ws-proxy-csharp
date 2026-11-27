@@ -80,6 +80,35 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
         }
     }
 
+    /// <summary>
+    /// Отправляет кадр инициализации relay-сессии с таймаутом
+    /// <see cref="SendInitTimeoutSeconds"/> (порт upstream <c>send_init</c>).
+    /// </summary>
+    /// <remarks>
+    /// Upstream оборачивает первый <c>send</c> в <c>wait_for(..., 10)</c> и при любой
+    /// ошибке помечает соединение закрытым и делает <c>transport.abort()</c>. Смысл в том,
+    /// что к этому моменту relay-init уже требует ответа сервера: если отправка не
+    /// уложилась в 10 секунд, соединение бесполезно, и держать его нельзя — иначе
+    /// «зависшая» сессия занимает сокет и слот в пуле до таймаута простоя.
+    /// </remarks>
+    public async Task SendInit(ReadOnlyMemory<byte> data)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(SendInitTimeoutSeconds));
+        try
+        {
+            await Send(data, cts.Token);
+        }
+        catch (Exception)
+        {
+            IsClosed = true;
+            AbortTransport();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Отправляет несколько бинарных кадров подряд (один сброс в сокет).
+    /// </summary>
     public async Task SendBatch(IReadOnlyList<ReadOnlyMemory<byte>> parts, CancellationToken cancellationToken)
     {
         if (IsClosed)
@@ -162,6 +191,7 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
 
     public async Task Close(CancellationToken cancellationToken)
     {
+        var abort = false;
         try
         {
             // Отправка close-кадра — только для соединения, которое мы закрываем первыми.
@@ -169,7 +199,23 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
             {
                 IsClosed = true;
                 _assembler.Reset();
-                try { await WriteMaskedFrame(0x8, ReadOnlyMemory<byte>.Empty, cancellationToken); } catch { }
+                // Дренаж close-кадра ограничен CLOSE_TIMEOUT (upstream v1.12.0).
+                // Раньше отправка шла без ограничения: сервер, переставший читать,
+                // держал drain бесконечно, и соединение не освобождало дескриптор.
+                using var drainCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                drainCts.CancelAfter(TimeSpan.FromSeconds(CloseTimeoutSeconds));
+                try
+                {
+                    await WriteMaskedFrame(0x8, ReadOnlyMemory<byte>.Empty, drainCts.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    abort = true;
+                }
+                catch (Exception)
+                {
+                    // Порванное соединение close-кадр уже не отправит — ресурсы освободим ниже.
+                }
             }
         }
         catch (Exception ex)
@@ -183,9 +229,67 @@ internal sealed class RawWebSocket(Socket client, Stream transport, string scope
             // и ранний выход из метода оставлял сокет и поток открытыми до финализатора:
             // протухшие соединения из пула так и не освобождали дескриптор.
             // Порт upstream v1.11.4 (1636903c), где закрытие writer перенесено в finally.
-            try { await transport.DisposeAsync(); } catch { }
-            try { client.Close(); } catch { }
+            if (abort || !await TryDisposeTransportAsync())
+            {
+                if (abort)
+                {
+                    logger.LogDebug(
+                        "[{Scope}] WS close drain exceeded {Timeout:F1}s; aborting transport",
+                        scope, CloseTimeoutSeconds);
+                }
+
+                AbortTransport();
+            }
+            else
+            {
+                try { client.Close(); } catch { }
+            }
         }
+    }
+
+    /// <summary>
+    /// Освобождает транспорт, ограничивая ожидание значением
+    /// <see cref="CloseTimeoutSeconds"/> (upstream ограничивает <c>wait_closed()</c>).
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/>, если транспорт освобождён; <see langword="false"/> —
+    /// если ожидание не уложилось в лимит и соединение нужно обрывать.
+    /// </returns>
+    private async Task<bool> TryDisposeTransportAsync()
+    {
+        var dispose = transport.DisposeAsync().AsTask();
+        var completed = await Task
+            .WhenAny(dispose, Task.Delay(TimeSpan.FromSeconds(CloseTimeoutSeconds)))
+            .ConfigureAwait(false);
+        if (completed != dispose)
+        {
+            return false;
+        }
+
+        try
+        {
+            await dispose.ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Соединение уже нерабочее; сокет закроем как при аварийном обрыве.
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Аварийно обрывает соединение — аналог upstream <c>transport.abort()</c>:
+    /// сокет закрывается без дренажа, с RST (linger 0), close-кадр не отправляется.
+    /// </summary>
+    private void AbortTransport()
+    {
+        IsClosed = true;
+        _assembler.Reset();
+        try { client.LingerState = new LingerOption(enable: true, seconds: 0); } catch { }
+        try { client.Close(); } catch { }
+        try { transport.Dispose(); } catch { }
     }
 
     /// <summary>
